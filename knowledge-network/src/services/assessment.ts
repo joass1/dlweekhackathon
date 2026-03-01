@@ -1,166 +1,224 @@
-// src/services/assessment.ts
-import { Assessment, AssessmentResult, AssessmentQuestion } from '@/types/assessment';
+import { Assessment, AssessmentResult } from '@/types/assessment';
 
-export async function getAssessments(userId: string): Promise<Assessment[]> {
-  // Replace with actual API call
-  return [
-    {
-      id: "1",
-      courseId: "cs201",
-      title: "Data Structures Week 3",
-      score: 85,
-      completedAt: new Date(),
-      status: 'completed',
-      type: 'weekly',
-      conceptGaps: [
-        {
-          concept: "Binary Tree Balancing",
-          confidenceScore: 65,
-          recommendedResources: ["Video: AVL Trees", "Practice: Tree Rotations"],
-          priority: "high"
-        }
-      ],
-      questions: [
-        {
-          id: "q1",
-          question: "What is the time complexity of AVL tree insertion?",
-          options: ["O(1)", "O(log n)", "O(n)", "O(n^2)"],
-          correctAnswer: "O(log n)",
-          conceptTested: "AVL Trees",
-          difficulty: "medium"
-        }
-      ]
-    }
-  ];
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+
+type Difficulty = 'easy' | 'medium' | 'hard';
+
+export interface QuizQuestionClient {
+  question_id: string;
+  concept: string;
+  stem: string;
+  options: string[];
+  difficulty: Difficulty;
 }
 
-export async function getUpcomingAssessments(userId: string): Promise<Assessment[]> {
-  // Replace with actual API call
-  return [
+export interface QuizAnswerClient {
+  question_id: string;
+  selected_answer: string;
+  confidence_1_to_5: number;
+}
+
+export interface EvaluateResult {
+  score: number;
+  per_question: {
+    question_id: string;
+    is_correct: boolean;
+    correct_answer: string;
+  }[];
+}
+
+export interface MistakeClassificationClient {
+  question_id: string;
+  mistake_type: 'careless' | 'conceptual';
+  missing_concept?: string | null;
+  error_span?: string | null;
+  rationale: string;
+}
+
+export interface ClassifyResult {
+  classifications: MistakeClassificationClient[];
+  blind_spot_found_count: number;
+  blind_spot_resolved_count: number;
+}
+
+export interface MicroCheckpointQuestion {
+  question_id: string;
+  concept: string;
+  stem: string;
+  options: string[];
+  correct_answer: string;
+  explanation?: string | null;
+  difficulty: Difficulty;
+}
+
+async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`API ${response.status}: ${detail}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export async function generateQuiz(
+  studentId: string,
+  concept: string,
+  numQuestions = 5
+): Promise<QuizQuestionClient[]> {
+  const payload = {
+    student_id: studentId,
+    concept,
+    num_questions: numQuestions,
+  };
+  const response = await jsonFetch<{ questions: QuizQuestionClient[] }>(
+    '/api/assessment/generate-quiz',
     {
-      id: "2",
-      courseId: "cs201",
-      title: "Binary Trees Quiz",
-      score: 0,
-      completedAt: new Date(),
-      status: 'pending',
-      type: 'quiz',
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-      conceptGaps: [],
-      questions: []
+      method: 'POST',
+      body: JSON.stringify(payload),
     }
-  ];
+  );
+  return response.questions;
+}
+
+export async function evaluateAnswer(
+  studentId: string,
+  concept: string,
+  answers: QuizAnswerClient[]
+): Promise<EvaluateResult> {
+  return jsonFetch<EvaluateResult>('/api/assessment/evaluate', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: studentId,
+      concept,
+      answers,
+    }),
+  });
+}
+
+export async function classifyMistake(
+  studentId: string,
+  concept: string,
+  answers: QuizAnswerClient[]
+): Promise<ClassifyResult> {
+  return jsonFetch<ClassifyResult>('/api/assessment/classify', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: studentId,
+      concept,
+      answers,
+    }),
+  });
+}
+
+export async function getSelfAwarenessScore(studentId: string): Promise<{
+  student_id: string;
+  score: number;
+  total_attempts: number;
+  calibration_gap: number;
+}> {
+  return jsonFetch(`/api/assessment/self-awareness/${studentId}`);
+}
+
+export async function getMicroCheckpoint(
+  studentId: string,
+  concept: string,
+  missingConcept?: string
+): Promise<MicroCheckpointQuestion> {
+  const response = await jsonFetch<{ question: MicroCheckpointQuestion }>(
+    '/api/assessment/micro-checkpoint',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        student_id: studentId,
+        concept,
+        missing_concept: missingConcept || null,
+      }),
+    }
+  );
+  return response.question;
+}
+
+export async function submitMicroCheckpoint(
+  studentId: string,
+  questionId: string,
+  selectedAnswer: string,
+  confidence = 3
+): Promise<{ question_id: string; is_correct: boolean; next_action: 'resolved' | 'needs_intervention' }> {
+  return jsonFetch('/api/assessment/micro-checkpoint/submit', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: studentId,
+      question_id: questionId,
+      selected_answer: selectedAnswer,
+      confidence_1_to_5: confidence,
+    }),
+  });
+}
+
+export async function overrideClassification(
+  studentId: string,
+  questionId: string
+): Promise<{ updated: boolean; question_id: string }> {
+  return jsonFetch('/api/assessment/override', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: studentId,
+      question_id: questionId,
+      override_to: 'careless',
+    }),
+  });
+}
+
+// Kept for dashboard compatibility; replace with backend integration as needed.
+export async function getAssessments(_userId: string): Promise<Assessment[]> {
+  return [];
+}
+
+export async function getUpcomingAssessments(_userId: string): Promise<Assessment[]> {
+  return [];
 }
 
 export async function submitAssessment(
-  assessmentId: string, 
-  userId: string, 
-  answers: { questionId: string; answer: string }[]
+  assessmentId: string,
+  userId: string,
+  _answers: { questionId: string; answer: string }[]
 ): Promise<AssessmentResult> {
-  // Replace with actual API call
   return {
     assessmentId,
     studentId: userId,
-    score: 85,
-    completedAt: new Date(),
-    answers: [
-      {
-        questionId: "q1",
-        answer: "O(log n)",
-        isCorrect: true
-      }
-    ],
-    conceptGaps: [
-      {
-        concept: "Binary Tree Balancing",
-        confidenceScore: 65,
-        recommendedResources: ["Video: AVL Trees", "Practice: Tree Rotations"],
-        priority: "high"
-      }
-    ]
-  };
-}
-
-export async function getAssessmentDetails(assessmentId: string): Promise<Assessment | null> {
-  // Replace with actual API call
-  return {
-    id: assessmentId,
-    courseId: "cs201",
-    title: "Data Structures Week 3",
-    score: 85,
-    completedAt: new Date(),
-    status: 'completed',
-    type: 'weekly',
-    conceptGaps: [
-      {
-        concept: "Binary Tree Balancing",
-        confidenceScore: 65,
-        recommendedResources: ["Video: AVL Trees", "Practice: Tree Rotations"],
-        priority: "high"
-      }
-    ],
-    questions: [
-      {
-        id: "q1",
-        question: "What is the time complexity of AVL tree insertion?",
-        options: ["O(1)", "O(log n)", "O(n)", "O(n^2)"],
-        correctAnswer: "O(log n)",
-        conceptTested: "AVL Trees",
-        difficulty: "medium",
-        explanation: "AVL trees maintain balance during insertion, requiring rebalancing operations that take logarithmic time."
-      }
-    ]
-  };
-}
-
-export async function generateAssessment(courseId: string, conceptsTested: string[]): Promise<Assessment> {
-  // Replace with actual API call - this would typically generate a new assessment based on concepts
-  return {
-    id: "new_assessment",
-    courseId,
-    title: "Generated Assessment",
     score: 0,
     completedAt: new Date(),
-    status: 'pending',
-    type: 'quiz',
+    answers: [],
     conceptGaps: [],
-    questions: [
-      {
-        id: "gen_q1",
-        question: "Sample generated question based on concepts",
-        options: ["Option 1", "Option 2", "Option 3", "Option 4"],
-        correctAnswer: "Option 2",
-        conceptTested: conceptsTested[0],
-        difficulty: "medium"
-      }
-    ]
   };
 }
 
-export async function getAssessmentResult(
-  assessmentId: string, 
-  userId: string
-): Promise<AssessmentResult | null> {
-  // Replace with actual API call
+export async function getAssessmentDetails(_assessmentId: string): Promise<Assessment | null> {
+  return null;
+}
+
+export async function generateAssessment(_courseId: string, _conceptsTested: string[]): Promise<Assessment> {
   return {
-    assessmentId,
-    studentId: userId,
-    score: 85,
+    id: 'generated',
+    courseId: 'course',
+    title: 'Generated Assessment',
+    score: 0,
     completedAt: new Date(),
-    answers: [
-      {
-        questionId: "q1",
-        answer: "O(log n)",
-        isCorrect: true
-      }
-    ],
-    conceptGaps: [
-      {
-        concept: "Binary Tree Balancing",
-        confidenceScore: 65,
-        recommendedResources: ["Video: AVL Trees", "Practice: Tree Rotations"],
-        priority: "high"
-      }
-    ]
+    conceptGaps: [],
+    status: 'pending',
+    type: 'quiz',
+    questions: [],
   };
+}
+
+export async function getAssessmentResult(_assessmentId: string, _userId: string): Promise<AssessmentResult | null> {
+  return null;
 }
