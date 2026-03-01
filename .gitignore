@@ -41,3 +41,4 @@ pnpm-debug.log*
 *.sqlite
 *.db
 backend/qdrant_db/
+dlw-project-ff79f-firebase-adminsdk-fbsvc-4b786be89b.json
