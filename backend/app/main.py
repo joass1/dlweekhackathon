@@ -1,25 +1,33 @@
 import os
 import pathlib
+from datetime import datetime, timezone
+from math import ceil
+from typing import Dict, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-import iris
-import os
-import tempfile
-from dotenv import load_dotenv
-from openai import OpenAI
+from firebase_admin import credentials, firestore, initialize_app
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain.text_splitter import CharacterTextSplitter
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
-from app.services.vector_search import VectorSearch
-from app.services.vector_search1 import VectorSearch1
+from langchain_text_splitters import CharacterTextSplitter
+from openai import OpenAI
+
+from app.models.adaptive_schemas import (
+    BKTUpdateRequest,
+    BKTUpdateResponse,
+    ConceptStatePayload,
+    DecayRequest,
+    DecayResponse,
+    MasteryRequest,
+    MasteryResponse,
+    RPKTProbeRequest,
+    RPKTProbeResponse,
+)
 from app.models.schemas import SearchQuery, SearchResult
-from uuid import uuid4
+from app.services.adaptive_engine import AdaptiveEngine, ConceptState
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+load_dotenv()
 
 data_dir = pathlib.Path("data")
 data_dir.mkdir(exist_ok=True)
@@ -35,7 +43,6 @@ def _init_firestore():
         cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH)
         initialize_app(cred)
     else:
-        # Uses GOOGLE_APPLICATION_CREDENTIALS / ADC if available.
         initialize_app()
     return firestore.client()
 
@@ -56,286 +63,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load environment variables
-load_dotenv()
+adaptive_engine = AdaptiveEngine()
 
-# IRIS Database connection setup
-try:
-    username = 'demo'
-    password = 'demo'
-    hostname = os.getenv('IRIS_HOSTNAME', 'localhost')
-    port = '1972'
-    namespace = 'USER'
-    CONNECTION_STRING = f"{hostname}:{port}/{namespace}"
-    
-    print(f"Connecting to IRIS database: {CONNECTION_STRING}")
-    conn = iris.connect(CONNECTION_STRING, username, password)
-    cursor = conn.cursor()
-    
-    # Initialize vector search for IRIS
-    vector_search = VectorSearch(cursor)
-    learning_groups_search = VectorSearch1(cursor)  
-    
-    print("Successfully initialized IRIS vector search")
-    
-except Exception as e:
-    print(f"Failed to initialize IRIS database connection: {str(e)}")
-    raise
-
-# Initialize Qdrant client (local)
-qdrant_client = QdrantClient(path="./qdrant_db")
-# Or for cloud: QdrantClient(host="localhost", port=6333)
-
-# Initialize the encoder
-encoder = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Create collection if it doesn't exist
-try:
-    qdrant_client.create_collection(
-        collection_name="knowledge_network",
-        vectors_config=models.VectorParams(
-            size=encoder.get_sentence_embedding_dimension(),
-            distance=models.Distance.COSINE
-        )
-    )
-except Exception:
-    pass  # Collection already exists
-
-# In-memory stores for assessment flow (hackathon-friendly)
-QUIZ_STORE: Dict[str, Dict[str, QuizQuestion]] = {}
-ATTEMPT_HISTORY: Dict[str, List[Dict[str, Any]]] = {}
-CLASSIFICATION_STORE: Dict[str, Dict[str, MistakeClassification]] = {}
-BLIND_SPOT_COUNTS: Dict[str, Dict[str, int]] = {}
-
-SUBJECT_QUESTION_BANK: Dict[str, List[Dict[str, Any]]] = {
-    "newtons-laws": [
-        {
-            "stem": "What happens to acceleration if net force doubles while mass stays constant?",
-            "options": ["Acceleration halves", "Acceleration doubles", "Acceleration is unchanged", "Cannot determine"],
-            "correct_answer": "Acceleration doubles",
-            "explanation": "By F = ma, a is directly proportional to net force when mass is fixed.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": "A book rests on a table. Which pair is a Newton's 3rd law action-reaction pair?",
-            "options": ["Book weight and table normal force", "Table pushes on book and book pushes on table", "Book weight and Earth pull", "Normal force and gravity are unrelated"],
-            "correct_answer": "Table pushes on book and book pushes on table",
-            "explanation": "Action-reaction forces act on different objects and are equal/opposite.",
-            "difficulty": "medium",
-        },
-        {
-            "stem": "Newton's 1st law is best described as:",
-            "options": ["Force creates motion always", "Inertia: objects resist changes in motion", "Momentum is conserved in all cases", "Acceleration is constant"],
-            "correct_answer": "Inertia: objects resist changes in motion",
-            "explanation": "Without net external force, velocity remains constant.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": "A 2 kg object experiences 10 N net force. Acceleration is:",
-            "options": ["2 m/s^2", "5 m/s^2", "10 m/s^2", "20 m/s^2"],
-            "correct_answer": "5 m/s^2",
-            "explanation": "a = F/m = 10/2 = 5 m/s^2.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": "Why does a passenger lurch forward when a car stops suddenly?",
-            "options": ["Because forward force increases", "Because inertia keeps body moving", "Because gravity increases", "Because friction disappears"],
-            "correct_answer": "Because inertia keeps body moving",
-            "explanation": "Body tends to maintain its prior state of motion.",
-            "difficulty": "medium",
-        },
-    ],
-    "energy-work": [
-        {
-            "stem": "Work done by a constant force is:",
-            "options": ["F + d", "F/d", "F d cos(theta)", "mgh only"],
-            "correct_answer": "F d cos(theta)",
-            "explanation": "Work is the dot product between force and displacement.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": "The work-energy theorem states:",
-            "options": ["Potential energy is conserved always", "Net work equals change in kinetic energy", "Power equals force times displacement", "Energy cannot be transferred"],
-            "correct_answer": "Net work equals change in kinetic energy",
-            "explanation": "W_net = Delta K.",
-            "difficulty": "medium",
-        },
-        {
-            "stem": "If friction does negative work, kinetic energy typically:",
-            "options": ["Increases", "Stays constant", "Decreases", "Becomes potential energy only"],
-            "correct_answer": "Decreases",
-            "explanation": "Negative work removes mechanical energy from motion.",
-            "difficulty": "easy",
-        },
-    ],
-    "momentum": [
-        {
-            "stem": "Momentum is defined as:",
-            "options": ["m/a", "ma", "mv", "v/m"],
-            "correct_answer": "mv",
-            "explanation": "Linear momentum equals mass times velocity.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": "In an isolated system, total momentum:",
-            "options": ["Always increases", "Is conserved", "Always decreases", "Depends on kinetic energy only"],
-            "correct_answer": "Is conserved",
-            "explanation": "No net external impulse implies conservation of momentum.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": "A perfectly inelastic collision means objects:",
-            "options": ["Bounce apart with same speed", "Stick together after collision", "Conserve kinetic energy", "Have zero momentum"],
-            "correct_answer": "Stick together after collision",
-            "explanation": "Momentum is conserved; kinetic energy is not.",
-            "difficulty": "medium",
-        },
-    ],
-}
-
-
-def _build_default_bank(concept: str) -> List[Dict[str, Any]]:
-    return [
-        {
-            "stem": f"Which statement best demonstrates understanding of {concept}?",
-            "options": ["Definition recall only", "Applying concept correctly to a new scenario", "Memorizing formulas without context", "Avoiding conceptual reasoning"],
-            "correct_answer": "Applying concept correctly to a new scenario",
-            "explanation": f"Transfer to a new case is a stronger indicator of conceptual mastery for {concept}.",
-            "difficulty": "medium",
-        },
-        {
-            "stem": f"When solving a problem in {concept}, what is the best first step?",
-            "options": ["Guess and check", "Identify knowns, unknowns, and governing principles", "Skip to calculator", "Use any familiar equation"],
-            "correct_answer": "Identify knowns, unknowns, and governing principles",
-            "explanation": "Structured setup reduces careless and conceptual errors.",
-            "difficulty": "easy",
-        },
-        {
-            "stem": f"If your answer in {concept} is surprising, what should you do?",
-            "options": ["Submit anyway", "Check units, assumptions, and edge cases", "Change to a round number", "Ask a friend immediately"],
-            "correct_answer": "Check units, assumptions, and edge cases",
-            "explanation": "Sanity checks catch both careless and model mistakes.",
-            "difficulty": "medium",
-        },
-    ]
-
-
-def _get_bank(concept: str) -> List[Dict[str, Any]]:
-    return SUBJECT_QUESTION_BANK.get(concept, _build_default_bank(concept))
-
-
-def _make_question(concept: str, item: Dict[str, Any], idx: int) -> QuizQuestion:
-    return QuizQuestion(
-        question_id=f"{concept}-q{idx}",
-        concept=concept,
-        stem=item["stem"],
-        options=item["options"],
-        correct_answer=item["correct_answer"],
-        explanation=item.get("explanation"),
-        difficulty=item.get("difficulty", "medium"),
-    )
-
-
-def _confidence_to_probability(confidence_1_to_5: int) -> float:
-    return (confidence_1_to_5 - 1) / 4.0
-
-
-def _classify_wrong_answer(
-    concept: str,
-    question: QuizQuestion,
-    selected_answer: str,
-    confidence_1_to_5: int,
-) -> MistakeClassification:
-    if confidence_1_to_5 >= 4:
-        return MistakeClassification(
-            question_id=question.question_id,
-            mistake_type="careless",
-            missing_concept=None,
-            error_span=selected_answer,
-            rationale="High confidence with incorrect answer suggests a likely execution slip.",
-        )
-    if confidence_1_to_5 <= 2:
-        return MistakeClassification(
-            question_id=question.question_id,
-            mistake_type="conceptual",
-            missing_concept=concept,
-            error_span=selected_answer,
-            rationale="Low confidence and incorrect answer indicates a likely concept gap.",
-        )
-
-    # Mid-confidence fallback using lightweight LLM classification if available.
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return MistakeClassification(
-            question_id=question.question_id,
-            mistake_type="conceptual",
-            missing_concept=concept,
-            error_span=selected_answer,
-            rationale="No LLM key available; defaulted ambiguous mistake to conceptual for safer intervention.",
-        )
-
-    try:
-        llm_client = OpenAI(api_key=api_key)
-        system_prompt = (
-            "Classify student mistakes as careless or conceptual. "
-            "Return JSON with keys: mistake_type, missing_concept, error_span, rationale."
-        )
-        user_prompt = {
-            "concept": concept,
-            "question": question.stem,
-            "options": question.options,
-            "correct_answer": question.correct_answer,
-            "student_answer": selected_answer,
-            "confidence_1_to_5": confidence_1_to_5,
-        }
-        completion = llm_client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_prompt)},
-            ],
-        )
-        raw = completion.choices[0].message.content or "{}"
-        parsed = json.loads(raw)
-        mistake_type = parsed.get("mistake_type", "conceptual")
-        if mistake_type not in {"careless", "conceptual"}:
-            mistake_type = "conceptual"
-        return MistakeClassification(
-            question_id=question.question_id,
-            mistake_type=mistake_type,
-            missing_concept=parsed.get("missing_concept") or (concept if mistake_type == "conceptual" else None),
-            error_span=parsed.get("error_span") or selected_answer,
-            rationale=parsed.get("rationale") or "LLM classified this response.",
-        )
-    except Exception:
-        return MistakeClassification(
-            question_id=question.question_id,
-            mistake_type="conceptual",
-            missing_concept=concept,
-            error_span=selected_answer,
-            rationale="LLM classification failed; defaulted to conceptual.",
-        )
-
-
-def _record_attempt(
-    student_id: str,
-    question_id: str,
-    concept: str,
-    is_correct: bool,
-    confidence_1_to_5: int,
-    mistake_type: Optional[str],
-) -> None:
-    ATTEMPT_HISTORY.setdefault(student_id, []).append(
-        {
-            "question_id": question_id,
-            "concept": concept,
-            "is_correct": is_correct,
-            "confidence_1_to_5": confidence_1_to_5,
-            "mistake_type": mistake_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    )
 
 def process_file(file_path: str) -> List[str]:
     text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -571,15 +300,100 @@ async def get_learning_groups(group_size: int = 4):
             "groups": groups,
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error creating learning groups: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error creating learning groups: {str(e)}")
 
-# Cleanup on shutdown
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up database connection when shutting down"""
-    if 'conn' in globals() and conn:
-        conn.close()
-        print("Database connection closed")
+
+def _payload_to_state(payload: ConceptStatePayload) -> ConceptState:
+    return ConceptState(
+        concept_id=payload.concept_id,
+        mastery=payload.mastery,
+        p_learn=payload.p_learn,
+        p_guess=payload.p_guess,
+        p_slip=payload.p_slip,
+        decay_rate=payload.decay_rate,
+        last_updated=payload.last_updated,
+        attempts=payload.attempts,
+        correct=payload.correct,
+        careless_count=payload.careless_count,
+    ).normalized()
+
+
+def _state_to_payload(state: ConceptState) -> ConceptStatePayload:
+    return ConceptStatePayload(
+        concept_id=state.concept_id,
+        mastery=state.mastery,
+        p_learn=state.p_learn,
+        p_guess=state.p_guess,
+        p_slip=state.p_slip,
+        decay_rate=state.decay_rate,
+        last_updated=state.last_updated,
+        attempts=state.attempts,
+        correct=state.correct,
+        careless_count=state.careless_count,
+    )
+
+
+@app.post("/api/adaptive/bkt/update", response_model=BKTUpdateResponse)
+async def api_update_bkt(request: BKTUpdateRequest):
+    try:
+        state = _payload_to_state(request.concept)
+        result = adaptive_engine.update_bkt(
+            state=state,
+            is_correct=request.is_correct,
+            interaction_time=request.interaction_time,
+            mistake_type=request.mistake_type,
+            careless_penalty=request.careless_penalty,
+        )
+        return BKTUpdateResponse(
+            concept_id=result["concept_id"],
+            prior_mastery=result["prior_mastery"],
+            mastery_after_decay=result["mastery_after_decay"],
+            updated_mastery=result["updated_mastery"],
+            delta_mastery=result["delta_mastery"],
+            status=result["status"],
+            elapsed_days=result["elapsed_days"],
+            mistake_type=result["mistake_type"],
+            careless_penalty=result["careless_penalty"],
+            state=_state_to_payload(result["state"]),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"BKT update failed: {str(e)}")
+
+
+@app.post("/api/adaptive/bkt/mastery", response_model=MasteryResponse)
+async def api_get_mastery(request: MasteryRequest):
+    try:
+        state = _payload_to_state(request.concept)
+        result = adaptive_engine.get_mastery(
+            state=state,
+            as_of=request.as_of,
+            include_decay_projection=request.include_decay_projection,
+        )
+        return MasteryResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Mastery read failed: {str(e)}")
+
+
+@app.post("/api/adaptive/bkt/decay", response_model=DecayResponse)
+async def api_apply_decay(request: DecayRequest):
+    try:
+        state = _payload_to_state(request.concept)
+        updated_state, elapsed_days = adaptive_engine.apply_decay(state=state, as_of=request.as_of, mutate=True)
+        return DecayResponse(concept=_state_to_payload(updated_state), elapsed_days=round(elapsed_days, 6))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Decay application failed: {str(e)}")
+
+
+@app.post("/api/adaptive/rpkt/probe", response_model=RPKTProbeResponse)
+async def api_run_rpkt_probe(request: RPKTProbeRequest):
+    try:
+        result = adaptive_engine.run_rpkt_probe(
+            target_concept_id=request.target_concept_id,
+            prerequisites=request.prerequisites,
+            diagnostic_scores=request.diagnostic_scores,
+            mastery_threshold=request.mastery_threshold,
+            max_depth=request.max_depth,
+        )
+        return RPKTProbeResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
