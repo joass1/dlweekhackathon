@@ -3,9 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Clock, Play, Pause, RotateCcw, CheckCircle, AlertTriangle, BookOpen, Rocket, Loader2 } from 'lucide-react';
-import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
 import Link from 'next/link';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 interface StudyPlanItem {
   concept_id: string;
@@ -59,6 +59,7 @@ export default function StudyMissionPage() {
   const [missionBriefing, setMissionBriefing] = useState('');
 
   const studentId = useStudentId();
+  const { apiFetchWithAuth } = useAuthedApi();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -82,7 +83,7 @@ export default function StudyMissionPage() {
 
     // Update mastery in knowledge graph
     try {
-      await apiFetch('/api/kg/update_mastery', {
+      await apiFetchWithAuth('/api/kg/update_mastery', {
         method: 'POST',
         body: JSON.stringify({ concept_id: conceptId, is_correct: true, is_careless: false }),
       });
@@ -97,7 +98,7 @@ export default function StudyMissionPage() {
 
     try {
       // 1. Fetch the knowledge graph to get concept states
-      const graphData = await apiFetch<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph');
+      const graphData = await apiFetchWithAuth<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph');
       const nodes = graphData.nodes ?? [];
       const links = graphData.links ?? [];
 
@@ -129,7 +130,7 @@ export default function StudyMissionPage() {
       }
 
       // 3. Call the study plan API
-      const plan = await apiFetch<StudyPlanResponse>('/api/adaptive/planner/study-plan', {
+      const plan = await apiFetchWithAuth<StudyPlanResponse>('/api/adaptive/planner/study-plan', {
         method: 'POST',
         body: JSON.stringify({
           minutes: studyMinutes,

@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Brain, Book, Target, Eye, AlertTriangle, Loader2 } from 'lucide-react';
-import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 interface StudentProgress {
   student_id: string;
@@ -40,14 +40,15 @@ export default function ProfilePage() {
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [loading, setLoading] = useState(true);
   const studentId = useStudentId();
+  const { apiFetchWithAuth } = useAuthedApi();
 
   useEffect(() => {
     async function loadData() {
       try {
         const [progressData, graphData, courseData] = await Promise.all([
-          apiFetch<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
-          apiFetch<{ nodes: KGNode[] }>('/api/kg/graph').catch(() => ({ nodes: [] })),
-          apiFetch<{ courses: CourseOption[] }>('/api/courses').catch(() => ({ courses: [] })),
+          apiFetchWithAuth<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
+          apiFetchWithAuth<{ nodes: KGNode[] }>('/api/kg/graph').catch(() => ({ nodes: [] })),
+          apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses').catch(() => ({ courses: [] })),
         ]);
 
         if (progressData) setProgress(progressData);
@@ -69,7 +70,7 @@ export default function ProfilePage() {
       }
     }
     loadData();
-  }, [studentId]);
+  }, [studentId, apiFetchWithAuth]);
 
   const kgStats = progress?.kg_stats ?? {
     total_concepts: nodes.length,

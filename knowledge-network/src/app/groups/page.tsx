@@ -4,9 +4,9 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import Link from 'next/link';
-import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
 import { Loader2, Users } from 'lucide-react';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 interface HubMember {
   student_id: string;
@@ -37,6 +37,7 @@ interface CourseOption {
 
 export default function GroupsPage() {
   const studentId = useStudentId();
+  const { apiFetchWithAuth } = useAuthedApi();
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,11 +47,11 @@ export default function GroupsPage() {
     async function loadData() {
       try {
         // Load courses
-        const courseData = await apiFetch<{ courses: CourseOption[] }>('/api/courses');
+        const courseData = await apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses');
         setCourses(courseData.courses ?? []);
 
         // Load KG to build student concept profiles for hub matching
-        const graphData = await apiFetch<{ nodes: KGNode[] }>('/api/kg/graph');
+        const graphData = await apiFetchWithAuth<{ nodes: KGNode[] }>('/api/kg/graph');
         const nodes = graphData.nodes ?? [];
 
         if (nodes.length === 0) {
@@ -71,7 +72,7 @@ export default function GroupsPage() {
         ];
 
         // Call hub matching API
-        const hubResult = await apiFetch<{ hubs: Hub[] }>('/api/adaptive/hubs/match', {
+        const hubResult = await apiFetchWithAuth<{ hubs: Hub[] }>('/api/adaptive/hubs/match', {
           method: 'POST',
           body: JSON.stringify({
             students: simulatedStudents,
@@ -88,7 +89,7 @@ export default function GroupsPage() {
       }
     }
     loadData();
-  }, []);
+  }, [apiFetchWithAuth, studentId]);
 
   if (loading) {
     return (

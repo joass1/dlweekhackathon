@@ -5,9 +5,9 @@ import { Card } from "@/components/ui/card";
 import { BookOpen, AlertTriangle, Flame, Rocket, ArrowRight, Loader2, Target, Brain, Eye } from 'lucide-react';
 import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
-import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 interface KGNode {
   id: string;
@@ -47,15 +47,16 @@ export default function Page() {
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [selectedCourse, setSelectedCourse] = useState('all');
   const studentId = useStudentId();
+  const { apiFetchWithAuth } = useAuthedApi();
 
   useEffect(() => {
     async function loadData() {
       try {
         // Load KG graph, courses, and student progress in parallel
         const [graphData, courseData, progressData] = await Promise.all([
-          apiFetch<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph'),
-          apiFetch<{ courses: CourseOption[] }>('/api/courses').catch(() => ({ courses: DEFAULT_COURSES })),
-          apiFetch<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
+          apiFetchWithAuth<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph'),
+          apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses').catch(() => ({ courses: DEFAULT_COURSES })),
+          apiFetchWithAuth<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
         ]);
 
         const incoming: CourseOption[] = Array.isArray(courseData.courses) ? courseData.courses : DEFAULT_COURSES;
@@ -87,7 +88,7 @@ export default function Page() {
       }
     }
     loadData();
-  }, [studentId]);
+  }, [studentId, apiFetchWithAuth]);
 
   // ── Course filtering (same logic as the full Knowledge Map page) ────────────
   const filteredNodes = useMemo(() => {

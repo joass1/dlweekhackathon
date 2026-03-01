@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { Card } from '@/components/ui/card';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 type GraphStatus = 'mastered' | 'learning' | 'weak' | 'not_started';
 
@@ -24,6 +25,7 @@ interface GraphLink {
 }
 
 export default function KnowledgeMapPage() {
+  const { authedFetch } = useAuthedApi();
   const [selectedCourse, setSelectedCourse] = useState('all');
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -34,7 +36,7 @@ export default function KnowledgeMapPage() {
     const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
     const loadCourses = async () => {
       try {
-        const res = await fetch(`${base}/api/courses`);
+        const res = await authedFetch(`${base}/api/courses`);
         if (!res.ok) throw new Error('Failed to load courses');
         const data = await res.json();
         const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
@@ -44,7 +46,7 @@ export default function KnowledgeMapPage() {
       }
     };
     loadCourses();
-  }, []);
+  }, [authedFetch]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,7 +55,9 @@ export default function KnowledgeMapPage() {
     const loadGraph = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${base}/api/kg/graph`, { signal: controller.signal });
+        const res = await authedFetch(`${base}/api/kg/graph`, {
+          signal: controller.signal,
+        });
         if (!res.ok) throw new Error('Failed to load graph');
         const data = await res.json();
 
@@ -87,7 +91,7 @@ export default function KnowledgeMapPage() {
 
     loadGraph();
     return () => controller.abort();
-  }, []);
+  }, [authedFetch]);
 
   const filteredNodes = useMemo(() => {
     if (selectedCourse === 'all') return nodes;

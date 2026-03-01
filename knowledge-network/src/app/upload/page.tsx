@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import Link from 'next/link';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 interface UploadedFile {
   filename: string;
@@ -16,7 +16,7 @@ interface UploadedFile {
 
 export default function UploadPage() {
   const router = useRouter();
-  const { getIdToken } = useAuth();
+  const { authedFetch } = useAuthedApi();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isStartingAssessment, setIsStartingAssessment] = useState(false);
@@ -29,7 +29,7 @@ export default function UploadPage() {
     const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
     const load = async () => {
       try {
-        const res = await fetch(`${base}/api/courses`);
+        const res = await authedFetch(`${base}/api/courses`);
         if (!res.ok) throw new Error('Failed to load courses');
         const data = await res.json();
         const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
@@ -40,7 +40,7 @@ export default function UploadPage() {
       }
     };
     load();
-  }, []);
+  }, [authedFetch]);
 
   const handleUpload = async (files: FileList) => {
     setIsUploading(true);
@@ -52,10 +52,8 @@ export default function UploadPage() {
     if (selected) formData.append('course_name', selected.name);
 
     try {
-      const token = await getIdToken();
-      const response = await fetch(`${base}/upload`, {
+      const response = await authedFetch(`${base}/upload`, {
         method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
@@ -91,9 +89,11 @@ export default function UploadPage() {
     const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
     const create = async () => {
       try {
-        const res = await fetch(`${base}/api/courses`, {
+        const res = await authedFetch(`${base}/api/courses`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ name }),
         });
         if (!res.ok) throw new Error('Failed to create course');

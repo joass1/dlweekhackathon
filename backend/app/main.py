@@ -43,7 +43,7 @@ from app.models.schemas import (
     SelfAwarenessResponse,
 )
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
-from app.services.knowledge_graph import init_kg_engine, kg_engine, seed_demo_data
+from app.services.knowledge_graph import KnowledgeGraphEngine, init_kg_engine, kg_engine, seed_demo_data
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
 from app.services.assessment_engine import AssessmentEngine, AssessmentStateStore
@@ -128,6 +128,22 @@ if not kg_engine.get_graph_data().get("nodes"):
     seed_demo_data()
 
 
+def _courses_collection(student_id: str):
+    if db is None:
+        return None
+    return db.collection("users").document(student_id).collection("courses")
+
+
+def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
+    if db is None or FirestoreKnowledgeGraphStore is None:
+        return kg_engine
+
+    user_store = FirestoreKnowledgeGraphStore(db, graph_id=f"user_{student_id}")
+    user_engine = KnowledgeGraphEngine(firestore_store=user_store)
+    user_engine.load_from_firestore()
+    return user_engine
+
+
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     loader = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
@@ -173,11 +189,15 @@ class CourseCreateRequest(BaseModel):
 
 
 @app.get("/api/courses")
-async def get_courses():
+async def get_courses(student_id: str = Depends(get_student_id)):
     if db is None:
         return {"courses": DEFAULT_COURSES}
     try:
-        docs = db.collection("courses").stream()
+        courses_col = _courses_collection(student_id)
+        if courses_col is None:
+            return {"courses": DEFAULT_COURSES}
+
+        docs = courses_col.stream()
         courses = sorted(
             [
                 {"id": str((d.to_dict() or {}).get("id", d.id)), "name": str((d.to_dict() or {}).get("name", d.id))}
@@ -186,10 +206,10 @@ async def get_courses():
             key=lambda x: x["name"].lower(),
         )
         if not courses:
-            # Seed defaults once for convenience.
+            # Seed per-user defaults once for convenience.
             batch = db.batch()
             for c in DEFAULT_COURSES:
-                batch.set(db.collection("courses").document(c["id"]), c)
+                batch.set(courses_col.document(c["id"]), {**c, "userId": student_id})
             batch.commit()
             courses = DEFAULT_COURSES
         return {"courses": courses}
@@ -198,7 +218,7 @@ async def get_courses():
 
 
 @app.post("/api/courses")
-async def create_course(request: CourseCreateRequest):
+async def create_course(request: CourseCreateRequest, student_id: str = Depends(get_student_id)):
     name = (request.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Course name is required")
@@ -212,12 +232,16 @@ async def create_course(request: CourseCreateRequest):
         return {"course": {"id": course_id, "name": name}}
 
     try:
-        ref = db.collection("courses").document(course_id)
+        courses_col = _courses_collection(student_id)
+        if courses_col is None:
+            return {"course": {"id": course_id, "name": name}}
+
+        ref = courses_col.document(course_id)
         if ref.get().exists:
             data = ref.get().to_dict() or {}
             return {"course": {"id": course_id, "name": str(data.get("name", name))}}
 
-        payload = {"id": course_id, "name": name, "created_at": datetime.now(timezone.utc)}
+        payload = {"id": course_id, "name": name, "userId": student_id, "created_at": datetime.now(timezone.utc)}
         ref.set(payload)
         return {"course": {"id": course_id, "name": name}}
     except Exception as e:
@@ -236,6 +260,7 @@ async def upload_files(
 
     uploaded_files = []
     kg_concepts_added = 0
+    user_kg_engine = _get_user_kg_engine(student_id)
 
     for file in files:
         safe_name = pathlib.Path(file.filename).name if file.filename else "upload.txt"
@@ -261,10 +286,17 @@ async def upload_files(
             if db is not None:
                 try:
                     if course_id and course_name:
-                        db.collection("courses").document(course_id).set(
-                            {"id": course_id, "name": course_name, "updated_at": datetime.now(timezone.utc)},
-                            merge=True,
-                        )
+                        courses_col = _courses_collection(student_id)
+                        if courses_col is not None:
+                            courses_col.document(course_id).set(
+                                {
+                                    "id": course_id,
+                                    "name": course_name,
+                                    "userId": student_id,
+                                    "updated_at": datetime.now(timezone.utc),
+                                },
+                                merge=True,
+                            )
                     concept_slug = (course_id or safe_name).lower().replace(" ", "-")
                     batch = db.batch()
                     for i, chunk in enumerate(text_chunks):
@@ -286,7 +318,7 @@ async def upload_files(
             # Build knowledge graph from the extracted text
             try:
                 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                added = kg_engine.build_from_material(
+                added = user_kg_engine.build_from_material(
                     full_text,
                     openai_client,
                     course_id=course_id or None,
@@ -314,13 +346,13 @@ async def upload_files(
 
 
 @app.post("/api/ai/chat")
-async def chat(request: dict):
+async def chat(request: dict, student_id: str = Depends(get_student_id)):
     try:
         query = request.get("query")
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        hits = vector_search.search_discussions(query, 3)
+        hits = vector_search.search_discussions(query, 3, user_id=student_id)
         unique_context = []
         seen = set()
         for hit in hits:
@@ -584,9 +616,10 @@ class BuildFromMaterialRequest(BaseModel):
 
 
 @app.post("/api/kg/add_concept")
-async def add_concept(req: AddConceptRequest):
+async def add_concept(req: AddConceptRequest, student_id: str = Depends(get_student_id)):
     try:
-        node = kg_engine.add_concept(
+        user_kg_engine = _get_user_kg_engine(student_id)
+        node = user_kg_engine.add_concept(
             concept_id=req.concept_id,
             title=req.title,
             category=req.category,
@@ -599,9 +632,10 @@ async def add_concept(req: AddConceptRequest):
 
 
 @app.post("/api/kg/update_mastery")
-async def kg_update_mastery(req: UpdateMasteryRequest):
+async def kg_update_mastery(req: UpdateMasteryRequest, student_id: str = Depends(get_student_id)):
     try:
-        result = kg_engine.update_mastery(
+        user_kg_engine = _get_user_kg_engine(student_id)
+        result = user_kg_engine.update_mastery(
             concept_id=req.concept_id,
             is_correct=req.is_correct,
             is_careless=req.is_careless or False,
@@ -614,17 +648,19 @@ async def kg_update_mastery(req: UpdateMasteryRequest):
 
 
 @app.get("/api/kg/prerequisites/{concept_id}")
-async def get_prerequisites(concept_id: str):
-    return {"concept_id": concept_id, "prerequisites": kg_engine.get_prerequisites(concept_id)}
+async def get_prerequisites(concept_id: str, student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id)
+    return {"concept_id": concept_id, "prerequisites": user_kg_engine.get_prerequisites(concept_id)}
 
 
 @app.get("/api/kg/concepts/{concept_id}")
-async def get_concept(concept_id: str):
-    nodes = {node["id"]: node for node in kg_engine.get_graph_data().get("nodes", [])}
+async def get_concept(concept_id: str, student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id)
+    nodes = {node["id"]: node for node in user_kg_engine.get_graph_data().get("nodes", [])}
     node = nodes.get(concept_id)
     if not node:
         raise HTTPException(status_code=404, detail=f"Concept '{concept_id}' not found")
-    prereqs = kg_engine.get_prerequisites(concept_id)
+    prereqs = user_kg_engine.get_prerequisites(concept_id)
     return {
         "concept": node.get("id", concept_id),
         "title": node.get("title"),
@@ -637,25 +673,29 @@ async def get_concept(concept_id: str):
 
 
 @app.get("/api/kg/dependents/{concept_id}")
-async def get_dependents(concept_id: str):
-    return {"concept_id": concept_id, "dependents": kg_engine.get_dependents(concept_id)}
+async def get_dependents(concept_id: str, student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id)
+    return {"concept_id": concept_id, "dependents": user_kg_engine.get_dependents(concept_id)}
 
 
 @app.get("/api/kg/chain/{concept_id}")
-async def get_prerequisite_chain(concept_id: str):
-    return {"concept_id": concept_id, "chain": kg_engine.get_prerequisite_chain(concept_id)}
+async def get_prerequisite_chain(concept_id: str, student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id)
+    return {"concept_id": concept_id, "chain": user_kg_engine.get_prerequisite_chain(concept_id)}
 
 
 @app.get("/api/kg/graph")
-async def get_graph():
-    return kg_engine.get_graph_data()
+async def get_graph(student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id)
+    return user_kg_engine.get_graph_data()
 
 
 @app.post("/api/kg/build_from_material")
-async def build_from_material(req: BuildFromMaterialRequest):
+async def build_from_material(req: BuildFromMaterialRequest, student_id: str = Depends(get_student_id)):
     try:
         openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        added = kg_engine.build_from_material(
+        user_kg_engine = _get_user_kg_engine(student_id)
+        added = user_kg_engine.build_from_material(
             req.text,
             openai_client,
             course_id=req.course_id,
@@ -667,10 +707,11 @@ async def build_from_material(req: BuildFromMaterialRequest):
 
 
 @app.post("/api/kg/diagnose_mistake")
-async def diagnose_mistake(req: DiagnoseMistakeRequest):
+async def diagnose_mistake(req: DiagnoseMistakeRequest, student_id: str = Depends(get_student_id)):
     try:
         openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        result = kg_engine.diagnose_mistake(
+        user_kg_engine = _get_user_kg_engine(student_id)
+        result = user_kg_engine.diagnose_mistake(
             concept_id=req.concept_id,
             student_answer=req.student_answer,
             correct_answer=req.correct_answer,
@@ -685,9 +726,10 @@ async def diagnose_mistake(req: DiagnoseMistakeRequest):
 
 
 @app.get("/api/kg/render_graph", response_class=HTMLResponse)
-async def render_graph():
+async def render_graph(student_id: str = Depends(get_student_id)):
     try:
-        html = kg_engine.render_graph()
+        user_kg_engine = _get_user_kg_engine(student_id)
+        html = user_kg_engine.render_graph()
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to render graph: {str(e)}")
@@ -745,8 +787,10 @@ async def session_summary_endpoint(request: SessionData):
 
 
 @app.get("/api/students/{student_id}/progress")
-async def get_student_progress(student_id: str):
+async def get_student_progress(student_id: str, current_user_id: str = Depends(get_student_id)):
     """Return aggregated student progress from Firebase assessment + KG data."""
+    if student_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     progress: dict = {
         "student_id": student_id,
         "total_attempts": 0,
@@ -815,7 +859,8 @@ async def get_student_progress(student_id: str):
             print(f"Warning: Could not load concept states for {student_id}: {e}")
 
     # KG-level graph stats
-    graph_data = kg_engine.get_graph_data()
+    user_kg_engine = _get_user_kg_engine(student_id)
+    graph_data = user_kg_engine.get_graph_data()
     nodes = graph_data.get("nodes", [])
     progress["kg_stats"] = {
         "total_concepts": len(nodes),
