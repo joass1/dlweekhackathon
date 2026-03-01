@@ -1,0 +1,29 @@
+ /* Add these styles after your Tailwind imports */
+
+.split {
+    display: flex;
+    width: 100%;
+    height: 100%;
+  }
+  
+  .gutter {
+    background-color: #e5e7eb;
+    cursor: col-resize;
+    width: 4px;
+  }
+  
+  .gutter:hover {
+    background-color: #d1d5db;
+  }
+  
+  .gutter.gutter-horizontal {
+    cursor: col-resize;
+    width: 4px;
+  }
+  
+  .left-panel,
+  .middle-panel,
+  .right-panel {
+    height: 100%;
+    overflow-y: auto;
+  }

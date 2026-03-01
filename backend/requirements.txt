@@ -1,0 +1,9 @@
+# requirements.txt
+supabase
+python-dotenv
+fastapi
+uvicorn
+requests
+pandas
+sentence-transformers>=2.0.0
+qdrant-client>=1.7.0

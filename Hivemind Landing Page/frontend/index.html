@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NotesGPT - AI Notes Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <nav class="nav">
+            <div class="nav-logo">NotesGPT</div>
+            <div class="nav-links">
+                <a href="#" class="sign-in">Sign In</a>
+            </div>
+        </nav>
+
+        <div class="content">
+            <h1 class="main-title">Your AI Notes Assistant</h1>
+            
+            <div class="upload-section">
+                <div class="upload-box" id="dropZone">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="upload-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <p>Drag & drop your notes here</p>
+                    <p class="small">or</p>
+                    <label class="upload-button">
+                        Browse Files
+                        <input type="file" id="fileInput" multiple accept=".txt,.md,.pdf" hidden>
+                    </label>
+                    <p class="file-types">Supports: TXT, MD, PDF</p>
+                </div>
+            </div>
+
+            <div class="query-section">
+                <textarea id="queryInput" placeholder="Ask a question about your notes..."></textarea>
+                <button id="queryButton" class="cta-button">Ask AI</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
