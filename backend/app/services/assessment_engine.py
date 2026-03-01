@@ -45,6 +45,23 @@ def _extract_json_object(raw: str) -> Dict[str, Any]:
         raise
 
 
+def _safe_error_span(selected_answer: str) -> str:
+    # Keep a short, stable span for UI display and logs.
+    text = (selected_answer or "").strip()
+    if not text:
+        return "(no answer)"
+    return text[:160]
+
+
+def _normalize_missing_concept(value: Any, fallback: str) -> Optional[str]:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or fallback
+    return fallback
+
+
 class AssessmentStateStore:
     def __init__(self, path: Path):
         self.path = path
@@ -85,7 +102,15 @@ class AssessmentEngine:
         self.store = AssessmentStateStore(state_path)
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.kg_base_url = os.getenv("KG_API_BASE_URL", "").strip()
-        self.client = OpenAI(api_key=self.openai_key) if self.openai_key else None
+        self.enable_llm_generation = os.getenv("ENABLE_LLM_QUIZ_GENERATION", "true").lower() == "true"
+        self.enable_remote_profile = os.getenv("ENABLE_REMOTE_PROFILE_LOOKUP", "true").lower() == "true"
+        self.kg_timeout_s = float(os.getenv("KG_API_TIMEOUT_SECONDS", "2.0"))
+        self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "8.0"))
+        self.client = (
+            OpenAI(api_key=self.openai_key, timeout=self.llm_timeout_s)
+            if self.openai_key and self.enable_llm_generation
+            else None
+        )
 
     def _subject_bank(self, concept: str) -> List[Dict[str, Any]]:
         banks: Dict[str, List[Dict[str, Any]]] = {
@@ -165,11 +190,14 @@ class AssessmentEngine:
 
     def _fetch_kg_context(self, concept: str) -> Dict[str, Any]:
         # Optional integration with SAM's KG API if available.
-        if self.kg_base_url:
+        if self.kg_base_url and self.enable_remote_profile:
             try:
                 import requests  # local import to avoid hard dependency at import time
 
-                resp = requests.get(f"{self.kg_base_url.rstrip('/')}/api/kg/concepts/{concept}", timeout=6)
+                resp = requests.get(
+                    f"{self.kg_base_url.rstrip('/')}/api/kg/concepts/{concept}",
+                    timeout=self.kg_timeout_s,
+                )
                 if resp.ok:
                     data = resp.json()
                     return {
@@ -219,7 +247,7 @@ class AssessmentEngine:
 
     def _fetch_user_graph_context(self, student_id: str, concept: str, prerequisites: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Best effort integration with teammate services; falls back gracefully.
-        if not self.kg_base_url:
+        if not self.kg_base_url or not self.enable_remote_profile:
             return {
                 "student_id": student_id,
                 "target_concept": concept,
@@ -233,13 +261,11 @@ class AssessmentEngine:
             base = self.kg_base_url.rstrip("/")
             candidate_urls = [
                 f"{base}/api/kg/users/{student_id}/concepts/{concept}",
-                f"{base}/api/kg/user/{student_id}/concepts/{concept}",
                 f"{base}/api/adaptive/user/{student_id}/mastery?concept={concept}",
-                f"{base}/api/adaptive/mastery/{student_id}?concept={concept}",
             ]
             for url in candidate_urls:
                 try:
-                    resp = requests.get(url, timeout=6)
+                    resp = requests.get(url, timeout=self.kg_timeout_s)
                     if not resp.ok:
                         continue
                     data = resp.json()
@@ -557,12 +583,14 @@ class AssessmentEngine:
             kg_context,
             personalization,
         )
+        generation_source = "llm"
         if not questions:
             questions = self._fallback_generate_questions(
                 request.concept,
                 request.num_questions,
                 personalization,
             )
+            generation_source = "fallback"
 
         quizzes = state.setdefault("quizzes", {})
         quizzes[request.student_id] = {q.question_id: q.model_dump() for q in questions}
@@ -579,7 +607,7 @@ class AssessmentEngine:
                 }
                 for q in questions
             ],
-            "generation_source": "llm" if self.client else "fallback",
+            "generation_source": generation_source,
             "kg_context": {
                 "concept": kg_context.get("concept", request.concept),
                 "prerequisites": user_graph_context.get("prerequisites", []),
@@ -652,18 +680,23 @@ class AssessmentEngine:
                     ],
                 )
                 parsed = _extract_json_object(completion.choices[0].message.content or "{}")
-                mistake_type = parsed.get("mistake_type", "conceptual")
-                if mistake_type not in {"careless", "conceptual"}:
-                    mistake_type = "conceptual"
-                missing_concept = parsed.get("missing_concept")
-                if mistake_type == "conceptual" and not missing_concept:
-                    missing_concept = concept
+                mistake_type_raw = parsed.get("mistake_type", "conceptual")
+                mistake_type = mistake_type_raw if mistake_type_raw in {"careless", "conceptual"} else "conceptual"
+                missing_concept = _normalize_missing_concept(parsed.get("missing_concept"), concept)
+                if mistake_type == "careless":
+                    missing_concept = None
+                rationale = parsed.get("rationale")
+                if not isinstance(rationale, str) or not rationale.strip():
+                    rationale = "Ambiguous classification resolved by LLM."
+                error_span = parsed.get("error_span")
+                if not isinstance(error_span, str) or not error_span.strip():
+                    error_span = _safe_error_span(selected_answer)
                 return MistakeClassification(
                     question_id=question["question_id"],
                     mistake_type=mistake_type,
                     missing_concept=missing_concept,
-                    error_span=parsed.get("error_span") or selected_answer,
-                    rationale=parsed.get("rationale") or "Ambiguous classification resolved by LLM.",
+                    error_span=error_span.strip()[:160],
+                    rationale=rationale.strip()[:300],
                 )
             except Exception:
                 continue
@@ -676,30 +709,31 @@ class AssessmentEngine:
         selected_answer: str,
         confidence_1_to_5: int,
     ) -> MistakeClassification:
+        tested_concept = str(question.get("concept") or concept)
         if confidence_1_to_5 >= 4:
             return MistakeClassification(
                 question_id=question["question_id"],
                 mistake_type="careless",
                 missing_concept=None,
-                error_span=selected_answer,
+                error_span=_safe_error_span(selected_answer),
                 rationale="High-confidence incorrect answer suggests likely careless execution.",
             )
         if confidence_1_to_5 <= 2:
             return MistakeClassification(
                 question_id=question["question_id"],
                 mistake_type="conceptual",
-                missing_concept=concept,
-                error_span=selected_answer,
+                missing_concept=tested_concept,
+                error_span=_safe_error_span(selected_answer),
                 rationale="Low-confidence incorrect answer suggests conceptual gap.",
             )
-        llm_result = self._llm_classify_ambiguous(concept, question, selected_answer, confidence_1_to_5)
+        llm_result = self._llm_classify_ambiguous(tested_concept, question, selected_answer, confidence_1_to_5)
         if llm_result:
             return llm_result
         return MistakeClassification(
             question_id=question["question_id"],
             mistake_type="conceptual",
-            missing_concept=concept,
-            error_span=selected_answer,
+            missing_concept=tested_concept,
+            error_span=_safe_error_span(selected_answer),
             rationale="Ambiguous case defaulted to conceptual after LLM fallback failure.",
         )
 
@@ -728,12 +762,17 @@ class AssessmentEngine:
             is_correct = answer.selected_answer == question["correct_answer"]
             if is_correct:
                 previous = student_cls.get(answer.question_id)
-                if previous and previous.get("mistake_type") == "conceptual":
+                if (
+                    previous
+                    and previous.get("mistake_type") == "conceptual"
+                    and not previous.get("resolved_by_correct", False)
+                ):
                     student_blind["resolved"] += 1
+                    previous["resolved_by_correct"] = True
                 student_history.append(
                     {
                         "question_id": answer.question_id,
-                        "concept": request.concept,
+                        "concept": question.get("concept", request.concept),
                         "is_correct": True,
                         "confidence_1_to_5": answer.confidence_1_to_5,
                         "mistake_type": None,
@@ -751,12 +790,17 @@ class AssessmentEngine:
             previous = student_cls.get(answer.question_id)
             if not previous and classification.mistake_type == "conceptual":
                 student_blind["found"] += 1
-            student_cls[answer.question_id] = classification.model_dump()
+            stored = classification.model_dump()
+            stored["updated_at"] = _now_iso()
+            stored["overridden_by_user"] = bool(previous and previous.get("overridden_by_user", False))
+            stored["override_timestamp"] = previous.get("override_timestamp") if previous else None
+            stored["resolved_by_correct"] = False
+            student_cls[answer.question_id] = stored
             classifications.append(classification)
             student_history.append(
                 {
                     "question_id": answer.question_id,
-                    "concept": request.concept,
+                    "concept": question.get("concept", request.concept),
                     "is_correct": False,
                     "confidence_1_to_5": answer.confidence_1_to_5,
                     "mistake_type": classification.mistake_type,
@@ -814,13 +858,20 @@ class AssessmentEngine:
     def override_classification(self, student_id: str, question_id: str) -> Dict[str, Any]:
         state, commit = self.store.transaction()
         cls_store = state.setdefault("classification_store", {})
+        blind = state.setdefault("blind_spot_counts", {})
         student_cls = cls_store.setdefault(student_id, {})
+        student_blind = blind.setdefault(student_id, {"found": 0, "resolved": 0})
         existing = student_cls.get(question_id)
         if not existing:
             raise ValueError("No classification found for this question.")
+        was_conceptual = existing.get("mistake_type") == "conceptual"
         existing["mistake_type"] = "careless"
         existing["missing_concept"] = None
         existing["rationale"] = "User override: student marked this as rushed/careless."
+        existing["overridden_by_user"] = True
+        existing["override_timestamp"] = _now_iso()
+        if was_conceptual:
+            student_blind["found"] = max(0, int(student_blind.get("found", 0)) - 1)
         commit(state)
         return {"updated": True, "question_id": question_id}
 
@@ -828,7 +879,7 @@ class AssessmentEngine:
         target = missing_concept or concept
         question = QuizQuestion(
             question_id=f"checkpoint-{target}-{datetime.now(timezone.utc).strftime('%H%M%S')}",
-            concept=concept,
+            concept=target,
             stem=f"Quick checkpoint: which statement best confirms mastery of {target}?",
             options=[
                 "I can explain the concept and apply it to a new problem.",
