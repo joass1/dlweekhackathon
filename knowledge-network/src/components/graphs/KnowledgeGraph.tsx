@@ -19,48 +19,26 @@ interface Link extends d3.SimulationLinkDatum<Node> {
   type: 'prerequisite' | 'related';
 }
 
-const KnowledgeGraph = () => {
+interface KnowledgeGraphProps {
+  nodes?: Node[];
+  links?: Link[];
+}
+
+const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
     if (!svgRef.current) return;
-
-    const nodes: Node[] = [
-      { id: '1', title: "Newton's 1st Law", mastery: 92, status: 'mastered', lastReviewed: '2026-02-28', decayRate: 14, category: 'Physics' },
-      { id: '2', title: "Newton's 2nd Law", mastery: 78, status: 'learning', lastReviewed: '2026-02-25', decayRate: 7, category: 'Physics' },
-      { id: '3', title: "Newton's 3rd Law", mastery: 45, status: 'weak', lastReviewed: '2026-02-20', decayRate: 3, category: 'Physics' },
-      { id: '4', title: 'Free Body Diagrams', mastery: 85, status: 'mastered', lastReviewed: '2026-02-27', decayRate: 10, category: 'Physics' },
-      { id: '5', title: 'Friction', mastery: 60, status: 'learning', lastReviewed: '2026-02-22', decayRate: 5, category: 'Physics' },
-      { id: '6', title: 'Momentum', mastery: 30, status: 'weak', lastReviewed: '2026-02-15', decayRate: 2, category: 'Physics' },
-      { id: '7', title: 'Conservation of Energy', mastery: 0, status: 'not_started', lastReviewed: '', decayRate: 0, category: 'Physics' },
-      { id: '8', title: 'Work-Energy Theorem', mastery: 55, status: 'learning', lastReviewed: '2026-02-23', decayRate: 4, category: 'Physics' },
-      { id: '9', title: 'Kinetic Energy', mastery: 70, status: 'learning', lastReviewed: '2026-02-26', decayRate: 6, category: 'Physics' },
-      { id: '10', title: 'Potential Energy', mastery: 40, status: 'weak', lastReviewed: '2026-02-18', decayRate: 3, category: 'Physics' },
-      { id: '11', title: 'Arrays', mastery: 95, status: 'mastered', lastReviewed: '2026-02-28', decayRate: 21, category: 'Data Structures' },
-      { id: '12', title: 'Linked Lists', mastery: 88, status: 'mastered', lastReviewed: '2026-02-27', decayRate: 14, category: 'Data Structures' },
-      { id: '13', title: 'Binary Trees', mastery: 65, status: 'learning', lastReviewed: '2026-02-24', decayRate: 5, category: 'Data Structures' },
-      { id: '14', title: 'Graph Algorithms', mastery: 20, status: 'weak', lastReviewed: '2026-02-10', decayRate: 2, category: 'Data Structures' },
-    ];
-
-    const links: Link[] = [
-      { source: '1', target: '2', type: 'prerequisite' },
-      { source: '2', target: '3', type: 'prerequisite' },
-      { source: '1', target: '4', type: 'prerequisite' },
-      { source: '4', target: '5', type: 'related' },
-      { source: '3', target: '6', type: 'prerequisite' },
-      { source: '9', target: '8', type: 'prerequisite' },
-      { source: '10', target: '7', type: 'prerequisite' },
-      { source: '8', target: '7', type: 'prerequisite' },
-      { source: '11', target: '12', type: 'prerequisite' },
-      { source: '12', target: '13', type: 'prerequisite' },
-      { source: '13', target: '14', type: 'prerequisite' },
-    ];
+    const svg = d3.select(svgRef.current);
+    svg.selectAll('*').remove();
+    const graphNodes = [...nodes];
+    const graphLinks = [...links];
+    if (graphNodes.length === 0) {
+      return;
+    }
 
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
-
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
 
     // ── Defs: arrowhead + retro ball gradients ──────────────────────────────────
     const defs = svg.append('defs');
@@ -106,8 +84,8 @@ const KnowledgeGraph = () => {
       spec.append('stop').attr('offset', '100%').attr('stop-color', '#ffffff').attr('stop-opacity', 0);
     });
 
-    const simulation = d3.forceSimulation<Node>(nodes)
-      .force('link', d3.forceLink<Node, Link>(links).id(d => d.id).distance(100))
+    const simulation = d3.forceSimulation<Node>(graphNodes)
+      .force('link', d3.forceLink<Node, Link>(graphLinks).id(d => d.id).distance(100))
       .force('charge', d3.forceManyBody().strength(-300))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collision', d3.forceCollide().radius(35));
@@ -115,7 +93,7 @@ const KnowledgeGraph = () => {
     // Links
     const link = svg.append('g')
       .selectAll('line')
-      .data(links)
+      .data(graphLinks)
       .join('line')
       .style('stroke', d => d.type === 'prerequisite' ? '#94a3b8' : '#e2e8f0')
       .style('stroke-width', d => d.type === 'prerequisite' ? 2 : 1)
@@ -141,7 +119,7 @@ const KnowledgeGraph = () => {
     // Node groups (retro ball + shine + number)
     const nodeGroup = svg.append('g')
       .selectAll('g')
-      .data(nodes)
+      .data(graphNodes)
       .join('g')
       .style('cursor', 'pointer');
 
@@ -206,7 +184,7 @@ const KnowledgeGraph = () => {
     // Labels next to nodes
     const label = svg.append('g')
       .selectAll('text')
-      .data(nodes)
+      .data(graphNodes)
       .join('text')
       .text(d => d.title)
       .attr('font-size', '11px')
@@ -291,7 +269,7 @@ const KnowledgeGraph = () => {
     const pad = 30;
     simulation.on('tick', () => {
       // Clamp nodes inside the SVG boundaries
-      nodes.forEach(d => {
+      graphNodes.forEach(d => {
         const r = nodeR(d);
         d.x = Math.max(r + pad, Math.min(width - r - pad, d.x ?? width / 2));
         d.y = Math.max(r + pad, Math.min(height - r - pad, d.y ?? height / 2));
@@ -311,7 +289,7 @@ const KnowledgeGraph = () => {
     });
 
     return () => { tooltip.remove(); };
-  }, []);
+  }, [nodes, links]);
 
   return (
     <div className="w-full h-full relative">

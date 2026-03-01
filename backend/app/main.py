@@ -50,7 +50,7 @@ from app.services.adaptive_engine import AdaptiveEngine, ConceptState
 from app.services.knowledge_graph import init_kg_engine, kg_engine, seed_demo_data
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
-from app.services.assessment_engine import AssessmentEngine
+from app.services.assessment_engine import AssessmentEngine, AssessmentStateStore
 from app.services.tutor_service import TutorService
 from app.models.tutor_schemas import (
     EmbedContentRequest, EmbedContentResponse,
@@ -85,7 +85,18 @@ except Exception as e:
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
-assessment_engine = AssessmentEngine(data_dir / "assessment_state.json")
+
+if db is not None:
+    assessment_store = FirestoreAssessmentStore(db)
+    concept_state_store = FirestoreConceptStateStore(db)
+    kg_store = FirestoreKnowledgeGraphStore(db)
+else:
+    assessment_store = AssessmentStateStore(data_dir / "assessment_state.json")
+    concept_state_store = None
+    kg_store = None
+
+assessment_engine = AssessmentEngine(assessment_store)
+kg_engine = init_kg_engine(kg_store)
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
@@ -93,8 +104,9 @@ if not openai_api_key:
 _openai_client = OpenAI(api_key=openai_api_key or "placeholder")
 tutor_service = TutorService(db, _openai_client)
 
-# Seed demo knowledge graph on startup
-seed_demo_data()
+# Seed demo knowledge graph only when store is empty.
+if not kg_engine.get_graph_data().get("nodes"):
+    seed_demo_data()
 
 
 def process_file(file_path: str) -> List[str]:
