@@ -29,6 +29,78 @@
         "explanation": "Newton's second law can be expressed with the formula F=ma, where F is the net force, m is the mass, and a is the acceleration. This law explains how the velocity of an object changes when it is subjected to an external force.",
         "difficulty": "medium"
       }
+    },
+    "student-wvb3loyx": {
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "stem": "What happens to acceleration if net force doubles while mass stays constant?",
+        "options": [
+          "Acceleration halves",
+          "Acceleration doubles",
+          "Acceleration is unchanged",
+          "Cannot determine"
+        ],
+        "correct_answer": "Acceleration doubles",
+        "explanation": "By F = ma, acceleration scales with force when mass is constant.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "stem": "A passenger lurches forward when a car brakes because of:",
+        "options": [
+          "Inertia",
+          "Action-reaction imbalance",
+          "Increased gravity",
+          "Loss of momentum conservation"
+        ],
+        "correct_answer": "Inertia",
+        "explanation": "The body keeps its state of motion unless net force changes it.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q3": {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "stem": "Which pair is a Newton's 3rd law action-reaction pair?",
+        "options": [
+          "Weight and normal force on one object",
+          "Table on book and book on table",
+          "Friction and gravity",
+          "Acceleration and force"
+        ],
+        "correct_answer": "Table on book and book on table",
+        "explanation": "Action-reaction forces are equal/opposite and act on different objects.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q4": {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "stem": "What happens to acceleration if net force doubles while mass stays constant?",
+        "options": [
+          "Acceleration halves",
+          "Acceleration doubles",
+          "Acceleration is unchanged",
+          "Cannot determine"
+        ],
+        "correct_answer": "Acceleration doubles",
+        "explanation": "By F = ma, acceleration scales with force when mass is constant.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q5": {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "stem": "A passenger lurches forward when a car brakes because of:",
+        "options": [
+          "Inertia",
+          "Action-reaction imbalance",
+          "Increased gravity",
+          "Loss of momentum conservation"
+        ],
+        "correct_answer": "Inertia",
+        "explanation": "The body keeps its state of motion unless net force changes it.",
+        "difficulty": "medium"
+      }
     }
   },
   "attempt_history": {},
