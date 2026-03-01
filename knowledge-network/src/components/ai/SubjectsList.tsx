@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Folder, ChevronDown, ChevronRight, FileText, Upload } from 'lucide-react';
+import { Folder, ChevronDown, ChevronRight, FileText, Upload, GripVertical } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Subject {
   id: string;
@@ -44,11 +45,15 @@ const initialSubjects: Subject[] = [
   }
 ];
 
+const toConceptId = (title: string) =>
+  title.toLowerCase().replace(/'/g, '').replace(/\s+/g, '-');
+
 interface SubjectsListProps {
   onNoteSelect: (noteId: string) => void;
 }
 
 export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
+  const { getIdToken } = useAuth();
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -69,14 +74,16 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
 
     setIsUploading(true);
     const formData = new FormData();
-    
+
     Array.from(files).forEach((file) => {
       formData.append('files', file);
     });
 
     try {
+      const token = await getIdToken();
       const response = await fetch('http://localhost:8000/upload', {
         method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
 
@@ -86,18 +93,13 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
 
       const result = await response.json();
       console.log('Upload successful:', result);
-      
-      // Close modal after successful upload
       setIsUploadModalOpen(false);
-      
-      // Optionally refresh the subjects list
-      // You might want to add a refreshSubjects prop to handle this
     } catch (error) {
       console.error('Upload error:', error);
       alert('Failed to upload files. Please try again.');
     } finally {
       setIsUploading(false);
-      event.target.value = ''; // Reset file input
+      event.target.value = '';
     }
   };
 
@@ -129,16 +131,27 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                 <Folder className="w-5 h-5 mr-2 text-blue-500" />
                 <span className="font-medium">{subject.name}</span>
               </button>
-              
+
               {expandedSubjects.has(subject.id) && (
                 <div className="ml-6 space-y-1 mt-1">
                   {subject.notes.map((note) => (
                     <button
                       key={note.id}
-                      className="flex items-center w-full p-2 hover:bg-gray-100 rounded text-sm"
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('application/json', JSON.stringify({
+                          id: note.id,
+                          title: note.title,
+                          subjectName: subject.name,
+                          conceptId: toConceptId(note.title),
+                        }));
+                        e.dataTransfer.effectAllowed = 'copy';
+                      }}
+                      className="flex items-center w-full p-2 hover:bg-gray-100 rounded text-sm cursor-grab"
                       onClick={() => onNoteSelect(note.id)}
                     >
-                      <FileText className="w-4 h-4 mr-2" />
+                      <GripVertical className="w-3 h-3 mr-1 text-gray-400 flex-shrink-0" />
+                      <FileText className="w-4 h-4 mr-2 flex-shrink-0" />
                       <span>{note.title}</span>
                     </button>
                   ))}
@@ -200,4 +213,4 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       )}
     </div>
   );
-} 
+}

@@ -45,6 +45,7 @@ class TutorChatRequest(BaseModel):
     query: str
     userId: Optional[str] = None
     knowledge_state: Optional[KnowledgeState] = None
+    concept_ids: Optional[List[str]] = None
 
 
 class PrerequisiteChain(BaseModel):

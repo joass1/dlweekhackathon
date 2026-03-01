@@ -229,7 +229,7 @@ async def upload_files(
     files: List[UploadFile] = File(...),
     course_id: str = Form(""),
     course_name: str = Form(""),
-    user_id: Optional[str] = Form(None),
+    student_id: str = Depends(get_student_id),
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -275,7 +275,7 @@ async def upload_files(
                             "course_id": course_id or None,
                             "course_name": course_name or None,
                             "concept_id": concept_slug,
-                            "userId": user_id,
+                            "userId": student_id,
                             "chunk_index": i,
                             "created_at": datetime.now(timezone.utc),
                         })
@@ -696,29 +696,29 @@ async def render_graph():
 # ── Yichen: RAG + Socratic Tutor + Interventions ──────────────────────────────
 
 @app.post("/api/tutor/embed", response_model=EmbedContentResponse)
-async def embed_content_endpoint(request: EmbedContentRequest):
+async def embed_content_endpoint(request: EmbedContentRequest, student_id: str = Depends(get_student_id)):
     try:
-        n = tutor_service.embed_content(request.content, request.concept_id, request.source, request.userId)
+        n = tutor_service.embed_content(request.content, request.concept_id, request.source, student_id)
         return EmbedContentResponse(chunks_embedded=n, concept_id=request.concept_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tutor/context")
-async def retrieve_context_endpoint(request: RetrieveContextRequest):
+async def retrieve_context_endpoint(request: RetrieveContextRequest, student_id: str = Depends(get_student_id)):
     try:
-        chunks = tutor_service.retrieve_context(request.concept, request.limit, request.userId)
+        chunks = tutor_service.retrieve_context(request.concept, request.limit, student_id)
         return {"concept": request.concept, "chunks": chunks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tutor/chat")
-async def tutor_chat_endpoint(request: TutorChatRequest):
+async def tutor_chat_endpoint(request: TutorChatRequest, student_id: str = Depends(get_student_id)):
     try:
         if not request.query:
             raise HTTPException(status_code=400, detail="Query is required")
-        return tutor_service.tutor_chat(request.query, request.knowledge_state, request.userId)
+        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

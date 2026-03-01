@@ -45,19 +45,24 @@ class TutorService:
         text_lower = text.lower()
         return sum(1 for t in tokens if t in text_lower) / len(tokens)
 
-    def retrieve_context(self, concept: str, limit: int = 4, user_id: str = None) -> list:
+    def retrieve_context(self, concept: str, limit: int = 4, user_id: str = None, concept_ids: list = None) -> list:
         concept_id_slug = concept.lower().replace(" ", "-").replace("'", "")
 
         # Try concept_id filtered fetch first
-        query = self.db.collection(self.collection).where("concept_id", "==", concept_id_slug)
+        if concept_ids:
+            query = self.db.collection(self.collection).where("concept_id", "in", concept_ids)
+        else:
+            query = self.db.collection(self.collection).where("concept_id", "==", concept_id_slug)
         if user_id:
             query = query.where("userId", "==", user_id)
         docs = query.limit(50).stream()
 
         rows = [doc.to_dict() for doc in docs if doc.to_dict()]
         if not rows:
-            # Fallback: scan recent chunks and score by token overlap (scoped to userId if given)
+            # Fallback: scan chunks scoped to userId + concept_ids if given
             query = self.db.collection(self.collection)
+            if concept_ids:
+                query = query.where("concept_id", "in", concept_ids)
             if user_id:
                 query = query.where("userId", "==", user_id)
             docs = query.limit(200).stream()
@@ -113,8 +118,8 @@ class TutorService:
             extra += "\nTailor your guiding questions toward these gaps where relevant."
         return base + extra
 
-    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None) -> dict:
-        context_chunks = self.retrieve_context(message, limit=3, user_id=user_id)
+    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None) -> dict:
+        context_chunks = self.retrieve_context(message, limit=3, user_id=user_id, concept_ids=concept_ids)
         context_text = " ".join(c["text"] for c in context_chunks)
         system_prompt = self._build_socratic_prompt(knowledge_state)
 

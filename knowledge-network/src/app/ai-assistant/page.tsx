@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { ChatHistory, ChatInput, ChatWindow, NotesContext, SubjectsList } from '@/components/ai';
-import { Subject } from '@/types';
+import { ChatInput, ChatWindow, NotesContext, SubjectsList } from '@/components/ai';
+import { ScopedTopic } from '@/components/ai/ChatInput';
 import Split from 'react-split';
 
 interface Message {
@@ -21,10 +21,17 @@ interface ContextItem {
 }
 
 export default function AIAssistantPage() {
-  const { user } = useAuth();
+  const { getIdToken } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
+  const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
+
+  const handleTopicDrop = (topic: ScopedTopic) =>
+    setScopedTopics(prev => prev.find(t => t.id === topic.id) ? prev : [...prev, topic]);
+
+  const handleTopicRemove = (id: string) =>
+    setScopedTopics(prev => prev.filter(t => t.id !== id));
 
   const handleSendMessage = async (content: string) => {
     setIsLoading(true);
@@ -37,14 +44,16 @@ export default function AIAssistantPage() {
       };
       setMessages(prev => [...prev, userMessage]);
 
+      const token = await getIdToken();
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           query: content,
-          userId: user?.uid,
+          concept_ids: scopedTopics.map(t => t.conceptId),
         })
       });
 
@@ -53,7 +62,7 @@ export default function AIAssistantPage() {
       }
 
       const { answer, context } = await response.json();
-      setActiveNotes(context);
+      setActiveNotes(context ?? []);
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
@@ -71,7 +80,7 @@ export default function AIAssistantPage() {
   };
 
   return (
-    <Split 
+    <Split
       className="flex h-screen overflow-hidden bg-white"
       sizes={[20, 50, 30]}
       minSize={[200, 400, 250]}
@@ -79,7 +88,7 @@ export default function AIAssistantPage() {
     >
       {/* Left sidebar */}
       <div className="border-r h-screen overflow-y-auto">
-        <SubjectsList 
+        <SubjectsList
           onNoteSelect={(noteId) => {
             // Handle note selection
           }}
@@ -99,20 +108,22 @@ export default function AIAssistantPage() {
           />
         </div>
         <div className="p-4 border-t">
-          <ChatInput 
+          <ChatInput
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
             placeholder="Ask the Socratic Tutor about any concept..."
+            scopedTopics={scopedTopics}
+            onTopicDrop={handleTopicDrop}
+            onTopicRemove={handleTopicRemove}
           />
         </div>
       </div>
 
       {/* Right sidebar */}
       <div className="border-l h-screen overflow-y-auto">
-        <NotesContext 
+        <NotesContext
           activeNotes={activeNotes}
           onNoteClick={(note) => {
-            // Handle navigation to specific note
             console.log('Note clicked:', note);
           }}
         />

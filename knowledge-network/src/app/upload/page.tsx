@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card';
 import Link from 'next/link';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface UploadedFile {
   filename: string;
@@ -15,6 +16,7 @@ interface UploadedFile {
 
 export default function UploadPage() {
   const router = useRouter();
+  const { getIdToken } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isStartingAssessment, setIsStartingAssessment] = useState(false);
@@ -50,8 +52,10 @@ export default function UploadPage() {
     if (selected) formData.append('course_name', selected.name);
 
     try {
+      const token = await getIdToken();
       const response = await fetch(`${base}/upload`, {
         method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
