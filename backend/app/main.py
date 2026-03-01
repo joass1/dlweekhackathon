@@ -361,21 +361,6 @@ async def api_update_bkt(request: BKTUpdateRequest):
             mistake_type=request.mistake_type,
             careless_penalty=request.careless_penalty,
         )
-        # Persist updated BKT state to Firestore
-        if concept_state_store and request.student_id:
-            updated = result["state"]
-            concept_state_store.save_state(request.student_id, updated.concept_id, {
-                "concept_id": updated.concept_id,
-                "mastery": updated.mastery,
-                "p_learn": updated.p_learn,
-                "p_guess": updated.p_guess,
-                "p_slip": updated.p_slip,
-                "decay_rate": updated.decay_rate,
-                "last_updated": updated.last_updated.isoformat(),
-                "attempts": updated.attempts,
-                "correct": updated.correct,
-                "careless_count": updated.careless_count,
-            })
         return BKTUpdateResponse(
             concept_id=result["concept_id"],
             prior_mastery=result["prior_mastery"],
