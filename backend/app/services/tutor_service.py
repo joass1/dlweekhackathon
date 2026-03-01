@@ -92,7 +92,7 @@ class TutorService:
     # ── Deliverable 3 ─────────────────────────────────────────────────────────
     def _build_content_aware_prompt(self) -> str:
         return (
-            "You are the LearnGraph AI Study Companion.\n"
+            "You are the Mentora Study Companion.\n"
             "RULES:\n"
             "1. Answer questions DIRECTLY and completely from the provided course context.\n"
             "2. Cite the source concept or topic name when referencing specific content.\n"
@@ -102,7 +102,7 @@ class TutorService:
 
     def _build_socratic_prompt(self, knowledge_state) -> str:
         base = (
-            "You are the LearnGraph AI Socratic Tutor.\n"
+            "You are the Mentora Socratic Tutor.\n"
             "CRITICAL RULES:\n"
             "1. NEVER give a direct answer or solution.\n"
             "2. ONLY respond with guiding questions that help the student discover the answer.\n"

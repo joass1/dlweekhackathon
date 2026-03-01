@@ -149,7 +149,7 @@ export default function Page() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">LearnGraph AI Dashboard</h1>
+        <h1 className="text-2xl font-bold">Mentora Dashboard</h1>
         <p className="text-sm text-gray-500">Your adaptive learning companion</p>
       </div>
 

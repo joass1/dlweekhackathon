@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
@@ -17,7 +18,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Map, Mail, Loader2 } from "lucide-react";
+import { Mail, Loader2 } from "lucide-react";
 
 type Tab = "signin" | "signup";
 
@@ -150,10 +151,14 @@ export default function SignInPage() {
       <div className="w-full max-w-md">
         {/* Brand */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 bg-emerald-600 rounded-xl flex items-center justify-center mb-3">
-            <Map className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-emerald-700">LearnGraph AI</h1>
+          <Image
+            src="/logo-images/logo.png"
+            alt="Mentora"
+            width={320}
+            height={100}
+            className="h-20 w-auto mb-3"
+            priority
+          />
           <p className="text-sm text-gray-500 mt-1">Sign in to continue learning</p>
         </div>
 

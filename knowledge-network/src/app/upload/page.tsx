@@ -131,7 +131,7 @@ export default function UploadPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Upload Course Materials</h1>
       <p className="text-gray-500 mb-6">
-        Upload your lecture notes, textbooks, and study materials. LearnGraph AI will analyze them
+        Upload your lecture notes, textbooks, and study materials. Mentora will analyze them
         to build your personalized knowledge graph.
       </p>
 
@@ -214,7 +214,7 @@ export default function UploadPage() {
           <div>
             <h3 className="font-medium text-emerald-800">What happens next?</h3>
             <p className="text-sm text-emerald-700 mt-1">
-              LearnGraph AI extracts key concepts and builds prerequisite relationships
+              Mentora extracts key concepts and builds prerequisite relationships
               to create your knowledge graph. Once processed, view it on your{' '}
               <Link href="/knowledge-map" className="underline font-medium">Knowledge Map</Link>.
             </p>

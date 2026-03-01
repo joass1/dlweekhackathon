@@ -1,5 +1,5 @@
 """
-Firestore-backed persistence for all LearnGraph AI data domains.
+Firestore-backed persistence for all Mentora data domains.
 
 Collections:
   students/{student_id}                  — profile doc (blind_spot_counts)

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { Users, MessageSquare, ClipboardCheck, LineChart, Upload, Map, Rocket, Home, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -33,11 +34,15 @@ export const Sidebar = () => {
     <div className="w-64 h-screen bg-slate-100 p-6 flex flex-col">
       {/* Brand */}
       <div className="mb-8">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-10 h-10 bg-emerald-600 rounded-lg flex items-center justify-center">
-            <Map className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-lg font-bold text-emerald-700">LearnGraph AI</span>
+        <div className="mb-4">
+          <Image
+            src="/logo-images/logo.png"
+            alt="Mentora"
+            width={280}
+            height={88}
+            className="h-16 w-auto"
+            priority
+          />
         </div>
         {user?.photoURL ? (
           <img

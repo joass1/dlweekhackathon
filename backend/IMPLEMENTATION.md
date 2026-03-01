@@ -88,7 +88,7 @@ Interactive docs: **http://localhost:8000/docs**
 
 ```bash
 curl http://localhost:8000/
-# → {"message":"LearnGraph AI API is running"}
+# → {"message":"Mentora API is running"}
 ```
 
 ---

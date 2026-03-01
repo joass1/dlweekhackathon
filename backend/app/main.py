@@ -63,7 +63,7 @@ load_dotenv(BASE_DIR / ".env")
 data_dir = pathlib.Path("data")
 data_dir.mkdir(exist_ok=True)
 
-app = FastAPI(title="LearnGraph AI API")
+app = FastAPI(title="Mentora API")
 default_origins = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -190,7 +190,7 @@ def process_file(file_path: str) -> List[str]:
 
 @app.get("/")
 async def root():
-    return {"message": "LearnGraph AI API is running"}
+    return {"message": "Mentora API is running"}
 
 
 @app.get("/test")
@@ -428,7 +428,7 @@ async def chat(request: dict, student_id: str = Depends(get_student_id)):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are the LearnGraph AI Socratic Tutor. Instead of giving direct answers, guide the student with probing questions. Keep responses concise (max 150 words).",
+                    "content": "You are the Mentora Socratic Tutor. Instead of giving direct answers, guide the student with probing questions. Keep responses concise (max 150 words).",
                 },
                 {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {query}"},
             ],

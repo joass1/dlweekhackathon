@@ -170,7 +170,7 @@ export default function StudyMissionPage() {
           Study Mission
         </h1>
         <p className="text-gray-500 mb-8">
-          Tell us how much time you have. LearnGraph AI will create an optimized study queue
+          Tell us how much time you have. Mentora will create an optimized study queue
           prioritized by knowledge gap severity, prerequisite depth, and decay risk.
         </p>
 

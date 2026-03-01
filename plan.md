@@ -1,4 +1,4 @@
-# Firebase Integration Plan for LearnGraph AI
+# Firebase Integration Plan for Mentora
 
 ## Data That Needs Persistence
 
