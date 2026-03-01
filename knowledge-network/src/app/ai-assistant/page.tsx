@@ -26,6 +26,7 @@ export default function AIAssistantPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
+  const [mode, setMode] = useState<'socratic' | 'content_aware'>('socratic');
 
   const handleTopicDrop = (topic: ScopedTopic) =>
     setScopedTopics(prev => prev.find(t => t.id === topic.id) ? prev : [...prev, topic]);
@@ -54,6 +55,7 @@ export default function AIAssistantPage() {
         body: JSON.stringify({
           query: content,
           concept_ids: scopedTopics.map(t => t.conceptId),
+          mode,
         })
       });
 
@@ -115,6 +117,8 @@ export default function AIAssistantPage() {
             scopedTopics={scopedTopics}
             onTopicDrop={handleTopicDrop}
             onTopicRemove={handleTopicRemove}
+            mode={mode}
+            onModeToggle={() => setMode(m => m === 'socratic' ? 'content_aware' : 'socratic')}
           />
         </div>
       </div>

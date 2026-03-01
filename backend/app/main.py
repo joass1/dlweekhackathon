@@ -323,6 +323,18 @@ async def upload_files(
                             "created_at": datetime.now(timezone.utc),
                         })
                     batch.commit()
+                    # Write user_topics entry for sidebar
+                    topic_title = pathlib.Path(safe_name).stem
+                    topic_ref = db.collection("user_topics").document()
+                    topic_ref.set({
+                        "userId": student_id,
+                        "courseId": course_id or "uncategorized",
+                        "courseName": course_name or "Uncategorized",
+                        "conceptId": concept_slug,
+                        "title": topic_title,
+                        "chunkCount": len(text_chunks),
+                        "createdAt": datetime.now(timezone.utc),
+                    })
                 except Exception as e:
                     print(f"Warning: Firestore storage failed for {safe_name}: {e}")
 
@@ -779,7 +791,7 @@ async def tutor_chat_endpoint(request: TutorChatRequest, student_id: str = Depen
     try:
         if not request.query:
             raise HTTPException(status_code=400, detail="Query is required")
-        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids)
+        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids, request.mode)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -800,6 +812,33 @@ async def session_summary_endpoint(request: SessionData):
         return tutor_service.generate_session_summary(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/user-topics/{doc_id}")
+async def delete_user_topic(doc_id: str, student_id: str = Depends(get_student_id)):
+    if db is None:
+        raise HTTPException(status_code=503, detail="Firestore unavailable")
+    ref = db.collection("user_topics").document(doc_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    data = snap.to_dict() or {}
+    if data.get("userId") != student_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    concept_id = data.get("conceptId")
+    if concept_id:
+        try:
+            chunks = db.collection("knowledge_chunks") \
+                .where("userId", "==", student_id) \
+                .where("concept_id", "==", concept_id).stream()
+            batch = db.batch()
+            for c in chunks:
+                batch.delete(c.reference)
+            batch.commit()
+        except Exception as e:
+            print(f"Warning: cascade delete failed for concept_id={concept_id}: {e}")
+    ref.delete()
+    return {"status": "deleted", "doc_id": doc_id}
 
 
 # ── Student Progress endpoint ─────────────────────────────────────────────────

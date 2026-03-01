@@ -90,6 +90,16 @@ class TutorService:
         return scored[:limit]
 
     # ── Deliverable 3 ─────────────────────────────────────────────────────────
+    def _build_content_aware_prompt(self) -> str:
+        return (
+            "You are the LearnGraph AI Study Companion.\n"
+            "RULES:\n"
+            "1. Answer questions DIRECTLY and completely from the provided course context.\n"
+            "2. Cite the source concept or topic name when referencing specific content.\n"
+            "3. If the context does not contain the answer, say so clearly.\n"
+            "4. Keep responses factual, clear, and under 200 words.\n"
+        )
+
     def _build_socratic_prompt(self, knowledge_state) -> str:
         base = (
             "You are the LearnGraph AI Socratic Tutor.\n"
@@ -118,10 +128,14 @@ class TutorService:
             extra += "\nTailor your guiding questions toward these gaps where relevant."
         return base + extra
 
-    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None) -> dict:
+    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None, mode: str = "socratic") -> dict:
         context_chunks = self.retrieve_context(message, limit=3, user_id=user_id, concept_ids=concept_ids)
         context_text = " ".join(c["text"] for c in context_chunks)
-        system_prompt = self._build_socratic_prompt(knowledge_state)
+
+        if mode == "content_aware":
+            system_prompt = self._build_content_aware_prompt()
+        else:
+            system_prompt = self._build_socratic_prompt(knowledge_state)
 
         response = self.openai.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -135,7 +149,7 @@ class TutorService:
         return {
             "answer": response.choices[0].message.content,
             "context": context_chunks,
-            "mode": "socratic_aware" if knowledge_state else "socratic_basic",
+            "mode": mode,
         }
 
     # ── Deliverable 4 ─────────────────────────────────────────────────────────

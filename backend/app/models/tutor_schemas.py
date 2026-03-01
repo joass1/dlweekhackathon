@@ -46,6 +46,7 @@ class TutorChatRequest(BaseModel):
     userId: Optional[str] = None
     knowledge_state: Optional[KnowledgeState] = None
     concept_ids: Optional[List[str]] = None
+    mode: str = "socratic"  # "socratic" | "content_aware"
 
 
 class PrerequisiteChain(BaseModel):
