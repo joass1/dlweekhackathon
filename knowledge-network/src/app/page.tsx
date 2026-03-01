@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, Flame, Rocket, ArrowRight, Loader2 } from 'lucide-react';
+import { BookOpen, AlertTriangle, Flame, Rocket, ArrowRight, Loader2, Target, Brain, Eye } from 'lucide-react';
 import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
-import { apiFetch } from '@/services/api';
+import { apiFetch, getStudentId } from '@/services/api';
 
 interface KGNode {
   id: string;
@@ -22,17 +22,38 @@ interface KGLink {
   type: 'prerequisite' | 'related';
 }
 
+interface StudentProgress {
+  student_id: string;
+  total_attempts: number;
+  correct_attempts: number;
+  accuracy: number;
+  careless_count: number;
+  conceptual_count: number;
+  blind_spots: { found: number; resolved: number };
+  self_awareness: { score: number; calibration_gap: number; total_attempts: number };
+  concept_mastery: { concept_id: string; mastery: number; attempts: number; correct: number; careless_count: number; last_updated: string | null }[];
+  recent_attempts: any[];
+  kg_stats: { total_concepts: number; mastered: number; learning: number; weak: number; not_started: number };
+}
+
 export default function Page() {
   const [nodes, setNodes] = useState<KGNode[]>([]);
   const [links, setLinks] = useState<KGLink[]>([]);
+  const [progress, setProgress] = useState<StudentProgress | null>(null);
   const [loading, setLoading] = useState(true);
+  const studentId = useMemo(() => getStudentId(), []);
 
   useEffect(() => {
-    async function loadGraph() {
+    async function loadData() {
       try {
-        const data = await apiFetch<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph');
+        // Load KG graph and student progress in parallel
+        const [graphData, progressData] = await Promise.all([
+          apiFetch<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph'),
+          apiFetch<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
+        ]);
+
         setNodes(
-          (data.nodes ?? []).map((n: any) => ({
+          (graphData.nodes ?? []).map((n: any) => ({
             id: String(n.id),
             title: String(n.title ?? n.id),
             mastery: Number(n.mastery ?? 0),
@@ -42,34 +63,35 @@ export default function Page() {
           }))
         );
         setLinks(
-          (data.links ?? []).map((l: any) => ({
+          (graphData.links ?? []).map((l: any) => ({
             source: String(l.source),
             target: String(l.target),
             type: l.type === 'prerequisite' ? 'prerequisite' : 'related',
           }))
         );
+        if (progressData) setProgress(progressData);
       } catch {
-        // Backend unavailable — show empty state
+        // Backend unavailable
       } finally {
         setLoading(false);
       }
     }
-    loadGraph();
-  }, []);
+    loadData();
+  }, [studentId]);
 
-  // Compute real stats from KG data
-  const mastered = nodes.filter(n => n.status === 'mastered').length;
-  const total = nodes.length;
+  // Use Firebase progress data when available, fall back to KG-computed stats
+  const kgStats = progress?.kg_stats;
+  const mastered = kgStats?.mastered ?? nodes.filter(n => n.status === 'mastered').length;
+  const total = kgStats?.total_concepts ?? nodes.length;
   const masteryRate = total > 0 ? Math.round((mastered / total) * 100) : 0;
+  const weakCount = kgStats?.weak ?? nodes.filter(n => n.status === 'weak').length;
+  const learningCount = kgStats?.learning ?? nodes.filter(n => n.status === 'learning').length;
 
   const now = Date.now();
-  const decaying = nodes.filter(n => {
-    if (!n.decayTimestamp) return false;
-    const ts = new Date(n.decayTimestamp).getTime();
-    return ts < now && n.status !== 'mastered';
+  const needsReview = weakCount + nodes.filter(n => {
+    if (!n.decayTimestamp || n.status === 'mastered' || n.status === 'weak') return false;
+    return new Date(n.decayTimestamp).getTime() < now;
   }).length;
-  // Also count weak concepts as "needing review"
-  const needsReview = decaying || nodes.filter(n => n.status === 'weak').length;
 
   const weakConcepts = nodes.filter(n => n.status === 'weak' || n.status === 'learning')
     .sort((a, b) => a.mastery - b.mastery)
@@ -84,6 +106,11 @@ export default function Page() {
       : 99,
   }));
 
+  const totalAttempts = progress?.total_attempts ?? 0;
+  const accuracy = progress?.accuracy ?? 0;
+  const blindSpots = progress?.blind_spots ?? { found: 0, resolved: 0 };
+  const selfAwareness = progress?.self_awareness ?? { score: 0, calibration_gap: 0, total_attempts: 0 };
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -91,7 +118,8 @@ export default function Page() {
         <p className="text-sm text-gray-500">Your adaptive learning companion</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* Row 1: KG Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <Card className="p-5">
           <div className="flex justify-between items-start">
             <div>
@@ -134,8 +162,8 @@ export default function Page() {
                 <Loader2 className="w-5 h-5 animate-spin mt-2 text-gray-400" />
               ) : (
                 <>
-                  <p className="text-2xl font-bold mt-1 text-red-600">{nodes.filter(n => n.status === 'weak').length}</p>
-                  <p className="text-sm text-red-600">Deep gaps to fix</p>
+                  <p className="text-2xl font-bold mt-1 text-red-600">{weakCount}</p>
+                  <p className="text-sm text-red-600">{weakCount > 0 ? 'Deep gaps to fix' : 'No gaps detected'}</p>
                 </>
               )}
             </div>
@@ -151,6 +179,85 @@ export default function Page() {
               <p className="text-sm text-emerald-600">{weakConcepts.length} concepts queued</p>
             </div>
             <Rocket className="h-5 w-5 text-emerald-500" />
+          </div>
+        </Card>
+      </div>
+
+      {/* Row 2: Firebase Assessment Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <Card className="p-5">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="font-medium text-sm text-muted-foreground">Total Attempts</h3>
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin mt-2 text-gray-400" />
+              ) : (
+                <>
+                  <p className="text-2xl font-bold mt-1">{totalAttempts}</p>
+                  <p className="text-sm text-blue-600">{Math.round(accuracy * 100)}% accuracy</p>
+                </>
+              )}
+            </div>
+            <Target className="h-5 w-5 text-blue-500" />
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="font-medium text-sm text-muted-foreground">Blind Spots</h3>
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin mt-2 text-gray-400" />
+              ) : (
+                <>
+                  <p className="text-2xl font-bold mt-1">{blindSpots.found}<span className="text-base font-normal text-gray-400"> found</span></p>
+                  <p className="text-sm text-purple-600">{blindSpots.resolved} resolved</p>
+                </>
+              )}
+            </div>
+            <Eye className="h-5 w-5 text-purple-500" />
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="font-medium text-sm text-muted-foreground">Self-Awareness</h3>
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin mt-2 text-gray-400" />
+              ) : (
+                <>
+                  <p className="text-2xl font-bold mt-1">{Math.round(selfAwareness.score * 100)}%</p>
+                  <p className="text-sm text-indigo-600">Calibration: {(selfAwareness.calibration_gap * 100).toFixed(0)}% gap</p>
+                </>
+              )}
+            </div>
+            <Brain className="h-5 w-5 text-indigo-500" />
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="font-medium text-sm text-muted-foreground">Mistake Types</h3>
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin mt-2 text-gray-400" />
+              ) : (
+                <>
+                  <div className="flex gap-3 mt-1">
+                    <div>
+                      <p className="text-lg font-bold text-orange-600">{progress?.careless_count ?? 0}</p>
+                      <p className="text-xs text-gray-500">Careless</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold text-red-600">{progress?.conceptual_count ?? 0}</p>
+                      <p className="text-xs text-gray-500">Conceptual</p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <AlertTriangle className="h-5 w-5 text-orange-400" />
           </div>
         </Card>
       </div>
@@ -219,6 +326,32 @@ export default function Page() {
               )}
             </div>
           </Card>
+
+          {/* Recent Activity from Firebase */}
+          {progress && progress.recent_attempts.length > 0 && (
+            <Card>
+              <div className="p-4 border-b">
+                <h3 className="font-semibold">Recent Activity</h3>
+                <p className="text-xs text-gray-500">Your latest assessment attempts</p>
+              </div>
+              <div className="p-4 space-y-2">
+                {progress.recent_attempts.slice(-5).reverse().map((attempt, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className={`w-2 h-2 rounded-full ${attempt.is_correct ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <span className="flex-1 truncate">{attempt.concept || 'Assessment'}</span>
+                    {attempt.mistake_type && attempt.mistake_type !== 'normal' && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        attempt.mistake_type === 'careless' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'
+                      }`}>{attempt.mistake_type}</span>
+                    )}
+                    <span className={`text-xs ${attempt.is_correct ? 'text-green-600' : 'text-red-600'}`}>
+                      {attempt.is_correct ? 'Correct' : 'Incorrect'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           <Card>
             <div className="p-4 border-b">
