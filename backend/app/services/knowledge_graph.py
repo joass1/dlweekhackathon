@@ -86,6 +86,7 @@ class KnowledgeGraphEngine:
         category: str,
         prerequisites: Optional[List[str]] = None,
         initial_mastery: float = 0.0,
+        course_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a concept node to the graph.
 
@@ -93,12 +94,16 @@ class KnowledgeGraphEngine:
         (i.e. prerequisite → concept means 'prerequisite must be learned first').
         """
         if concept_id in self._graph:
-            self._graph.nodes[concept_id].update({"title": title, "category": category})
+            update_payload = {"title": title, "category": category}
+            if course_id:
+                update_payload["course_id"] = course_id
+            self._graph.nodes[concept_id].update(update_payload)
         else:
             self._graph.add_node(
                 concept_id,
                 title=title,
                 category=category,
+                course_id=course_id,
                 mastery_score=initial_mastery,
                 status=_compute_status(initial_mastery),
                 careless_badge=False,
@@ -380,8 +385,15 @@ Return ONLY valid JSON:
                 data["status"] = _compute_status(data["mastery_score"])
                 self._persist_concept(node_id)
 
-    def build_from_material(self, text: str, openai_client: Any) -> List[Dict[str, Any]]:
+    def build_from_material(
+        self,
+        text: str,
+        openai_client: Any,
+        course_id: Optional[str] = None,
+        course_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Use OpenAI to extract concepts + prerequisites from course text."""
+        course_context = f"\nCourse: {course_name}\nCourse ID: {course_id}\n" if course_name or course_id else ""
         prompt = f"""You are a knowledge graph extractor for an educational platform.
 Given the following course material, extract a list of concepts and their prerequisites.
 
@@ -403,6 +415,7 @@ Rules:
 - Order concepts from foundational to advanced
 - Extract 5–15 concepts maximum
 
+{course_context}
 Course material:
 {text[:4000]}"""
 
@@ -422,8 +435,9 @@ Course material:
             self.add_concept(
                 concept_id=c["id"],
                 title=c["title"],
-                category=c.get("category", "General"),
+                category=course_name or c.get("category", "General"),
                 prerequisites=[],
+                course_id=course_id,
             )
         # Second pass: add prerequisite edges
         for c in concepts:
@@ -444,6 +458,7 @@ Course material:
             "id": node_id,
             "title": data.get("title", node_id),
             "category": data.get("category", "General"),
+            "courseId": data.get("course_id"),
             "mastery": round(data.get("mastery_score", 0.0) * 100),
             "status": data.get("status", "not_started"),
             "carelessBadge": data.get("careless_badge", False),

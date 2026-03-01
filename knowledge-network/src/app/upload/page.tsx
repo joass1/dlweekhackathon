@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, BookOpen } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import Link from 'next/link';
+import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 
 interface UploadedFile {
   filename: string;
@@ -15,21 +16,38 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [selectedCourse, setSelectedCourse] = useState('physics-101');
+  const [newCourseName, setNewCourseName] = useState('');
 
-  const courses = [
-    { id: 'physics-101', name: 'Physics 101' },
-    { id: 'data-structures', name: 'Data Structures' },
-    { id: 'biology-intro', name: 'Introduction to Biology' },
-  ];
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    const load = async () => {
+      try {
+        const res = await fetch(`${base}/api/courses`);
+        if (!res.ok) throw new Error('Failed to load courses');
+        const data = await res.json();
+        const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
+        setCourses(incoming);
+        if (incoming.length > 0) setSelectedCourse(incoming[0].id);
+      } catch {
+        setCourses(DEFAULT_COURSES);
+      }
+    };
+    load();
+  }, []);
 
   const handleUpload = async (files: FileList) => {
     setIsUploading(true);
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
     const formData = new FormData();
     Array.from(files).forEach(file => formData.append('files', file));
+    const selected = courses.find((c) => c.id === selectedCourse);
+    formData.append('course_id', selectedCourse);
+    if (selected) formData.append('course_name', selected.name);
 
     try {
-      const response = await fetch('http://localhost:8000/upload', {
+      const response = await fetch(`${base}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -45,6 +63,32 @@ export default function UploadPage() {
     }
   };
 
+  const handleAddCourse = () => {
+    const name = newCourseName.trim();
+    if (!name) return;
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    const create = async () => {
+      try {
+        const res = await fetch(`${base}/api/courses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        if (!res.ok) throw new Error('Failed to create course');
+        const data = await res.json();
+        const created: CourseOption = data.course;
+        const deduped = courses.filter((c) => c.id !== created.id);
+        const next = [...deduped, created];
+        setCourses(next);
+        setSelectedCourse(created.id);
+        setNewCourseName('');
+      } catch {
+        // no-op UI fallback for now
+      }
+    };
+    create();
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Upload Course Materials</h1>
@@ -55,10 +99,26 @@ export default function UploadPage() {
 
       <div className="mb-6">
         <label className="block text-sm font-medium mb-2">Select Course</label>
-        <select value={selectedCourse} onChange={e => setSelectedCourse(e.target.value)}
-          className="p-2 border rounded-lg w-64">
-          {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={selectedCourse} onChange={e => setSelectedCourse(e.target.value)}
+            className="p-2 border rounded-lg w-64">
+            {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <input
+            type="text"
+            value={newCourseName}
+            onChange={(e) => setNewCourseName(e.target.value)}
+            placeholder="Add new course"
+            className="p-2 border rounded-lg w-56"
+          />
+          <button
+            type="button"
+            onClick={handleAddCourse}
+            className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+          >
+            Add Course
+          </button>
+        </div>
       </div>
 
       <div
