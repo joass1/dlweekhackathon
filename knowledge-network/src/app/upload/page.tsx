@@ -5,6 +5,7 @@ import { Upload, FileText, CheckCircle, AlertCircle, BookOpen } from 'lucide-rea
 import { Card } from '@/components/ui/card';
 import Link from 'next/link';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
+import { useRouter } from 'next/navigation';
 
 interface UploadedFile {
   filename: string;
@@ -13,8 +14,10 @@ interface UploadedFile {
 }
 
 export default function UploadPage() {
+  const router = useRouter();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isStartingAssessment, setIsStartingAssessment] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [selectedCourse, setSelectedCourse] = useState('physics-101');
@@ -53,7 +56,22 @@ export default function UploadPage() {
       });
       if (!response.ok) throw new Error('Upload failed');
       const result = await response.json();
-      setUploadedFiles(prev => [...prev, ...result.files.map((f: { filename: string; chunks: number }) => ({ ...f, status: 'success' as const }))]);
+      const normalized: UploadedFile[] = (result.files || []).map(
+        (f: { filename: string; chunks: number; status?: 'success' | 'error' }) => ({
+          filename: f.filename,
+          chunks: f.chunks,
+          status: f.status || 'success',
+        })
+      );
+      setUploadedFiles(prev => [...prev, ...normalized]);
+
+      const hasSuccess = normalized.some(file => file.status === 'success');
+      if (hasSuccess) {
+        setIsStartingAssessment(true);
+        setTimeout(() => {
+          router.push(`/assessment/${selectedCourse}/take`);
+        }, 500);
+      }
     } catch {
       Array.from(files).forEach(file => {
         setUploadedFiles(prev => [...prev, { filename: file.name, chunks: 0, status: 'error' }]);
@@ -131,7 +149,11 @@ export default function UploadPage() {
       >
         <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
         <p className="text-lg font-medium mb-2">
-          {isUploading ? 'Uploading & processing...' : 'Drop files here or click to upload'}
+          {isUploading
+            ? 'Uploading & processing...'
+            : isStartingAssessment
+              ? 'Upload complete. Starting assessment...'
+              : 'Drop files here or click to upload'}
         </p>
         <p className="text-sm text-gray-500 mb-4">PDF, DOCX, TXT, MD supported</p>
         <input type="file" className="hidden" id="upload-input" multiple
