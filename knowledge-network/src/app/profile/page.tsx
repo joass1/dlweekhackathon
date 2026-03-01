@@ -1,11 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-'use client';
-
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Brain, Book, Target, Eye, AlertTriangle, Loader2 } from 'lucide-react';
-import { apiFetch, getStudentId } from '@/services/api';
+import { apiFetch } from '@/services/api';
+import { useStudentId } from '@/hooks/useStudentId';
 
 interface StudentProgress {
   student_id: string;
@@ -40,7 +39,7 @@ export default function ProfilePage() {
   const [nodes, setNodes] = useState<KGNode[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [loading, setLoading] = useState(true);
-  const studentId = useMemo(() => getStudentId(), []);
+  const studentId = useStudentId();
 
   useEffect(() => {
     async function loadData() {

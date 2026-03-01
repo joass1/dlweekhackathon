@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { BookOpen, AlertTriangle, Flame, Rocket, ArrowRight, Loader2, Target, Brain, Eye } from 'lucide-react';
 import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
-import { apiFetch, getStudentId } from '@/services/api';
+import { apiFetch } from '@/services/api';
+import { useStudentId } from '@/hooks/useStudentId';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 
 interface KGNode {
@@ -45,7 +46,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [selectedCourse, setSelectedCourse] = useState('all');
-  const studentId = useMemo(() => getStudentId(), []);
+  const studentId = useStudentId();
 
   useEffect(() => {
     async function loadData() {
