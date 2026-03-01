@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import exp
+from statistics import mean
 from typing import Dict, List, Optional, Tuple
 
 
@@ -232,4 +233,277 @@ class AdaptiveEngine:
             "probe_sequence": probe_sequence,
             "mastery_threshold": threshold,
             "visited_count": len(visited),
+        }
+
+    def generate_study_plan(
+        self,
+        minutes: int,
+        concepts: List[Dict[str, object]],
+        prerequisites: Optional[Dict[str, List[str]]] = None,
+        as_of: Optional[datetime] = None,
+    ) -> Dict[str, object]:
+        """
+        Build a greedy study mission with score:
+        gap_severity * prereq_depth * decay_risk * careless_frequency
+        """
+        if minutes <= 0:
+            return {
+                "minutes_requested": minutes,
+                "minutes_allocated": 0,
+                "remaining_minutes": max(0, minutes),
+                "selected_concepts": [],
+                "mission_briefing": "No time budget available.",
+            }
+
+        prerequisites = prerequisites or {}
+        as_of_utc = _ensure_utc(as_of)
+
+        def compute_depth(concept_id: str) -> int:
+            memo: Dict[str, int] = {}
+
+            def dfs(cid: str, seen: set[str]) -> int:
+                if cid in memo:
+                    return memo[cid]
+                if cid in seen:
+                    return 1
+                seen.add(cid)
+                parents = prerequisites.get(cid, [])
+                if not parents:
+                    memo[cid] = 1
+                    seen.remove(cid)
+                    return 1
+                depth_val = 1 + max(dfs(p, seen) for p in parents)
+                memo[cid] = depth_val
+                seen.remove(cid)
+                return depth_val
+
+            return dfs(concept_id, set())
+
+        scored_items: List[Dict[str, object]] = []
+        for item in concepts:
+            concept_id = str(item.get("concept_id", "")).strip()
+            if not concept_id:
+                continue
+
+            mastery = _clamp(float(item.get("mastery", 0.0)))
+            decay_rate = max(0.0, float(item.get("decay_rate", 0.02)))
+            attempts = max(0, int(item.get("attempts", 0)))
+            careless_count = max(0, int(item.get("careless_count", 0)))
+            est_minutes = max(1, int(item.get("estimated_minutes", 10)))
+            title = str(item.get("title", concept_id))
+
+            last_updated_raw = item.get("last_updated")
+            if isinstance(last_updated_raw, datetime):
+                last_updated = _ensure_utc(last_updated_raw)
+            elif isinstance(last_updated_raw, str) and last_updated_raw:
+                parsed = datetime.fromisoformat(last_updated_raw.replace("Z", "+00:00"))
+                last_updated = _ensure_utc(parsed)
+            else:
+                last_updated = as_of_utc
+
+            elapsed_days = max(0.0, (as_of_utc - last_updated).total_seconds() / 86400.0)
+            gap_severity = 1.0 - mastery
+
+            prereq_depth = int(item.get("prereq_depth", 0) or 0)
+            if prereq_depth <= 0:
+                prereq_depth = compute_depth(concept_id)
+            prereq_depth_factor = float(max(1, prereq_depth))
+
+            decay_risk = 1.0 - exp(-decay_rate * elapsed_days)
+
+            # Smoothed careless frequency in [0, 1], avoids hard-zero suppression.
+            careless_frequency = (careless_count + 1.0) / (attempts + 1.0)
+            careless_frequency = _clamp(careless_frequency)
+
+            score = gap_severity * prereq_depth_factor * decay_risk * careless_frequency
+
+            scored_items.append(
+                {
+                    "concept_id": concept_id,
+                    "title": title,
+                    "estimated_minutes": est_minutes,
+                    "score": round(score, 6),
+                    "factors": {
+                        "gap_severity": round(gap_severity, 6),
+                        "prereq_depth": prereq_depth,
+                        "decay_risk": round(decay_risk, 6),
+                        "careless_frequency": round(careless_frequency, 6),
+                    },
+                    "mastery": round(mastery, 6),
+                }
+            )
+
+        # Greedy fill by score density, then absolute score.
+        scored_items.sort(
+            key=lambda x: (
+                float(x["score"]) / max(1, int(x["estimated_minutes"])),
+                float(x["score"]),
+            ),
+            reverse=True,
+        )
+
+        remaining = minutes
+        selected: List[Dict[str, object]] = []
+        for item in scored_items:
+            duration = int(item["estimated_minutes"])
+            if duration <= remaining:
+                selected.append(item)
+                remaining -= duration
+
+        # If nothing fits exactly, pick the best single concept that exceeds budget least.
+        if not selected and scored_items:
+            fallback = min(scored_items, key=lambda x: int(x["estimated_minutes"]))
+            selected.append(fallback)
+            remaining = max(0, minutes - int(fallback["estimated_minutes"]))
+
+        minutes_allocated = sum(int(x["estimated_minutes"]) for x in selected)
+        prioritized = [x["title"] for x in selected[:3]]
+        mission_briefing = (
+            f"Study mission for {minutes} minutes: focus on "
+            f"{', '.join(prioritized) if prioritized else 'no concepts'} "
+            "based on gap severity, prerequisite depth, decay risk, and careless-frequency signals."
+        )
+
+        return {
+            "minutes_requested": minutes,
+            "minutes_allocated": minutes_allocated,
+            "remaining_minutes": max(0, remaining),
+            "selected_concepts": selected,
+            "mission_briefing": mission_briefing,
+        }
+
+    def match_hubs(
+        self,
+        students: List[Dict[str, object]],
+        hub_size: int = 4,
+    ) -> Dict[str, object]:
+        """
+        Balanced 4-tier grouping with complementarity scoring.
+        """
+        if hub_size < 2:
+            hub_size = 4
+
+        def avg_mastery(profile: Dict[str, float]) -> float:
+            vals = [float(v) for v in profile.values()] if profile else []
+            return mean(vals) if vals else 0.0
+
+        def classify_tier(avg: float) -> str:
+            if avg >= 0.8:
+                return "tier_1_expert"
+            if avg >= 0.65:
+                return "tier_2_strong"
+            if avg >= 0.45:
+                return "tier_3_developing"
+            return "tier_4_foundational"
+
+        def pair_complementarity(a: Dict[str, float], b: Dict[str, float]) -> float:
+            concepts = set(a.keys()) | set(b.keys())
+            if not concepts:
+                return 0.0
+            score = 0.0
+            for concept in concepts:
+                av = _clamp(float(a.get(concept, 0.0)))
+                bv = _clamp(float(b.get(concept, 0.0)))
+                diff = abs(av - bv)
+                transfer_bonus = 1.0 if (max(av, bv) >= 0.7 and min(av, bv) <= 0.4) else 0.0
+                score += diff + transfer_bonus
+            return score / len(concepts)
+
+        prepared: List[Dict[str, object]] = []
+        for idx, student in enumerate(students):
+            sid = str(student.get("student_id", f"student_{idx+1}"))
+            name = str(student.get("name", sid))
+            profile = student.get("concept_profile", {}) or {}
+            profile = {str(k): _clamp(float(v)) for k, v in profile.items()}
+            avg = avg_mastery(profile)
+            tier = classify_tier(avg)
+            prepared.append(
+                {
+                    "student_id": sid,
+                    "name": name,
+                    "concept_profile": profile,
+                    "avg_mastery": round(avg, 6),
+                    "tier": tier,
+                }
+            )
+
+        if not prepared:
+            return {"hub_size": hub_size, "hubs": [], "summary": {"total_students": 0, "total_hubs": 0}}
+
+        # Balanced seeding via snake distribution on average mastery.
+        sorted_students = sorted(prepared, key=lambda s: float(s["avg_mastery"]), reverse=True)
+        hub_count = max(1, (len(sorted_students) + hub_size - 1) // hub_size)
+        hubs: List[List[Dict[str, object]]] = [[] for _ in range(hub_count)]
+        idx = 0
+        direction = 1
+        for student in sorted_students:
+            hubs[idx].append(student)
+            idx += direction
+            if idx >= hub_count:
+                idx = hub_count - 1
+                direction = -1
+            elif idx < 0:
+                idx = 0
+                direction = 1
+
+        # Trim overflow to respect hub size by moving extras to next available hubs.
+        overflow: List[Dict[str, object]] = []
+        for i, hub in enumerate(hubs):
+            if len(hub) > hub_size:
+                overflow.extend(hub[hub_size:])
+                hubs[i] = hub[:hub_size]
+        for student in overflow:
+            placed = False
+            for hub in hubs:
+                if len(hub) < hub_size:
+                    hub.append(student)
+                    placed = True
+                    break
+            if not placed:
+                hubs.append([student])
+
+        hub_payload: List[Dict[str, object]] = []
+        for i, hub in enumerate(hubs):
+            pair_scores: List[float] = []
+            for a in range(len(hub)):
+                for b in range(a + 1, len(hub)):
+                    pair_scores.append(
+                        pair_complementarity(
+                            hub[a]["concept_profile"],  # type: ignore[index]
+                            hub[b]["concept_profile"],  # type: ignore[index]
+                        )
+                    )
+            complementarity = mean(pair_scores) if pair_scores else 0.0
+            hub_avg = mean([float(s["avg_mastery"]) for s in hub]) if hub else 0.0
+            tier_distribution: Dict[str, int] = {}
+            for member in hub:
+                tier = str(member["tier"])
+                tier_distribution[tier] = tier_distribution.get(tier, 0) + 1
+
+            hub_payload.append(
+                {
+                    "hub_id": f"hub_{i+1}",
+                    "members": [
+                        {
+                            "student_id": m["student_id"],
+                            "name": m["name"],
+                            "tier": m["tier"],
+                            "avg_mastery": m["avg_mastery"],
+                        }
+                        for m in hub
+                    ],
+                    "complementarity_score": round(complementarity, 6),
+                    "hub_avg_mastery": round(hub_avg, 6),
+                    "tier_distribution": tier_distribution,
+                }
+            )
+
+        return {
+            "hub_size": hub_size,
+            "hubs": hub_payload,
+            "summary": {
+                "total_students": len(prepared),
+                "total_hubs": len(hub_payload),
+                "avg_hub_complementarity": round(mean([h["complementarity_score"] for h in hub_payload]), 6),
+            },
         }

@@ -19,10 +19,14 @@ from app.models.adaptive_schemas import (
     ConceptStatePayload,
     DecayRequest,
     DecayResponse,
+    MatchHubsRequest,
+    MatchHubsResponse,
     MasteryRequest,
     MasteryResponse,
     RPKTProbeRequest,
     RPKTProbeResponse,
+    StudyPlanRequest,
+    StudyPlanResponse,
 )
 from app.models.schemas import SearchQuery, SearchResult
 from app.models.schemas import (
@@ -405,3 +409,145 @@ async def api_run_rpkt_probe(request: RPKTProbeRequest):
         return RPKTProbeResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
+
+
+@app.post("/api/adaptive/planner/study-plan", response_model=StudyPlanResponse)
+async def api_generate_study_plan(request: StudyPlanRequest):
+    try:
+        result = adaptive_engine.generate_study_plan(
+            minutes=request.minutes,
+            concepts=[c.model_dump() for c in request.concepts],
+            prerequisites=request.prerequisites,
+            as_of=request.as_of,
+        )
+        return StudyPlanResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Study plan generation failed: {str(e)}")
+
+
+@app.post("/api/adaptive/hubs/match", response_model=MatchHubsResponse)
+async def api_match_hubs(request: MatchHubsRequest):
+    try:
+        result = adaptive_engine.match_hubs(
+            students=[s.model_dump() for s in request.students],
+            hub_size=request.hub_size,
+        )
+        return MatchHubsResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Hub matching failed: {str(e)}")
+
+
+# ── Knowledge Graph Engine endpoints ───────────────────────────────────────────
+
+
+class AddConceptRequest(BaseModel):
+    concept_id: str
+    title: str
+    category: str
+    prerequisites: Optional[List[str]] = []
+    initial_mastery: Optional[float] = 0.0
+
+
+class UpdateMasteryRequest(BaseModel):
+    concept_id: str
+    is_correct: bool
+    is_careless: Optional[bool] = False
+
+
+class DiagnoseMistakeRequest(BaseModel):
+    concept_id: str
+    student_answer: str
+    correct_answer: str
+    confidence: int  # 1–5
+
+
+class BuildFromMaterialRequest(BaseModel):
+    text: str
+    course_id: Optional[str] = None
+
+
+@app.post("/api/kg/add_concept")
+async def add_concept(req: AddConceptRequest):
+    try:
+        node = kg_engine.add_concept(
+            concept_id=req.concept_id,
+            title=req.title,
+            category=req.category,
+            prerequisites=req.prerequisites or [],
+            initial_mastery=req.initial_mastery or 0.0,
+        )
+        return {"status": "ok", "node": node}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/kg/update_mastery")
+async def kg_update_mastery(req: UpdateMasteryRequest):
+    try:
+        result = kg_engine.update_mastery(
+            concept_id=req.concept_id,
+            is_correct=req.is_correct,
+            is_careless=req.is_careless or False,
+        )
+        return {"status": "ok", **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/kg/prerequisites/{concept_id}")
+async def get_prerequisites(concept_id: str):
+    return {"concept_id": concept_id, "prerequisites": kg_engine.get_prerequisites(concept_id)}
+
+
+@app.get("/api/kg/dependents/{concept_id}")
+async def get_dependents(concept_id: str):
+    return {"concept_id": concept_id, "dependents": kg_engine.get_dependents(concept_id)}
+
+
+@app.get("/api/kg/chain/{concept_id}")
+async def get_prerequisite_chain(concept_id: str):
+    return {"concept_id": concept_id, "chain": kg_engine.get_prerequisite_chain(concept_id)}
+
+
+@app.get("/api/kg/graph")
+async def get_graph():
+    return kg_engine.get_graph_data()
+
+
+@app.post("/api/kg/build_from_material")
+async def build_from_material(req: BuildFromMaterialRequest):
+    try:
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        added = kg_engine.build_from_material(req.text, openai_client)
+        return {"status": "ok", "added": len(added), "nodes": added}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build from material: {str(e)}")
+
+
+@app.post("/api/kg/diagnose_mistake")
+async def diagnose_mistake(req: DiagnoseMistakeRequest):
+    try:
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        result = kg_engine.diagnose_mistake(
+            concept_id=req.concept_id,
+            student_answer=req.student_answer,
+            correct_answer=req.correct_answer,
+            confidence=req.confidence,
+            openai_client=openai_client,
+        )
+        return {"status": "ok", **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Diagnosis failed: {str(e)}")
+
+
+@app.get("/api/kg/render_graph", response_class=HTMLResponse)
+async def render_graph():
+    try:
+        html = kg_engine.render_graph()
+        return HTMLResponse(content=html)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render graph: {str(e)}")

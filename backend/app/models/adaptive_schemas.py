@@ -88,3 +88,84 @@ class RPKTProbeResponse(BaseModel):
     probe_sequence: List[RPKTProbeStep]
     mastery_threshold: float
     visited_count: int
+
+
+class StudyPlanConceptInput(BaseModel):
+    concept_id: str
+    title: Optional[str] = None
+    mastery: float = Field(default=0.0, ge=0.0, le=1.0)
+    decay_rate: float = Field(default=0.02, ge=0.0)
+    last_updated: Optional[datetime] = None
+    attempts: int = Field(default=0, ge=0)
+    careless_count: int = Field(default=0, ge=0)
+    estimated_minutes: int = Field(default=10, ge=1)
+    prereq_depth: Optional[int] = Field(default=None, ge=1)
+
+
+class StudyPlanRequest(BaseModel):
+    minutes: int = Field(ge=1, le=480)
+    concepts: List[StudyPlanConceptInput]
+    prerequisites: Dict[str, List[str]] = {}
+    as_of: Optional[datetime] = None
+
+
+class StudyPlanFactorBreakdown(BaseModel):
+    gap_severity: float
+    prereq_depth: int
+    decay_risk: float
+    careless_frequency: float
+
+
+class StudyPlanItem(BaseModel):
+    concept_id: str
+    title: str
+    estimated_minutes: int
+    score: float
+    factors: StudyPlanFactorBreakdown
+    mastery: float
+
+
+class StudyPlanResponse(BaseModel):
+    minutes_requested: int
+    minutes_allocated: int
+    remaining_minutes: int
+    selected_concepts: List[StudyPlanItem]
+    mission_briefing: str
+
+
+class HubStudentInput(BaseModel):
+    student_id: str
+    name: Optional[str] = None
+    concept_profile: Dict[str, float]
+
+
+class MatchHubsRequest(BaseModel):
+    students: List[HubStudentInput]
+    hub_size: int = Field(default=4, ge=2, le=8)
+
+
+class HubMember(BaseModel):
+    student_id: str
+    name: str
+    tier: str
+    avg_mastery: float
+
+
+class HubResult(BaseModel):
+    hub_id: str
+    members: List[HubMember]
+    complementarity_score: float
+    hub_avg_mastery: float
+    tier_distribution: Dict[str, int]
+
+
+class MatchHubsSummary(BaseModel):
+    total_students: int
+    total_hubs: int
+    avg_hub_complementarity: float
+
+
+class MatchHubsResponse(BaseModel):
+    hub_size: int
+    hubs: List[HubResult]
+    summary: MatchHubsSummary

@@ -186,6 +186,210 @@ class AssessmentEngine:
             "summary": "",
         }
 
+    def _normalize_prerequisites(self, raw: Any) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        if not isinstance(raw, list):
+            return normalized
+        for item in raw:
+            if isinstance(item, str):
+                normalized.append(
+                    {
+                        "concept_id": item,
+                        "mastery": None,
+                        "status": None,
+                        "decay_risk": None,
+                        "careless_badge": None,
+                    }
+                )
+                continue
+            if isinstance(item, dict):
+                concept_id = item.get("concept_id") or item.get("concept") or item.get("id")
+                if not concept_id:
+                    continue
+                normalized.append(
+                    {
+                        "concept_id": str(concept_id),
+                        "mastery": item.get("mastery"),
+                        "status": item.get("status"),
+                        "decay_risk": item.get("decay_risk"),
+                        "careless_badge": item.get("careless_badge"),
+                    }
+                )
+        return normalized
+
+    def _fetch_user_graph_context(self, student_id: str, concept: str, prerequisites: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # Best effort integration with teammate services; falls back gracefully.
+        if not self.kg_base_url:
+            return {
+                "student_id": student_id,
+                "target_concept": concept,
+                "target_mastery": None,
+                "prerequisites": prerequisites,
+            }
+
+        try:
+            import requests  # local import to avoid import-time dependency
+
+            base = self.kg_base_url.rstrip("/")
+            candidate_urls = [
+                f"{base}/api/kg/users/{student_id}/concepts/{concept}",
+                f"{base}/api/kg/user/{student_id}/concepts/{concept}",
+                f"{base}/api/adaptive/user/{student_id}/mastery?concept={concept}",
+                f"{base}/api/adaptive/mastery/{student_id}?concept={concept}",
+            ]
+            for url in candidate_urls:
+                try:
+                    resp = requests.get(url, timeout=6)
+                    if not resp.ok:
+                        continue
+                    data = resp.json()
+                    raw_prereqs = (
+                        data.get("prerequisites")
+                        or data.get("prereq_nodes")
+                        or data.get("prerequisite_nodes")
+                        or prerequisites
+                    )
+                    normalized_prereqs = self._normalize_prerequisites(raw_prereqs)
+                    target_mastery = (
+                        data.get("target_mastery")
+                        or data.get("mastery")
+                        or data.get("concept_mastery")
+                    )
+                    return {
+                        "student_id": student_id,
+                        "target_concept": concept,
+                        "target_mastery": target_mastery,
+                        "prerequisites": normalized_prereqs or prerequisites,
+                    }
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return {
+            "student_id": student_id,
+            "target_concept": concept,
+            "target_mastery": None,
+            "prerequisites": prerequisites,
+        }
+
+    def _estimate_local_mastery(
+        self,
+        attempts: List[Dict[str, Any]],
+        concept: str,
+    ) -> Dict[str, Any]:
+        concept_attempts = [a for a in attempts if a.get("concept") == concept]
+        if not concept_attempts:
+            return {
+                "mastery": None,
+                "attempts": 0,
+                "correct": 0,
+                "careless_rate": 0.0,
+                "conceptual_rate": 0.0,
+                "decay_risk": 0.0,
+            }
+
+        total = len(concept_attempts)
+        correct = sum(1 for a in concept_attempts if bool(a.get("is_correct")))
+        # Smoothed mastery estimate from local historical interactions.
+        mastery = (correct + 1) / (total + 2)
+
+        wrong = [a for a in concept_attempts if not bool(a.get("is_correct"))]
+        careless = sum(1 for a in wrong if a.get("mistake_type") == "careless")
+        conceptual = sum(1 for a in wrong if a.get("mistake_type") == "conceptual")
+        denom_wrong = max(1, len(wrong))
+        careless_rate = careless / denom_wrong
+        conceptual_rate = conceptual / denom_wrong
+
+        latest_ts = None
+        for a in concept_attempts:
+            ts = a.get("timestamp")
+            if not isinstance(ts, str):
+                continue
+            if latest_ts is None or ts > latest_ts:
+                latest_ts = ts
+
+        decay_risk = 0.0
+        if latest_ts:
+            try:
+                last_dt = datetime.fromisoformat(latest_ts.replace("Z", "+00:00"))
+                age_days = max(0.0, (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400.0)
+                # simple forgetting proxy in [0,1)
+                decay_risk = 1.0 - math.exp(-0.12 * age_days)
+            except Exception:
+                decay_risk = 0.0
+
+        return {
+            "mastery": round(float(mastery), 4),
+            "attempts": total,
+            "correct": correct,
+            "careless_rate": round(float(careless_rate), 4),
+            "conceptual_rate": round(float(conceptual_rate), 4),
+            "decay_risk": round(float(decay_risk), 4),
+        }
+
+    def _build_personalization_profile(
+        self,
+        state: Dict[str, Any],
+        student_id: str,
+        concept: str,
+        user_graph_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        attempts = state.get("attempt_history", {}).get(student_id, [])
+        prerequisites = user_graph_context.get("prerequisites", [])
+
+        target_local = self._estimate_local_mastery(attempts, concept)
+        target_mastery_remote = user_graph_context.get("target_mastery")
+        target_mastery = (
+            float(target_mastery_remote)
+            if isinstance(target_mastery_remote, (int, float))
+            else target_local["mastery"]
+        )
+
+        prerequisite_profiles: List[Dict[str, Any]] = []
+        for prereq in prerequisites:
+            prereq_id = str(prereq.get("concept_id"))
+            local = self._estimate_local_mastery(attempts, prereq_id)
+            mastery_remote = prereq.get("mastery")
+            mastery = float(mastery_remote) if isinstance(mastery_remote, (int, float)) else local["mastery"]
+            entry = {
+                "concept_id": prereq_id,
+                "mastery": mastery,
+                "decay_risk": prereq.get("decay_risk") if isinstance(prereq.get("decay_risk"), (int, float)) else local["decay_risk"],
+                "careless_rate": local["careless_rate"],
+                "conceptual_rate": local["conceptual_rate"],
+            }
+            prerequisite_profiles.append(entry)
+
+        weak_candidates: List[Tuple[str, float]] = []
+        for row in prerequisite_profiles:
+            mastery = row["mastery"] if isinstance(row["mastery"], (int, float)) else 0.5
+            decay = float(row["decay_risk"] or 0.0)
+            conceptual_rate = float(row["conceptual_rate"] or 0.0)
+            priority = (1.0 - mastery) + 0.7 * decay + 0.5 * conceptual_rate
+            weak_candidates.append((row["concept_id"], priority))
+
+        target_m = target_mastery if isinstance(target_mastery, (int, float)) else 0.5
+        target_priority = (1.0 - target_m) + 0.7 * float(target_local["decay_risk"]) + 0.5 * float(target_local["conceptual_rate"])
+        weak_candidates.append((concept, target_priority))
+        weak_candidates.sort(key=lambda x: x[1], reverse=True)
+
+        focus_concepts = [c for c, _ in weak_candidates[:4]]
+        if concept not in focus_concepts:
+            focus_concepts.insert(0, concept)
+
+        return {
+            "student_id": student_id,
+            "target_concept": concept,
+            "target_mastery": target_mastery,
+            "target_decay_risk": target_local["decay_risk"],
+            "target_careless_rate": target_local["careless_rate"],
+            "target_conceptual_rate": target_local["conceptual_rate"],
+            "prerequisites": prerequisite_profiles,
+            "focus_concepts": focus_concepts,
+            "attempt_count": len(attempts),
+        }
+
     def _validate_generated_questions(self, concept: str, raw_questions: List[Dict[str, Any]], num_questions: int) -> List[QuizQuestion]:
         validated: List[QuizQuestion] = []
         idx = 1
@@ -195,6 +399,7 @@ class AssessmentEngine:
             correct_answer = str(item.get("correct_answer", "")).strip()
             difficulty = str(item.get("difficulty", "medium")).strip().lower()
             explanation = str(item.get("explanation", "")).strip()
+            focus_concept = str(item.get("concept", concept)).strip() or concept
             if difficulty not in {"easy", "medium", "hard"}:
                 difficulty = "medium"
             if not stem or not isinstance(options, list) or len(options) != 4:
@@ -207,7 +412,7 @@ class AssessmentEngine:
             validated.append(
                 QuizQuestion(
                     question_id=f"{concept}-q{idx}",
-                    concept=concept,
+                    concept=focus_concept,
                     stem=stem,
                     options=options_clean,
                     correct_answer=correct_answer,
@@ -220,25 +425,40 @@ class AssessmentEngine:
                 break
         return validated
 
-    def _llm_generate_questions(self, concept: str, num_questions: int, kg_context: Dict[str, Any]) -> List[QuizQuestion]:
+    def _llm_generate_questions(
+        self,
+        concept: str,
+        num_questions: int,
+        kg_context: Dict[str, Any],
+        personalization: Dict[str, Any],
+    ) -> List[QuizQuestion]:
         if not self.client:
             return []
 
         prompt = {
-            "task": "Generate multiple-choice quiz questions",
+            "task": "Generate personalized multiple-choice quiz questions",
             "constraints": {
                 "count": num_questions,
                 "options_per_question": 4,
                 "one_correct_answer_in_options": True,
                 "include_explanation": True,
                 "difficulty_values": ["easy", "medium", "hard"],
+                "return_only_json": True,
             },
             "concept": kg_context.get("concept", concept),
             "prerequisites": kg_context.get("prerequisites", []),
             "context_summary": kg_context.get("summary", ""),
+            "student_profile": personalization,
+            "personalization_requirements": [
+                "Prioritize weak prerequisite areas and high-decay concepts.",
+                "Bias difficulty by mastery: low mastery -> easier scaffolded questions.",
+                "Include at least one question directly on target concept.",
+                "For each question include `concept` field indicating which concept is tested.",
+            ],
             "output_format": {
                 "questions": [
                     {
+                        "concept": "string",
                         "stem": "string",
                         "options": ["string", "string", "string", "string"],
                         "correct_answer": "string",
@@ -272,44 +492,78 @@ class AssessmentEngine:
                 continue
         return []
 
-    def _fallback_generate_questions(self, concept: str, num_questions: int) -> List[QuizQuestion]:
-        bank = self._subject_bank(concept)
+    def _difficulty_for_mastery(self, mastery: Optional[float]) -> str:
+        if mastery is None:
+            return "medium"
+        if mastery < 0.45:
+            return "easy"
+        if mastery < 0.75:
+            return "medium"
+        return "hard"
+
+    def _fallback_generate_questions(
+        self,
+        concept: str,
+        num_questions: int,
+        personalization: Dict[str, Any],
+    ) -> List[QuizQuestion]:
+        focus_concepts = personalization.get("focus_concepts", [concept])
         result: List[QuizQuestion] = []
-        for idx, item in enumerate(bank[:num_questions], start=1):
+        for idx in range(1, num_questions + 1):
+            focus = focus_concepts[(idx - 1) % max(1, len(focus_concepts))]
+            bank = self._subject_bank(focus)
+            item = bank[(idx - 1) % len(bank)]
+            mastery_lookup = None
+            if focus == concept:
+                mastery_lookup = personalization.get("target_mastery")
+            else:
+                for prereq in personalization.get("prerequisites", []):
+                    if prereq.get("concept_id") == focus:
+                        mastery_lookup = prereq.get("mastery")
+                        break
             result.append(
                 QuizQuestion(
                     question_id=f"{concept}-q{idx}",
-                    concept=concept,
+                    concept=focus,
                     stem=item["stem"],
                     options=item["options"],
                     correct_answer=item["correct_answer"],
                     explanation=item.get("explanation"),
-                    difficulty=item.get("difficulty", "medium"),
-                )
-            )
-        while len(result) < num_questions:
-            idx = len(result) + 1
-            seed = bank[(idx - 1) % len(bank)]
-            result.append(
-                QuizQuestion(
-                    question_id=f"{concept}-q{idx}",
-                    concept=concept,
-                    stem=seed["stem"],
-                    options=seed["options"],
-                    correct_answer=seed["correct_answer"],
-                    explanation=seed.get("explanation"),
-                    difficulty=seed.get("difficulty", "medium"),
+                    difficulty=self._difficulty_for_mastery(mastery_lookup),
                 )
             )
         return result
 
     def generate_quiz(self, request: QuizGenerateRequest) -> Dict[str, Any]:
         kg_context = self._fetch_kg_context(request.concept)
-        questions = self._llm_generate_questions(request.concept, request.num_questions, kg_context)
-        if not questions:
-            questions = self._fallback_generate_questions(request.concept, request.num_questions)
+        normalized_prereqs = self._normalize_prerequisites(kg_context.get("prerequisites", []))
+        user_graph_context = self._fetch_user_graph_context(
+            request.student_id,
+            request.concept,
+            normalized_prereqs,
+        )
 
         state, commit = self.store.transaction()
+        personalization = self._build_personalization_profile(
+            state=state,
+            student_id=request.student_id,
+            concept=request.concept,
+            user_graph_context=user_graph_context,
+        )
+
+        questions = self._llm_generate_questions(
+            request.concept,
+            request.num_questions,
+            kg_context,
+            personalization,
+        )
+        if not questions:
+            questions = self._fallback_generate_questions(
+                request.concept,
+                request.num_questions,
+                personalization,
+            )
+
         quizzes = state.setdefault("quizzes", {})
         quizzes[request.student_id] = {q.question_id: q.model_dump() for q in questions}
         commit(state)
@@ -328,7 +582,14 @@ class AssessmentEngine:
             "generation_source": "llm" if self.client else "fallback",
             "kg_context": {
                 "concept": kg_context.get("concept", request.concept),
-                "prerequisites": kg_context.get("prerequisites", []),
+                "prerequisites": user_graph_context.get("prerequisites", []),
+            },
+            "personalization": {
+                "target_mastery": personalization.get("target_mastery"),
+                "focus_concepts": personalization.get("focus_concepts", []),
+                "target_decay_risk": personalization.get("target_decay_risk"),
+                "target_careless_rate": personalization.get("target_careless_rate"),
+                "target_conceptual_rate": personalization.get("target_conceptual_rate"),
             },
         }
 
