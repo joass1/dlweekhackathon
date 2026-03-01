@@ -39,6 +39,14 @@ from app.services.adaptive_engine import AdaptiveEngine, ConceptState
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
 from app.services.assessment_engine import AssessmentEngine
+from app.services.tutor_service import TutorService
+from app.models.tutor_schemas import (
+    EmbedContentRequest, EmbedContentResponse,
+    RetrieveContextRequest,
+    TutorChatRequest,
+    InterventionRequest, InterventionResponse,
+    SessionData, SessionSummaryResponse,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
@@ -66,6 +74,12 @@ except Exception as e:
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
 assessment_engine = AssessmentEngine(data_dir / "assessment_state.json")
+
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    print("WARNING: OPENAI_API_KEY not set — AI tutor endpoints will fail at runtime")
+_openai_client = OpenAI(api_key=openai_api_key or "placeholder")
+tutor_service = TutorService(db, _openai_client)
 
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -349,3 +363,51 @@ async def api_run_rpkt_probe(request: RPKTProbeRequest):
         return RPKTProbeResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
+
+
+# ── Yichen: RAG + Socratic Tutor + Interventions ──────────────────────────────
+
+@app.post("/api/tutor/embed", response_model=EmbedContentResponse)
+async def embed_content_endpoint(request: EmbedContentRequest):
+    try:
+        n = tutor_service.embed_content(request.content, request.concept_id, request.source)
+        return EmbedContentResponse(chunks_embedded=n, concept_id=request.concept_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/context")
+async def retrieve_context_endpoint(request: RetrieveContextRequest):
+    try:
+        chunks = tutor_service.retrieve_context(request.concept, request.limit)
+        return {"concept": request.concept, "chunks": chunks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/chat")
+async def tutor_chat_endpoint(request: TutorChatRequest):
+    try:
+        if not request.query:
+            raise HTTPException(status_code=400, detail="Query is required")
+        return tutor_service.tutor_chat(request.query, request.knowledge_state)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/intervene", response_model=InterventionResponse)
+async def run_intervention_endpoint(request: InterventionRequest):
+    try:
+        return tutor_service.run_intervention(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/session-summary", response_model=SessionSummaryResponse)
+async def session_summary_endpoint(request: SessionData):
+    try:
+        return tutor_service.generate_session_summary(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
