@@ -5,6 +5,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import Link from 'next/link';
 import { apiFetch } from '@/services/api';
+import { useStudentId } from '@/hooks/useStudentId';
 import { Loader2, Users } from 'lucide-react';
 
 interface HubMember {
@@ -35,6 +36,7 @@ interface CourseOption {
 }
 
 export default function GroupsPage() {
+  const studentId = useStudentId();
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,7 +66,7 @@ export default function GroupsPage() {
 
         // Create simulated peer students with varied profiles for hub matching demo
         const simulatedStudents = [
-          { student_id: 'current-student', name: 'You', concept_profile: conceptProfile },
+          { student_id: studentId, name: 'You', concept_profile: conceptProfile },
           ...generateSimulatedPeers(nodes, 7),
         ];
 
@@ -122,7 +124,7 @@ export default function GroupsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {hubs.map((hub) => {
-            const yourHub = hub.members.some(m => m.student_id === 'current-student');
+            const yourHub = hub.members.some(m => m.student_id === studentId);
             return (
               <Link key={hub.hub_id} href={`/groups/${hub.hub_id}`}>
                 <Card className={`hover:shadow-lg transition-shadow ${yourHub ? 'ring-2 ring-emerald-400' : ''}`}>

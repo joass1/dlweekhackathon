@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import {
   classifyMistake,
@@ -13,22 +13,10 @@ import {
   type ClassifyResult,
 } from '@/services/assessment';
 import { apiFetch } from '@/services/api';
+import { useStudentId } from '@/hooks/useStudentId';
 
 type AnswersMap = Record<string, number>;
 type ConfidenceMap = Record<string, number>;
-
-function getStudentId() {
-  if (typeof window === 'undefined') {
-    return 'student-demo';
-  }
-  const existing = window.localStorage.getItem('student_id');
-  if (existing) {
-    return existing;
-  }
-  const created = `student-${Math.random().toString(36).slice(2, 10)}`;
-  window.localStorage.setItem('student_id', created);
-  return created;
-}
 
 export default function AssessmentTakePage() {
   const router = useRouter();
@@ -45,7 +33,7 @@ export default function AssessmentTakePage() {
   const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
   const [checkpointConfidence, setCheckpointConfidence] = useState<number>(3);
   const [classificationResult, setClassificationResult] = useState<ClassifyResult | null>(null);
-  const studentId = useMemo(() => getStudentId(), []);
+  const studentId = useStudentId();
 
   useEffect(() => {
     let cancelled = false;

@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Clock, Play, Pause, RotateCcw, CheckCircle, AlertTriangle, BookOpen, Rocket, Loader2 } from 'lucide-react';
-import { apiFetch, getStudentId } from '@/services/api';
+import { apiFetch } from '@/services/api';
+import { useStudentId } from '@/hooks/useStudentId';
 import Link from 'next/link';
 
 interface StudyPlanItem {
@@ -57,7 +58,7 @@ export default function StudyMissionPage() {
   const [error, setError] = useState<string | null>(null);
   const [missionBriefing, setMissionBriefing] = useState('');
 
-  const studentId = useMemo(() => getStudentId(), []);
+  const studentId = useStudentId();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;

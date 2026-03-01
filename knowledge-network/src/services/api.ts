@@ -19,18 +19,23 @@ function getCandidateBaseUrls(): string[] {
 /**
  * Fetch JSON from the backend, automatically trying fallback URLs on network errors.
  */
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
   const baseUrls = getCandidateBaseUrls();
   let lastError: unknown = null;
 
   for (const base of baseUrls) {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(init?.headers as Record<string, string> || {}),
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const response = await fetch(`${base}${path}`, {
         ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(init?.headers || {}),
-        },
+        headers,
       });
 
       if (!response.ok) {
@@ -53,15 +58,4 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
 export function getApiBaseUrl(): string {
   return API_BASE_URL;
-}
-
-// ── Student ID helper ─────────────────────────────────────────────────────────
-
-export function getStudentId(): string {
-  if (typeof window === 'undefined') return 'student-demo';
-  const existing = window.localStorage.getItem('student_id');
-  if (existing) return existing;
-  const created = `student-${Math.random().toString(36).slice(2, 10)}`;
-  window.localStorage.setItem('student_id', created);
-  return created;
 }

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -13,6 +13,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from app.database.firebase_client import get_firestore_client
+from app.middleware.auth import get_student_id
 from app.database.firestore_stores import (
     FirestoreAssessmentStore,
     FirestoreConceptStateStore,
@@ -356,53 +357,56 @@ async def get_learning_groups(group_size: int = 4):
 
 
 @app.post("/api/assessment/generate-quiz")
-async def generate_quiz(request: QuizGenerateRequest):
+async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(get_student_id)):
+    request.student_id = student_id
     return assessment_engine.generate_quiz(request)
 
 
 @app.post("/api/assessment/evaluate", response_model=EvaluateResponse)
-async def evaluate_answer(request: QuizSubmitRequest):
+async def evaluate_answer(request: QuizSubmitRequest, student_id: str = Depends(get_student_id)):
     try:
+        request.student_id = student_id
         return assessment_engine.evaluate_answer(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/assessment/classify", response_model=ClassifyResponse)
-async def classify_mistake(request: QuizSubmitRequest):
+async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends(get_student_id)):
     try:
+        request.student_id = student_id
         return assessment_engine.classify_mistake(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/assessment/self-awareness/{student_id}", response_model=SelfAwarenessResponse)
-async def get_self_awareness_score(student_id: str):
+async def get_self_awareness_score(student_id: str, _uid: str = Depends(get_student_id)):
     return assessment_engine.get_self_awareness_score(student_id)
 
 
 @app.post("/api/assessment/override")
-async def override_mistake_classification(request: OverrideRequest):
+async def override_mistake_classification(request: OverrideRequest, student_id: str = Depends(get_student_id)):
     try:
-        return assessment_engine.override_classification(request.student_id, request.question_id)
+        return assessment_engine.override_classification(student_id, request.question_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/assessment/micro-checkpoint", response_model=MicroCheckpointResponse)
-async def generate_micro_checkpoint(request: MicroCheckpointRequest):
+async def generate_micro_checkpoint(request: MicroCheckpointRequest, student_id: str = Depends(get_student_id)):
     return assessment_engine.generate_micro_checkpoint(
-        request.student_id,
+        student_id,
         request.concept,
         request.missing_concept,
     )
 
 
 @app.post("/api/assessment/micro-checkpoint/submit", response_model=MicroCheckpointSubmitResponse)
-async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest):
+async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest, student_id: str = Depends(get_student_id)):
     try:
         return assessment_engine.submit_micro_checkpoint(
-            request.student_id,
+            student_id,
             request.question_id,
             request.selected_answer,
             request.confidence_1_to_5,

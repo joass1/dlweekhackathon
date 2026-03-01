@@ -1,7 +1,13 @@
+'use client';
+
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Brain, Book, Clock, Trophy, AlertTriangle } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function ProfilePage() {
+  const { user } = useAuth();
+  const displayName = user?.displayName || user?.email?.split('@')[0] || 'Student';
+  const initials = displayName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
   const courseProgress = [
     {
       course: 'Data Structures',
@@ -29,13 +35,16 @@ export default function ProfilePage() {
   return (
     <div className="p-6">
       <div className="flex items-center gap-6 mb-8">
-        <div className="w-24 h-24 bg-emerald-600 rounded-full flex items-center justify-center text-white text-3xl">
-          JS
-        </div>
+        {user?.photoURL ? (
+          <img src={user.photoURL} alt="" className="w-24 h-24 rounded-full object-cover" referrerPolicy="no-referrer" />
+        ) : (
+          <div className="w-24 h-24 bg-emerald-600 rounded-full flex items-center justify-center text-white text-3xl">
+            {initials}
+          </div>
+        )}
         <div>
-          <h1 className="text-2xl font-bold">John Smith</h1>
-          <p className="text-gray-600">Computer Science Major</p>
-          <p className="text-gray-600">Year 2</p>
+          <h1 className="text-2xl font-bold">{displayName}</h1>
+          <p className="text-gray-600">{user?.email}</p>
         </div>
       </div>
 
