@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -76,6 +76,11 @@ app.add_middleware(
 )
 
 adaptive_engine = AdaptiveEngine()
+DEFAULT_COURSES = [
+    {"id": "physics-101", "name": "Physics 101"},
+    {"id": "data-structures", "name": "Data Structures"},
+    {"id": "biology-intro", "name": "Introduction to Biology"},
+]
 
 try:
     db = get_firestore_client()
@@ -148,8 +153,69 @@ async def search_discussions(query: SearchQuery):
         raise HTTPException(status_code=500, detail=f"Error performing search: {str(e)}")
 
 
+class CourseCreateRequest(BaseModel):
+    name: str
+    id: Optional[str] = None
+
+
+@app.get("/api/courses")
+async def get_courses():
+    if db is None:
+        return {"courses": DEFAULT_COURSES}
+    try:
+        docs = db.collection("courses").stream()
+        courses = sorted(
+            [
+                {"id": str((d.to_dict() or {}).get("id", d.id)), "name": str((d.to_dict() or {}).get("name", d.id))}
+                for d in docs
+            ],
+            key=lambda x: x["name"].lower(),
+        )
+        if not courses:
+            # Seed defaults once for convenience.
+            batch = db.batch()
+            for c in DEFAULT_COURSES:
+                batch.set(db.collection("courses").document(c["id"]), c)
+            batch.commit()
+            courses = DEFAULT_COURSES
+        return {"courses": courses}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load courses: {str(e)}")
+
+
+@app.post("/api/courses")
+async def create_course(request: CourseCreateRequest):
+    name = (request.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Course name is required")
+
+    course_id = (request.id or name.lower()).strip()
+    course_id = "".join(ch if ch.isalnum() else "-" for ch in course_id).strip("-")
+    if not course_id:
+        course_id = "course"
+
+    if db is None:
+        return {"course": {"id": course_id, "name": name}}
+
+    try:
+        ref = db.collection("courses").document(course_id)
+        if ref.get().exists:
+            data = ref.get().to_dict() or {}
+            return {"course": {"id": course_id, "name": str(data.get("name", name))}}
+
+        payload = {"id": course_id, "name": name, "created_at": datetime.now(timezone.utc)}
+        ref.set(payload)
+        return {"course": {"id": course_id, "name": name}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create course: {str(e)}")
+
+
 @app.post("/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    course_id: str = Form(""),
+    course_name: str = Form(""),
+):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -179,12 +245,19 @@ async def upload_files(files: List[UploadFile] = File(...)):
             # Store in Firestore if available (non-fatal)
             if db is not None:
                 try:
+                    if course_id and course_name:
+                        db.collection("courses").document(course_id).set(
+                            {"id": course_id, "name": course_name, "updated_at": datetime.now(timezone.utc)},
+                            merge=True,
+                        )
                     batch = db.batch()
                     for i, chunk in enumerate(text_chunks):
                         doc_ref = db.collection(vector_search.collection_name).document()
                         batch.set(doc_ref, {
                             "text": chunk,
                             "source": safe_name,
+                            "course_id": course_id or None,
+                            "course_name": course_name or None,
                             "chunk_index": i,
                             "created_at": datetime.now(timezone.utc),
                         })
@@ -195,7 +268,12 @@ async def upload_files(files: List[UploadFile] = File(...)):
             # Build knowledge graph from the extracted text
             try:
                 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                added = kg_engine.build_from_material(full_text, openai_client)
+                added = kg_engine.build_from_material(
+                    full_text,
+                    openai_client,
+                    course_id=course_id or None,
+                    course_name=course_name or None,
+                )
                 kg_concepts_added += len(added)
             except Exception as e:
                 print(f"Warning: KG build failed for {safe_name}: {e}")
@@ -481,6 +559,7 @@ class DiagnoseMistakeRequest(BaseModel):
 class BuildFromMaterialRequest(BaseModel):
     text: str
     course_id: Optional[str] = None
+    course_name: Optional[str] = None
 
 
 @app.post("/api/kg/add_concept")
@@ -555,7 +634,12 @@ async def get_graph():
 async def build_from_material(req: BuildFromMaterialRequest):
     try:
         openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        added = kg_engine.build_from_material(req.text, openai_client)
+        added = kg_engine.build_from_material(
+            req.text,
+            openai_client,
+            course_id=req.course_id,
+            course_name=req.course_name,
+        )
         return {"status": "ok", "added": len(added), "nodes": added}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to build from material: {str(e)}")

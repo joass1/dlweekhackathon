@@ -31,8 +31,12 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
-    const graphNodes = [...nodes];
-    const graphLinks = [...links];
+    const graphNodes = nodes.map((n) => ({ ...n }));
+    const graphLinks = links.map((l) => {
+      const sourceId = typeof l.source === 'string' ? l.source : String((l.source as Node).id);
+      const targetId = typeof l.target === 'string' ? l.target : String((l.target as Node).id);
+      return { ...l, source: sourceId, target: targetId };
+    });
     if (graphNodes.length === 0) {
       return;
     }

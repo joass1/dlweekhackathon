@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { Card } from '@/components/ui/card';
+import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 
 type GraphStatus = 'mastered' | 'learning' | 'weak' | 'not_started';
 
@@ -11,6 +12,7 @@ interface GraphNode {
   title: string;
   mastery: number;
   status: GraphStatus;
+  courseId?: string;
   category?: string;
   decayTimestamp?: string | null;
 }
@@ -23,15 +25,26 @@ interface GraphLink {
 
 export default function KnowledgeMapPage() {
   const [selectedCourse, setSelectedCourse] = useState('all');
+  const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [links, setLinks] = useState<GraphLink[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const courses = [
-    { id: 'all', name: 'All Courses' },
-    { id: 'physics', name: 'Physics 101' },
-    { id: 'data-structures', name: 'Data Structures' },
-  ];
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    const loadCourses = async () => {
+      try {
+        const res = await fetch(`${base}/api/courses`);
+        if (!res.ok) throw new Error('Failed to load courses');
+        const data = await res.json();
+        const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
+        setCourses([{ id: 'all', name: 'All Courses' }, ...incoming]);
+      } catch {
+        setCourses([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
+      }
+    };
+    loadCourses();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -49,6 +62,7 @@ export default function KnowledgeMapPage() {
           title: String(n.title ?? n.id),
           mastery: Number(n.mastery ?? 0),
           status: (n.status ?? 'not_started') as GraphStatus,
+          courseId: n.courseId ? String(n.courseId) : undefined,
           category: String(n.category ?? 'General'),
           decayTimestamp: n.decayTimestamp ?? null,
         }));
@@ -77,16 +91,32 @@ export default function KnowledgeMapPage() {
 
   const filteredNodes = useMemo(() => {
     if (selectedCourse === 'all') return nodes;
-    const map: Record<string, string> = {
-      physics: 'Physics',
-      'data-structures': 'Data Structures',
-    };
-    return nodes.filter((n) => n.category === map[selectedCourse]);
-  }, [nodes, selectedCourse]);
+    const selected = courses.find((c) => c.id === selectedCourse);
+    if (!selected) return nodes;
+
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const courseNameNorm = normalize(selected.name).replace(/\b\d+\b/g, '').trim();
+
+    return nodes.filter((n) => {
+      // Preferred: new data explicitly tagged with courseId.
+      if (n.courseId) return n.courseId === selectedCourse;
+
+      // Backward compatibility: legacy nodes without courseId.
+      const categoryNorm = normalize(n.category ?? '');
+      if (!categoryNorm || !courseNameNorm) return false;
+      return (
+        categoryNorm === courseNameNorm ||
+        categoryNorm.includes(courseNameNorm) ||
+        courseNameNorm.includes(categoryNorm)
+      );
+    });
+  }, [nodes, selectedCourse, courses]);
 
   const filteredNodeIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
+  const linkNodeId = (end: string | { id?: string }) =>
+    typeof end === 'string' ? end : String(end?.id ?? '');
   const filteredLinks = useMemo(
-    () => links.filter((l) => filteredNodeIds.has(l.source) && filteredNodeIds.has(l.target)),
+    () => links.filter((l) => filteredNodeIds.has(linkNodeId(l.source as any)) && filteredNodeIds.has(linkNodeId(l.target as any))),
     [links, filteredNodeIds]
   );
 
