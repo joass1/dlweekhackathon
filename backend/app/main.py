@@ -19,10 +19,14 @@ from app.models.adaptive_schemas import (
     ConceptStatePayload,
     DecayRequest,
     DecayResponse,
+    MatchHubsRequest,
+    MatchHubsResponse,
     MasteryRequest,
     MasteryResponse,
     RPKTProbeRequest,
     RPKTProbeResponse,
+    StudyPlanRequest,
+    StudyPlanResponse,
 )
 from app.models.schemas import SearchQuery, SearchResult
 from app.models.schemas import (
@@ -391,6 +395,32 @@ async def api_run_rpkt_probe(request: RPKTProbeRequest):
         return RPKTProbeResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
+
+
+@app.post("/api/adaptive/planner/study-plan", response_model=StudyPlanResponse)
+async def api_generate_study_plan(request: StudyPlanRequest):
+    try:
+        result = adaptive_engine.generate_study_plan(
+            minutes=request.minutes,
+            concepts=[c.model_dump() for c in request.concepts],
+            prerequisites=request.prerequisites,
+            as_of=request.as_of,
+        )
+        return StudyPlanResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Study plan generation failed: {str(e)}")
+
+
+@app.post("/api/adaptive/hubs/match", response_model=MatchHubsResponse)
+async def api_match_hubs(request: MatchHubsRequest):
+    try:
+        result = adaptive_engine.match_hubs(
+            students=[s.model_dump() for s in request.students],
+            hub_size=request.hub_size,
+        )
+        return MatchHubsResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Hub matching failed: {str(e)}")
 
 
 # ── Knowledge Graph Engine endpoints ───────────────────────────────────────────
