@@ -13,11 +13,6 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from app.database.firebase_client import get_firestore_client
-from app.database.firestore_stores import (
-    FirestoreAssessmentStore,
-    FirestoreConceptStateStore,
-    FirestoreKnowledgeGraphStore,
-)
 from app.models.adaptive_schemas import (
     BKTUpdateRequest,
     BKTUpdateResponse,
@@ -87,6 +82,24 @@ try:
 except Exception as e:
     db = None
     print(f"Warning: Firestore unavailable ({e}). Upload will still build KG.")
+
+FirestoreAssessmentStore = None
+FirestoreKnowledgeGraphStore = None
+FirestoreConceptStateStore = None
+if db is not None:
+    try:
+        from app.database.firestore_stores import (
+            FirestoreAssessmentStore as _FirestoreAssessmentStore,
+            FirestoreConceptStateStore as _FirestoreConceptStateStore,
+            FirestoreKnowledgeGraphStore as _FirestoreKnowledgeGraphStore,
+        )
+
+        FirestoreAssessmentStore = _FirestoreAssessmentStore
+        FirestoreKnowledgeGraphStore = _FirestoreKnowledgeGraphStore
+        FirestoreConceptStateStore = _FirestoreConceptStateStore
+    except Exception as e:
+        print(f"Warning: Firestore stores unavailable ({e}). Falling back to local state stores.")
+        db = None
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
