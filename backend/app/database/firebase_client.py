@@ -1,18 +1,20 @@
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from dotenv import load_dotenv
-from firebase_admin import credentials, firestore, get_app, initialize_app
 
 load_dotenv()
 
-_client: Optional[firestore.Client] = None
+_client: Optional[Any] = None
 
 
-def get_firestore_client() -> firestore.Client:
+def get_firestore_client() -> Any:
     global _client
     if _client is not None:
         return _client
+
+    # Import lazily so backend can still start when firebase_admin isn't installed.
+    from firebase_admin import credentials, firestore, get_app, initialize_app
 
     service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
     try:

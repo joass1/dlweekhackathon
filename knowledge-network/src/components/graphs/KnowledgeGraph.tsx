@@ -62,8 +62,10 @@ const KnowledgeGraph = () => {
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    // Arrowhead marker for prerequisite edges
-    svg.append('defs').append('marker')
+    // ── Defs: arrowhead + retro ball gradients ──────────────────────────────────
+    const defs = svg.append('defs');
+
+    defs.append('marker')
       .attr('id', 'arrowhead')
       .attr('viewBox', '-0 -5 10 10')
       .attr('refX', 25)
@@ -74,6 +76,35 @@ const KnowledgeGraph = () => {
       .append('path')
       .attr('d', 'M 0,-5 L 10,0 L 0,5')
       .attr('fill', '#94a3b8');
+
+    // Retro glossy ball gradients — one per status
+    const ballColors: Record<string, { base: string; light: string; dark: string }> = {
+      mastered:    { base: '#22c55e', light: '#86efac', dark: '#15803d' },
+      learning:    { base: '#eab308', light: '#fde68a', dark: '#a16207' },
+      weak:        { base: '#ef4444', light: '#fca5a5', dark: '#b91c1c' },
+      not_started: { base: '#d1d5db', light: '#f3f4f6', dark: '#6b7280' },
+    };
+
+    Object.entries(ballColors).forEach(([status, c]) => {
+      // Main body gradient — radial with glossy highlight
+      const grad = defs.append('radialGradient')
+        .attr('id', `ball-${status}`)
+        .attr('cx', '35%').attr('cy', '30%')
+        .attr('r', '65%')
+        .attr('fx', '30%').attr('fy', '25%');
+      grad.append('stop').attr('offset', '0%').attr('stop-color', c.light).attr('stop-opacity', 0.95);
+      grad.append('stop').attr('offset', '50%').attr('stop-color', c.base).attr('stop-opacity', 0.80);
+      grad.append('stop').attr('offset', '100%').attr('stop-color', c.dark).attr('stop-opacity', 0.70);
+
+      // Specular highlight — small white spot
+      const spec = defs.append('radialGradient')
+        .attr('id', `shine-${status}`)
+        .attr('cx', '35%').attr('cy', '25%')
+        .attr('r', '35%')
+        .attr('fx', '35%').attr('fy', '20%');
+      spec.append('stop').attr('offset', '0%').attr('stop-color', '#ffffff').attr('stop-opacity', 0.7);
+      spec.append('stop').attr('offset', '100%').attr('stop-color', '#ffffff').attr('stop-opacity', 0);
+    });
 
     const simulation = d3.forceSimulation<Node>(nodes)
       .force('link', d3.forceLink<Node, Link>(links).id(d => d.id).distance(100))
@@ -91,42 +122,86 @@ const KnowledgeGraph = () => {
       .style('stroke-dasharray', d => d.type === 'prerequisite' ? 'none' : '4,4')
       .attr('marker-end', d => d.type === 'prerequisite' ? 'url(#arrowhead)' : '');
 
-    const getColor = (d: Node) => {
-      if (d.status === 'mastered') return '#22c55e';
-      if (d.status === 'learning') return '#eab308';
-      if (d.status === 'weak') return '#ef4444';
-      return '#d1d5db';
-    };
-
     const getStroke = (d: Node) => {
-      if (d.status === 'mastered') return '#16a34a';
-      if (d.status === 'learning') return '#ca8a04';
-      if (d.status === 'weak') return '#dc2626';
-      return '#9ca3af';
+      if (d.status === 'mastered') return '#15803d';
+      if (d.status === 'learning') return '#a16207';
+      if (d.status === 'weak') return '#b91c1c';
+      return '#6b7280';
     };
 
-    // Node groups (circle + text together)
+    const nodeR = (d: Node) => 14 + (d.mastery / 100) * 12;
+    const statusSprite: Partial<Record<Node['status'], string>> = {
+      mastered: '/green-ball.png',
+      learning: '/yellow-ball.png',
+      weak: '/red-ball.png',
+      not_started: '/grey-ball.png',
+    };
+    const hasSprite = (d: Node) => Boolean(statusSprite[d.status]);
+
+    // Node groups (retro ball + shine + number)
     const nodeGroup = svg.append('g')
       .selectAll('g')
       .data(nodes)
       .join('g')
       .style('cursor', 'pointer');
 
+    // Outer shadow/glow
     nodeGroup.append('circle')
-      .attr('r', d => 10 + (d.mastery / 100) * 15)
-      .style('fill', getColor)
-      .style('stroke', getStroke)
-      .style('stroke-width', 2)
-      .style('opacity', d => d.status === 'not_started' ? 0.5 : 0.9);
+      .attr('r', d => nodeR(d) + 3)
+      .style('fill', 'none')
+      .style('stroke', d => ballColors[d.status].base)
+      .style('stroke-width', 1.5)
+      .style('stroke-opacity', 0.3)
+      .style('filter', 'blur(2px)');
 
-    // Mastery % inside node
+    // Main ball body — glossy radial gradient, semi-transparent
+    nodeGroup.append('circle')
+      .attr('r', nodeR)
+      .style('fill', d => `url(#ball-${d.status})`)
+      .style('stroke', getStroke)
+      .style('stroke-width', 2.5)
+      .style('opacity', d => (hasSprite(d) ? 0.12 : d.status === 'not_started' ? 0.55 : 0.78));
+
+    // Pixel-art sprites for mastered/learning/weak concepts
+    nodeGroup
+      .filter(d => hasSprite(d))
+      .append('image')
+      .attr('class', 'status-ball-sprite')
+      .attr('href', d => statusSprite[d.status] ?? '')
+      .attr('x', d => -nodeR(d))
+      .attr('y', d => -nodeR(d))
+      .attr('width', d => nodeR(d) * 2)
+      .attr('height', d => nodeR(d) * 2)
+      .style('image-rendering', 'pixelated')
+      .style('pointer-events', 'none');
+
+    // Specular highlight overlay
+    nodeGroup.append('circle')
+      .attr('r', d => nodeR(d) * 0.85)
+      .attr('cx', d => -nodeR(d) * 0.12)
+      .attr('cy', d => -nodeR(d) * 0.15)
+      .style('fill', d => `url(#shine-${d.status})`)
+      .style('opacity', d => (hasSprite(d) ? 0 : 1))
+      .style('pointer-events', 'none');
+
+    // White number circle (retro ball number spot)
+    nodeGroup.append('circle')
+      .attr('r', d => nodeR(d) * 0.45)
+      .style('fill', '#ffffff')
+      .style('fill-opacity', 0.85)
+      .style('stroke', 'none')
+      .style('pointer-events', 'none');
+
+    // Mastery number inside the white spot
     nodeGroup.append('text')
       .text(d => d.status === 'not_started' ? '?' : `${d.mastery}`)
       .attr('text-anchor', 'middle')
-      .attr('dy', '0.35em')
-      .attr('font-size', '10px')
+      .attr('dy', '0.38em')
+      .attr('font-size', d => `${Math.max(9, nodeR(d) * 0.45)}px`)
       .attr('font-weight', 'bold')
-      .attr('fill', d => d.status === 'not_started' ? '#6b7280' : 'white');
+      .attr('font-family', '"Courier New", monospace')
+      .attr('fill', d => ballColors[d.status].dark)
+      .style('pointer-events', 'none');
 
     // Labels next to nodes
     const label = svg.append('g')
@@ -135,7 +210,7 @@ const KnowledgeGraph = () => {
       .join('text')
       .text(d => d.title)
       .attr('font-size', '11px')
-      .attr('dx', d => 14 + (d.mastery / 100) * 15)
+      .attr('dx', d => nodeR(d) + 6)
       .attr('dy', 4)
       .attr('fill', '#374151');
 
@@ -153,9 +228,18 @@ const KnowledgeGraph = () => {
       .style('z-index', '1000');
 
     nodeGroup.on('mouseover', function(event, d) {
-      d3.select(this).select('circle')
-        .transition().duration(200)
-        .attr('r', (10 + (d.mastery / 100) * 15) * 1.3);
+      d3.select(this).selectAll('circle')
+        .transition().duration(150)
+        .attr('r', function() {
+          const current = parseFloat(d3.select(this).attr('r'));
+          return current * 1.2;
+        });
+      d3.select(this).select('.status-ball-sprite')
+        .transition().duration(150)
+        .attr('x', -nodeR(d) * 1.2)
+        .attr('y', -nodeR(d) * 1.2)
+        .attr('width', nodeR(d) * 2.4)
+        .attr('height', nodeR(d) * 2.4);
 
       tooltip.style('opacity', 1)
         .html(`
@@ -167,10 +251,20 @@ const KnowledgeGraph = () => {
         `)
         .style('left', (event.pageX + 15) + 'px')
         .style('top', (event.pageY - 10) + 'px');
-    }).on('mouseout', function(event, d) {
-      d3.select(this).select('circle')
-        .transition().duration(200)
-        .attr('r', 10 + (d.mastery / 100) * 15);
+    }).on('mouseout', function(_, d) {
+      const r = nodeR(d);
+      const group = d3.select(this);
+      // Reset each circle to its original radius
+      group.select('circle:nth-child(1)').transition().duration(150).attr('r', r + 3);
+      group.select('circle:nth-child(2)').transition().duration(150).attr('r', r);
+      group.select('circle:nth-child(3)').transition().duration(150).attr('r', r * 0.85);
+      group.select('circle:nth-child(4)').transition().duration(150).attr('r', r * 0.45);
+      group.select('.status-ball-sprite')
+        .transition().duration(150)
+        .attr('x', -r)
+        .attr('y', -r)
+        .attr('width', r * 2)
+        .attr('height', r * 2);
       tooltip.style('opacity', 0);
     });
 
@@ -194,7 +288,15 @@ const KnowledgeGraph = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     nodeGroup.call(drag as any);
 
+    const pad = 30;
     simulation.on('tick', () => {
+      // Clamp nodes inside the SVG boundaries
+      nodes.forEach(d => {
+        const r = nodeR(d);
+        d.x = Math.max(r + pad, Math.min(width - r - pad, d.x ?? width / 2));
+        d.y = Math.max(r + pad, Math.min(height - r - pad, d.y ?? height / 2));
+      });
+
       link
         .attr('x1', d => (d.source as unknown as Node).x ?? 0)
         .attr('y1', d => (d.source as unknown as Node).y ?? 0)
