@@ -23,9 +23,22 @@ from app.models.adaptive_schemas import (
     RPKTProbeResponse,
 )
 from app.models.schemas import SearchQuery, SearchResult
+from app.models.schemas import (
+    ClassifyResponse,
+    EvaluateResponse,
+    MicroCheckpointRequest,
+    MicroCheckpointResponse,
+    MicroCheckpointSubmitRequest,
+    MicroCheckpointSubmitResponse,
+    OverrideRequest,
+    QuizGenerateRequest,
+    QuizSubmitRequest,
+    SelfAwarenessResponse,
+)
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
+from app.services.assessment_engine import AssessmentEngine
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
@@ -52,7 +65,7 @@ except Exception as e:
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
-
+assessment_engine = AssessmentEngine(data_dir / "assessment_state.json")
 
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -184,6 +197,62 @@ async def get_learning_groups(group_size: int = 4):
         return {"status": "success", "total_groups": len(groups), "group_size": group_size, "groups": groups}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating learning groups: {str(e)}")
+
+
+@app.post("/api/assessment/generate-quiz")
+async def generate_quiz(request: QuizGenerateRequest):
+    return assessment_engine.generate_quiz(request)
+
+
+@app.post("/api/assessment/evaluate", response_model=EvaluateResponse)
+async def evaluate_answer(request: QuizSubmitRequest):
+    try:
+        return assessment_engine.evaluate_answer(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/assessment/classify", response_model=ClassifyResponse)
+async def classify_mistake(request: QuizSubmitRequest):
+    try:
+        return assessment_engine.classify_mistake(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/assessment/self-awareness/{student_id}", response_model=SelfAwarenessResponse)
+async def get_self_awareness_score(student_id: str):
+    return assessment_engine.get_self_awareness_score(student_id)
+
+
+@app.post("/api/assessment/override")
+async def override_mistake_classification(request: OverrideRequest):
+    try:
+        return assessment_engine.override_classification(request.student_id, request.question_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/assessment/micro-checkpoint", response_model=MicroCheckpointResponse)
+async def generate_micro_checkpoint(request: MicroCheckpointRequest):
+    return assessment_engine.generate_micro_checkpoint(
+        request.student_id,
+        request.concept,
+        request.missing_concept,
+    )
+
+
+@app.post("/api/assessment/micro-checkpoint/submit", response_model=MicroCheckpointSubmitResponse)
+async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest):
+    try:
+        return assessment_engine.submit_micro_checkpoint(
+            request.student_id,
+            request.question_id,
+            request.selected_answer,
+            request.confidence_1_to_5,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _payload_to_state(payload: ConceptStatePayload) -> ConceptState:
