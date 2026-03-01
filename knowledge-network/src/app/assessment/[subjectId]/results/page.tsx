@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { getSelfAwarenessScore } from '@/services/assessment';
 
 interface GroupMember {
   id: string;
@@ -163,10 +164,47 @@ export default function AssessmentResultsPage() {
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   // Add a key state to force re-renders
   const [refreshKey, setRefreshKey] = useState(0);
+  const [assessmentSummary, setAssessmentSummary] = useState<{
+    score?: number;
+    blind_spot_found_count?: number;
+    blind_spot_resolved_count?: number;
+    classifications?: { question_id: string; mistake_type: string; rationale: string }[];
+    integration_actions?: {
+      question_id: string;
+      mistake_type: string;
+      rpkt_probe?: { concept?: string; missing_concept?: string | null };
+      intervention?: { mistake_type?: string; concept?: string; missing_concept?: string | null };
+    }[];
+  } | null>(null);
+  const [selfAwareness, setSelfAwareness] = useState<number | null>(null);
 
   useEffect(() => {
     setGroupMembers(getRandomMembers(4));
   }, [refreshKey]); // Now depends on refreshKey
+
+  useEffect(() => {
+    const storageKey = `assessment_result_${subjectId as string}`;
+    const raw = typeof window !== 'undefined' ? window.sessionStorage.getItem(storageKey) : null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        setAssessmentSummary({
+          score: parsed?.evaluation?.score,
+          blind_spot_found_count: parsed?.classification?.blind_spot_found_count,
+          blind_spot_resolved_count: parsed?.classification?.blind_spot_resolved_count,
+          classifications: parsed?.classification?.classifications || [],
+          integration_actions: parsed?.classification?.integration_actions || [],
+        });
+        if (parsed?.studentId) {
+          getSelfAwarenessScore(parsed.studentId)
+            .then((s) => setSelfAwareness(s.score))
+            .catch((err) => console.error('Failed to load self-awareness:', err));
+        }
+      } catch (err) {
+        console.error('Failed to parse assessment summary:', err);
+      }
+    }
+  }, [subjectId]);
 
   // Add a refresh button
   const handleRefresh = () => {
@@ -192,6 +230,65 @@ export default function AssessmentResultsPage() {
             Try Different Matches
           </button>
         </div>
+
+        {assessmentSummary && (
+          <div className="grid md:grid-cols-4 gap-4 mb-8">
+            <div className="bg-white rounded-lg p-4 shadow-sm">
+              <p className="text-xs text-gray-500">Assessment Score</p>
+              <p className="text-2xl font-semibold">{assessmentSummary.score ?? 0}%</p>
+            </div>
+            <div className="bg-white rounded-lg p-4 shadow-sm">
+              <p className="text-xs text-gray-500">Blind Spots Found</p>
+              <p className="text-2xl font-semibold">{assessmentSummary.blind_spot_found_count ?? 0}</p>
+            </div>
+            <div className="bg-white rounded-lg p-4 shadow-sm">
+              <p className="text-xs text-gray-500">Blind Spots Resolved</p>
+              <p className="text-2xl font-semibold">{assessmentSummary.blind_spot_resolved_count ?? 0}</p>
+            </div>
+            <div className="bg-white rounded-lg p-4 shadow-sm">
+              <p className="text-xs text-gray-500">Self-Awareness</p>
+              <p className="text-2xl font-semibold">{selfAwareness !== null ? `${Math.round(selfAwareness * 100)}%` : '-'}</p>
+            </div>
+          </div>
+        )}
+
+        {!!assessmentSummary?.classifications?.length && (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-8">
+            <h2 className="text-lg font-semibold mb-3">Mistake Classification</h2>
+            <div className="space-y-3">
+              {assessmentSummary.classifications.map((item) => (
+                <div key={item.question_id} className="rounded border border-gray-200 p-3">
+                  <p className="text-sm">
+                    <span className="font-medium">{item.question_id}</span> ·{' '}
+                    <span className={item.mistake_type === 'conceptual' ? 'text-amber-700' : 'text-blue-700'}>
+                      {item.mistake_type}
+                    </span>
+                  </p>
+                  <p className="text-sm text-gray-600 mt-1">{item.rationale}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!!assessmentSummary?.integration_actions?.length && (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-8">
+            <h2 className="text-lg font-semibold mb-3">Integration Hooks (RPKT + Intervention)</h2>
+            <div className="space-y-3">
+              {assessmentSummary.integration_actions.map((item) => (
+                <div key={`${item.question_id}-hook`} className="rounded border border-gray-200 p-3">
+                  <p className="text-sm font-medium">{item.question_id}</p>
+                  <p className="text-sm text-gray-600">
+                    RPKT target: {item.rpkt_probe?.missing_concept || item.rpkt_probe?.concept || '-'}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Intervention path: {item.intervention?.mistake_type || item.mistake_type}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           {groupMembers.map((member) => (
