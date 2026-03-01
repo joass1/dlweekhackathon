@@ -1,9 +1,22 @@
-# requirements.txt
-supabase
-python-dotenv
-fastapi
-uvicorn
-requests
-pandas
-sentence-transformers>=2.0.0
-qdrant-client>=1.7.0
+# Core API
+fastapi>=0.110.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.9
+requests>=2.31.0
+
+# AI / LLM
+openai>=1.0.0
+
+# Document processing
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0
+pypdf>=4.0.0
+
+# Data
+pandas>=2.0.0
+
+# Cloud database
+firebase-admin>=6.5.0
