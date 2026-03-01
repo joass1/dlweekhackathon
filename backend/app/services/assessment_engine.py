@@ -21,6 +21,7 @@ from app.models.schemas import (
     QuizSubmitRequest,
     SelfAwarenessResponse,
 )
+from app.services.knowledge_graph import kg_engine
 
 
 def _now_iso() -> str:
@@ -62,6 +63,10 @@ def _normalize_missing_concept(value: Any, fallback: str) -> Optional[str]:
     return fallback
 
 
+def _normalize_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
 class AssessmentStateStore:
     """Legacy JSON-file-based store (fallback when Firestore is unavailable)."""
 
@@ -100,8 +105,11 @@ class AssessmentStateStore:
 
 
 class AssessmentEngine:
-    def __init__(self, store: Union[AssessmentStateStore, "FirestoreAssessmentStore"]):
-        self.store = store
+    def __init__(self, store: Union[AssessmentStateStore, "FirestoreAssessmentStore", Path]):
+        if isinstance(store, Path):
+            self.store = AssessmentStateStore(store)
+        else:
+            self.store = store
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.kg_base_url = os.getenv("KG_API_BASE_URL", "").strip()
         self.enable_llm_generation = os.getenv("ENABLE_LLM_QUIZ_GENERATION", "true").lower() == "true"
@@ -113,6 +121,53 @@ class AssessmentEngine:
             if self.openai_key and self.enable_llm_generation
             else None
         )
+
+    def _resolve_kg_concept_id(self, concept: str) -> Optional[str]:
+        if not concept:
+            return None
+        graph_data = kg_engine.get_graph_data()
+        nodes = graph_data.get("nodes", [])
+        exact = next((n for n in nodes if str(n.get("id")) == concept), None)
+        if exact:
+            return str(exact.get("id"))
+
+        lookup = _normalize_key(concept)
+        if not lookup:
+            return None
+
+        # Match against node IDs and human titles.
+        for node in nodes:
+            node_id = str(node.get("id", ""))
+            title = str(node.get("title", ""))
+            if _normalize_key(node_id) == lookup or _normalize_key(title) == lookup:
+                return node_id
+        return None
+
+    def _sync_kg_mastery(self, concept: str, is_correct: bool, mistake_type: Optional[str]) -> Optional[Dict[str, Any]]:
+        concept_id = self._resolve_kg_concept_id(concept)
+        if not concept_id:
+            return None
+        try:
+            result = kg_engine.update_mastery(
+                concept_id=concept_id,
+                is_correct=is_correct,
+                is_careless=(mistake_type == "careless"),
+            )
+            return {
+                "concept_id": concept_id,
+                "is_correct": is_correct,
+                "mistake_type": mistake_type,
+                "status": "updated",
+                "node": result.get("node"),
+            }
+        except Exception as e:
+            return {
+                "concept_id": concept_id,
+                "is_correct": is_correct,
+                "mistake_type": mistake_type,
+                "status": "failed",
+                "error": str(e),
+            }
 
     def _subject_bank(self, concept: str) -> List[Dict[str, Any]]:
         banks: Dict[str, List[Dict[str, Any]]] = {
@@ -571,7 +626,7 @@ class AssessmentEngine:
             normalized_prereqs,
         )
 
-        state, commit = self.store.transaction()
+        state, commit = self.store.transaction(request.student_id)
         personalization = self._build_personalization_profile(
             state=state,
             student_id=request.student_id,
@@ -781,6 +836,19 @@ class AssessmentEngine:
                         "timestamp": _now_iso(),
                     }
                 )
+                kg_sync = self._sync_kg_mastery(
+                    concept=question.get("concept", request.concept),
+                    is_correct=True,
+                    mistake_type=None,
+                )
+                if kg_sync:
+                    integration_actions.append(
+                        {
+                            "question_id": answer.question_id,
+                            "mistake_type": "none",
+                            "kg_update": kg_sync,
+                        }
+                    )
                 continue
 
             classification = self._classify_wrong_answer(
@@ -824,6 +892,13 @@ class AssessmentEngine:
                     },
                 }
             )
+            kg_sync = self._sync_kg_mastery(
+                concept=question.get("concept", request.concept),
+                is_correct=False,
+                mistake_type=classification.mistake_type,
+            )
+            if kg_sync:
+                integration_actions[-1]["kg_update"] = kg_sync
 
         commit(state)
         return ClassifyResponse(
@@ -925,6 +1000,11 @@ class AssessmentEngine:
             }
         )
         commit(state)
+        self._sync_kg_mastery(
+            concept=question.get("concept", ""),
+            is_correct=is_correct,
+            mistake_type=None if is_correct else "conceptual",
+        )
         return MicroCheckpointSubmitResponse(
             question_id=question_id,
             is_correct=is_correct,

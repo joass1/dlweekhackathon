@@ -14,11 +14,6 @@ from pydantic import BaseModel
 
 from app.database.firebase_client import get_firestore_client
 from app.middleware.auth import get_student_id
-from app.database.firestore_stores import (
-    FirestoreAssessmentStore,
-    FirestoreConceptStateStore,
-    FirestoreKnowledgeGraphStore,
-)
 from app.models.adaptive_schemas import (
     BKTUpdateRequest,
     BKTUpdateResponse,
@@ -88,6 +83,24 @@ try:
 except Exception as e:
     db = None
     print(f"Warning: Firestore unavailable ({e}). Upload will still build KG.")
+
+FirestoreAssessmentStore = None
+FirestoreKnowledgeGraphStore = None
+FirestoreConceptStateStore = None
+if db is not None:
+    try:
+        from app.database.firestore_stores import (
+            FirestoreAssessmentStore as _FirestoreAssessmentStore,
+            FirestoreConceptStateStore as _FirestoreConceptStateStore,
+            FirestoreKnowledgeGraphStore as _FirestoreKnowledgeGraphStore,
+        )
+
+        FirestoreAssessmentStore = _FirestoreAssessmentStore
+        FirestoreKnowledgeGraphStore = _FirestoreKnowledgeGraphStore
+        FirestoreConceptStateStore = _FirestoreConceptStateStore
+    except Exception as e:
+        print(f"Warning: Firestore stores unavailable ({e}). Falling back to local state stores.")
+        db = None
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
@@ -726,3 +739,90 @@ async def session_summary_endpoint(request: SessionData):
         return tutor_service.generate_session_summary(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Student Progress endpoint ─────────────────────────────────────────────────
+
+
+@app.get("/api/students/{student_id}/progress")
+async def get_student_progress(student_id: str):
+    """Return aggregated student progress from Firebase assessment + KG data."""
+    progress: dict = {
+        "student_id": student_id,
+        "total_attempts": 0,
+        "correct_attempts": 0,
+        "accuracy": 0.0,
+        "careless_count": 0,
+        "conceptual_count": 0,
+        "blind_spots": {"found": 0, "resolved": 0},
+        "self_awareness": {"score": 0.0, "calibration_gap": 0.0, "total_attempts": 0},
+        "concept_mastery": [],
+        "recent_attempts": [],
+    }
+
+    # Assessment data from Firestore
+    if db is not None and isinstance(assessment_store, FirestoreAssessmentStore):
+        try:
+            attempts = assessment_store.get_attempts(student_id)
+            progress["total_attempts"] = len(attempts)
+            progress["correct_attempts"] = sum(1 for a in attempts if a.get("is_correct"))
+            progress["accuracy"] = (
+                round(progress["correct_attempts"] / progress["total_attempts"], 3)
+                if progress["total_attempts"] > 0
+                else 0.0
+            )
+            progress["careless_count"] = sum(
+                1 for a in attempts if a.get("mistake_type") == "careless"
+            )
+            progress["conceptual_count"] = sum(
+                1 for a in attempts if a.get("mistake_type") == "conceptual"
+            )
+            # Last 10 attempts for recent activity
+            progress["recent_attempts"] = attempts[-10:]
+
+            blind_spots = assessment_store.get_blind_spots(student_id)
+            progress["blind_spots"] = blind_spots
+        except Exception as e:
+            print(f"Warning: Could not load assessment progress for {student_id}: {e}")
+
+    # Self-awareness score
+    try:
+        sa = assessment_engine.get_self_awareness_score(student_id)
+        progress["self_awareness"] = {
+            "score": sa.score,
+            "calibration_gap": sa.calibration_gap,
+            "total_attempts": sa.total_attempts,
+        }
+    except Exception:
+        pass
+
+    # BKT concept mastery from Firestore
+    if concept_state_store is not None:
+        try:
+            states = concept_state_store.get_all_states(student_id)
+            progress["concept_mastery"] = [
+                {
+                    "concept_id": cid,
+                    "mastery": round(s.get("mastery", 0.0), 3),
+                    "attempts": s.get("attempts", 0),
+                    "correct": s.get("correct", 0),
+                    "careless_count": s.get("careless_count", 0),
+                    "last_updated": s.get("last_updated"),
+                }
+                for cid, s in states.items()
+            ]
+        except Exception as e:
+            print(f"Warning: Could not load concept states for {student_id}: {e}")
+
+    # KG-level graph stats
+    graph_data = kg_engine.get_graph_data()
+    nodes = graph_data.get("nodes", [])
+    progress["kg_stats"] = {
+        "total_concepts": len(nodes),
+        "mastered": sum(1 for n in nodes if n.get("status") == "mastered"),
+        "learning": sum(1 for n in nodes if n.get("status") == "learning"),
+        "weak": sum(1 for n in nodes if n.get("status") == "weak"),
+        "not_started": sum(1 for n in nodes if n.get("status") == "not_started"),
+    }
+
+    return progress
