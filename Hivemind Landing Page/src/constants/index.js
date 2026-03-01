@@ -78,9 +78,9 @@ import {
   export const companyLogos = [yourlogo, yourlogo, yourlogo, yourlogo, yourlogo];
   
   export const brainwaveServices = [
-    "Photo generating",
-    "Photo enhance",
-    "Seamless Integration",
+    "Knowledge Graph Mapping",
+    "Adaptive Assessments",
+    "AI Socratic Tutoring",
   ];
   
   export const brainwaveServicesIcons = [
@@ -244,16 +244,16 @@ import {
   export const benefits = [
     {
       id: "0",
-      title: "Ask anything",
-      text: "Lets users quickly find answers to their questions without having to search through multiple sources.",
+      title: "Smart Knowledge Graphs",
+      text: "Upload your materials and AI builds a visual map of concepts with prerequisite relationships — your living learning map.",
       backgroundUrl: "./src/assets/benefits/card-1.svg",
       iconUrl: benefitIcon1,
       imageUrl: benefitImage2,
     },
     {
       id: "1",
-      title: "Improve everyday",
-      text: "The app uses natural language processing to understand user queries and provide accurate and relevant responses.",
+      title: "Adaptive Mastery Tracking",
+      text: "Green, yellow, red nodes show your mastery level. Knowledge decays over time, so the system tells you exactly what to review.",
       backgroundUrl: "./src/assets/benefits/card-2.svg",
       iconUrl: benefitIcon2,
       imageUrl: benefitImage2,
@@ -261,16 +261,16 @@ import {
     },
     {
       id: "2",
-      title: "Connect everywhere",
-      text: "Connect with the AI chatbot from anywhere, on any device, making it more accessible and convenient.",
+      title: "Peer Learning Hubs",
+      text: "Get matched into 4-person study groups where each member's strengths complement others' weaknesses — everyone teaches and learns.",
       backgroundUrl: "./src/assets/benefits/card-3.svg",
       iconUrl: benefitIcon3,
       imageUrl: benefitImage2,
     },
     {
       id: "3",
-      title: "Fast responding",
-      text: "Lets users quickly find answers to their questions without having to search through multiple sources.",
+      title: "Socratic AI Tutor",
+      text: "An AI that guides you with probing questions instead of giving direct answers, using your own course materials via RAG.",
       backgroundUrl: "./src/assets/benefits/card-4.svg",
       iconUrl: benefitIcon4,
       imageUrl: benefitImage2,
@@ -278,16 +278,16 @@ import {
     },
     {
       id: "4",
-      title: "Ask anything",
-      text: "Lets users quickly find answers to their questions without having to search through multiple sources.",
+      title: "Study Missions",
+      text: "Say 'I have 25 minutes' and receive an optimized study queue prioritized by gap severity, prerequisite depth, and decay risk.",
       backgroundUrl: "./src/assets/benefits/card-5.svg",
       iconUrl: benefitIcon1,
       imageUrl: benefitImage2,
     },
     {
       id: "5",
-      title: "Improve everyday",
-      text: "The app uses natural language processing to understand user queries and provide accurate and relevant responses.",
+      title: "Confidence-Based Assessment",
+      text: "Rate your confidence on each answer to distinguish careless errors from conceptual gaps — find the unknown unknowns.",
       backgroundUrl: "./src/assets/benefits/card-6.svg",
       iconUrl: benefitIcon2,
       imageUrl: benefitImage2,

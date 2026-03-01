@@ -47,10 +47,10 @@ export default function AssessmentSelectionPage() {
     <div className="min-h-screen bg-gray-50 py-12">
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4">Knowledge Assessments</h1>
+          <h1 className="text-3xl font-bold mb-4">LearnGraph Assessments</h1>
           <p className="text-gray-600 max-w-2xl mx-auto">
-            Choose a subject to assess your understanding and get matched with study partners 
-            who complement your learning style.
+            Assess your understanding to update your knowledge graph. We'll identify mastery levels,
+            distinguish careless errors from conceptual gaps, and match you with study partners.
           </p>
         </div>
 
@@ -70,8 +70,8 @@ export default function AssessmentSelectionPage() {
                   <span>{subject.timeEstimate}</span>
                 </div>
               </div>
-              <div className="bg-blue-50 p-4 text-center">
-                <span className="text-blue-600 font-medium">Start Assessment →</span>
+              <div className="bg-emerald-50 p-4 text-center">
+                <span className="text-emerald-600 font-medium">Begin Assessment →</span>
               </div>
             </div>
           ))}

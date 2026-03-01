@@ -27,7 +27,7 @@ data_dir = pathlib.Path("data")
 data_dir.mkdir(exist_ok=True)
 
 # Initialize FastAPI app
-app = FastAPI(title="Knowledge Balance Network")
+app = FastAPI(title="LearnGraph AI API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -99,7 +99,7 @@ def process_file(file_path: str) -> List[str]:
 @app.get("/")
 async def root():
     """Root endpoint to verify API is running"""
-    return {"message": "Knowledge Balance Network API is running"}
+    return {"message": "LearnGraph AI API is running"}
 
 @app.get("/test")
 async def test_connection():
@@ -224,7 +224,7 @@ async def chat(request: dict):
             messages = [
                 {
                     "role": "system",
-                    "content": "You are a knowledgeable AI assistant. Provide concise answers (max 150 words) using the given context."
+                    "content": "You are the LearnGraph AI Socratic Tutor. Instead of giving direct answers, guide the student with probing questions that help them discover the answer themselves. Use their uploaded course context to reference specific concepts. Keep responses concise (max 150 words)."
                 },
                 {
                     "role": "user",

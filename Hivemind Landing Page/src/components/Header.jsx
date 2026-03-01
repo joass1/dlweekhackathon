@@ -177,17 +177,17 @@ const Header = () => {
 
   return (
     <div
-      className={`fixed top-0 left-0 w-full z-50 border-b border-pink-300 
+      className={`fixed top-0 left-0 w-full z-50 border-b border-emerald-500/30
       ${openNavigation ? "bg-gray-900" : "bg-gray-900 backdrop-blur-sm"}`}
     >
       <div className="flex items-center px-5 lg:px-8 xl:px-10 max-lg:py-4">
         <a className="flex items-center gap-2 xl:mr-8" href="/">
-          <div className="w-8 h-8 bg-pink-300/20 rounded-lg flex items-center justify-center">
-            <div className="w-6 h-6 text-pink-300">
+          <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+            <div className="w-6 h-6 text-emerald-400">
               <BrainIcon />
             </div>
           </div>
-          <span className="text-2xl font-bold text-pink-300">Hivemind</span>
+          <span className="text-2xl font-bold text-emerald-400">LearnGraph AI</span>
         </a>
 
         <nav
@@ -201,7 +201,7 @@ const Header = () => {
                 key={item.id}
                 href={item.url}
                 onClick={handleClick}
-                className="block relative font-mono uppercase text-2xl text-yellow-400 transition-colors hover:text-pink-300 px-6 py-6 md:py-8 lg:text-xl lg:font-semibold lg:text-white lg:hover:text-pink-300 xl:px-12"
+                className="block relative font-mono uppercase text-2xl text-yellow-400 transition-colors hover:text-emerald-400 px-6 py-6 md:py-8 lg:text-xl lg:font-semibold lg:text-white lg:hover:text-emerald-400 xl:px-12"
               >
                 {item.title}
               </a>
@@ -212,13 +212,13 @@ const Header = () => {
         <div className="ml-auto flex items-center gap-4">
           <a
             href="/dashboard.html"
-            className="hidden lg:block lg:text-xl font-mono uppercase text-white hover:text-pink-300 transition-colors"
+            className="hidden lg:block lg:text-xl font-mono uppercase text-white hover:text-emerald-400 transition-colors"
           >
             New account
           </a>
           <button 
             onClick={handleSignIn}
-            className="hidden lg:block px-4 py-2 bg-pink-300 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            className="hidden lg:block px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors"
           >
             Sign in
           </button>

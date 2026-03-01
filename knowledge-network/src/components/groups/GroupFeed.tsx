@@ -31,7 +31,7 @@ export function GroupFeed({ groupId }: Props) {
         <Card key={item.id}>
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
-              <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+              <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
                 {item.initial}
               </div>
               <div className="flex-1">

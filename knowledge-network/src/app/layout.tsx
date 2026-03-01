@@ -7,8 +7,8 @@ import { ClientLayout } from '@/components/layout';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Knowledge Network',
-  description: 'A platform for collaborative learning and knowledge sharing',
+  title: 'LearnGraph AI',
+  description: 'Adaptive learning platform powered by knowledge graphs, mastery tracking, and peer collaboration',
 };
 
 export default function RootLayout({

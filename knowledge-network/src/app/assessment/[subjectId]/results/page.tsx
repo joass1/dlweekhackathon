@@ -177,14 +177,14 @@ export default function AssessmentResultsPage() {
     <div className="min-h-screen bg-gray-50 py-12">
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4">🎉 Your Study Group is Ready!</h1>
+          <h1 className="text-3xl font-bold mb-4">Your Peer Learning Hub is Ready!</h1>
           <p className="text-gray-600 mb-4">
-            Meet your study partners for {subjectId}. You've been matched based on complementary strengths.
+            Meet your study partners for {(subjectId as string).replace(/-/g, ' ')}. You've been matched based on complementary knowledge graph profiles.
           </p>
           {/* Add refresh button */}
           <button
             onClick={handleRefresh}
-            className="text-blue-500 hover:text-blue-600 text-sm flex items-center mx-auto"
+            className="text-emerald-500 hover:text-emerald-600 text-sm flex items-center mx-auto"
           >
             <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -218,7 +218,7 @@ export default function AssessmentResultsPage() {
                       {member.strengths.map((strength, index) => (
                         <div 
                           key={index}
-                          className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm text-center"
+                          className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-sm text-center"
                         >
                           {strength}
                         </div>
@@ -247,8 +247,8 @@ export default function AssessmentResultsPage() {
 
         <div className="text-center space-x-4">
           <button 
-            onClick={() => router.push('/dashboard')}
-            className="bg-blue-500 text-white px-8 py-3 rounded-lg hover:bg-blue-600"
+            onClick={() => router.push('/')}
+            className="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700"
           >
             Go to Dashboard
           </button>

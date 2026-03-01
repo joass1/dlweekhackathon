@@ -88,8 +88,12 @@ export default function AIAssistantPage() {
 
       {/* Main chat area */}
       <div className="h-screen flex flex-col">
+        <div className="p-4 border-b bg-emerald-50">
+          <h2 className="font-semibold text-emerald-800">Socratic Tutor</h2>
+          <p className="text-sm text-emerald-600">I guide you with questions to help you discover answers yourself</p>
+        </div>
         <div className="flex-1 overflow-y-auto">
-          <ChatWindow 
+          <ChatWindow
             messages={messages}
             isLoading={isLoading}
           />
@@ -98,7 +102,7 @@ export default function AIAssistantPage() {
           <ChatInput 
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
-            placeholder="Ask anything about your notes..."
+            placeholder="Ask the Socratic Tutor about any concept..."
           />
         </div>
       </div>

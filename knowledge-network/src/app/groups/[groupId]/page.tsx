@@ -29,7 +29,7 @@ export default function GroupDetailPage({ params }: PageProps) {
 
       {/* Hub Metrics */}
       <section className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-2xl font-bold mb-4">Hub Performance</h2>
+        <h2 className="text-2xl font-bold mb-4">Peer Hub Performance</h2>
         <HubMetrics groupId={resolvedParams.groupId} />
       </section>
 
