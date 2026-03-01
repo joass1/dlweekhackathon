@@ -22,6 +22,7 @@ class ConceptStatePayload(BaseModel):
 class BKTUpdateRequest(BaseModel):
     concept: ConceptStatePayload
     is_correct: bool
+    student_id: Optional[str] = None
     interaction_time: Optional[datetime] = None
     mistake_type: Literal["normal", "careless", "conceptual"] = "normal"
     careless_penalty: float = Field(default=0.02, ge=0.0, le=0.2)

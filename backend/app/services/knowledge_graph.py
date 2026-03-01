@@ -31,7 +31,7 @@ def _compute_status(mastery: float) -> str:
 
 class KnowledgeGraphEngine:
     """
-    Singleton-style class wrapping a NetworkX DiGraph.
+    Singleton-style class wrapping a NetworkX DiGraph with optional Firestore persistence.
 
     Each node stores:
         title             str
@@ -45,8 +45,37 @@ class KnowledgeGraphEngine:
         careless_count    int     # number of careless mistakes recorded
     """
 
-    def __init__(self) -> None:
+    def __init__(self, firestore_store=None) -> None:
         self._graph: nx.DiGraph = nx.DiGraph()
+        self._fs_store = firestore_store  # FirestoreKnowledgeGraphStore or None
+
+    def _persist_concept(self, concept_id: str) -> None:
+        """Write a concept node to Firestore if available."""
+        if self._fs_store and concept_id in self._graph:
+            data = dict(self._graph.nodes[concept_id])
+            self._fs_store.save_concept(concept_id, data)
+
+    def _persist_edge(self, source: str, target: str, edge_type: str = "prerequisite") -> None:
+        """Write an edge to Firestore if available."""
+        if self._fs_store:
+            self._fs_store.save_edge(source, target, edge_type)
+
+    def load_from_firestore(self) -> int:
+        """Load the full graph from Firestore into the in-memory NetworkX graph.
+        Returns the number of concepts loaded."""
+        if not self._fs_store:
+            return 0
+        concepts = self._fs_store.get_all_concepts()
+        edges = self._fs_store.get_all_edges()
+        if not concepts:
+            return 0
+        for concept_id, data in concepts.items():
+            self._graph.add_node(concept_id, **data)
+        for edge in edges:
+            src, tgt = edge["source"], edge["target"]
+            if src in self._graph and tgt in self._graph:
+                self._graph.add_edge(src, tgt, type=edge.get("type", "prerequisite"))
+        return len(concepts)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -83,7 +112,9 @@ class KnowledgeGraphEngine:
             for prereq_id in prerequisites:
                 if prereq_id in self._graph and not self._graph.has_edge(prereq_id, concept_id):
                     self._graph.add_edge(prereq_id, concept_id, type="prerequisite")
+                    self._persist_edge(prereq_id, concept_id, "prerequisite")
 
+        self._persist_concept(concept_id)
         return self._node_dict(concept_id)
 
     def update_mastery(
@@ -141,6 +172,7 @@ class KnowledgeGraphEngine:
                 root_gap = prerequisite_gaps[-1]  # deepest ancestor = root cause
 
         node["status"] = _compute_status(node["mastery_score"])
+        self._persist_concept(concept_id)
 
         # Collect downstream dependents (for chain-green cascade detection)
         affected_chain = list(nx.descendants(self._graph, concept_id))
@@ -346,6 +378,7 @@ Return ONLY valid JSON:
                 loss = DECAY_PER_DAY * max(1, days_overdue)
                 data["mastery_score"] = max(0.0, data["mastery_score"] - loss)
                 data["status"] = _compute_status(data["mastery_score"])
+                self._persist_concept(node_id)
 
     def build_from_material(self, text: str, openai_client: Any) -> List[Dict[str, Any]]:
         """Use OpenAI to extract concepts + prerequisites from course text."""
@@ -398,6 +431,7 @@ Course material:
                 if prereq in self._graph and c["id"] in self._graph:
                     if not self._graph.has_edge(prereq, c["id"]):
                         self._graph.add_edge(prereq, c["id"], type="prerequisite")
+                        self._persist_edge(prereq, c["id"], "prerequisite")
             added.append(self._node_dict(c["id"]))
 
         return added
@@ -422,6 +456,17 @@ Course material:
 
 # ── Module-level singleton ─────────────────────────────────────────────────────
 kg_engine = KnowledgeGraphEngine()
+
+
+def init_kg_engine(firestore_store=None) -> KnowledgeGraphEngine:
+    """Re-initialise the global kg_engine with optional Firestore persistence."""
+    global kg_engine
+    kg_engine = KnowledgeGraphEngine(firestore_store=firestore_store)
+    # Try to load existing graph from Firestore
+    loaded = kg_engine.load_from_firestore()
+    if loaded > 0:
+        print(f"Loaded {loaded} concepts from Firestore.")
+    return kg_engine
 
 
 def seed_demo_data() -> None:

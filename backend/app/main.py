@@ -13,6 +13,11 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from app.database.firebase_client import get_firestore_client
+from app.database.firestore_stores import (
+    FirestoreAssessmentStore,
+    FirestoreConceptStateStore,
+    FirestoreKnowledgeGraphStore,
+)
 from app.models.adaptive_schemas import (
     BKTUpdateRequest,
     BKTUpdateResponse,
@@ -38,10 +43,10 @@ from app.models.schemas import (
     SelfAwarenessResponse,
 )
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
-from app.services.knowledge_graph import kg_engine, seed_demo_data
+from app.services.knowledge_graph import init_kg_engine, kg_engine, seed_demo_data
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
-from app.services.assessment_engine import AssessmentEngine
+from app.services.assessment_engine import AssessmentEngine, AssessmentStateStore
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
@@ -68,10 +73,28 @@ except Exception as e:
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
-assessment_engine = AssessmentEngine(data_dir / "assessment_state.json")
 
-# Seed demo knowledge graph on startup
-seed_demo_data()
+# ── Initialise stores: Firestore-backed when available, JSON fallback ─────────
+if db is not None:
+    assessment_store = FirestoreAssessmentStore(db)
+    kg_store = FirestoreKnowledgeGraphStore(db)
+    concept_state_store = FirestoreConceptStateStore(db)
+    print("Using Firestore-backed stores for assessment, KG, and concept state.")
+else:
+    assessment_store = AssessmentStateStore(data_dir / "assessment_state.json")
+    kg_store = None
+    concept_state_store = None
+    print("Using local JSON fallback for assessment state.")
+
+assessment_engine = AssessmentEngine(assessment_store)
+
+# Initialise knowledge graph with Firestore persistence
+kg_engine = init_kg_engine(firestore_store=kg_store)
+
+# Seed demo data only if the graph is empty (first run)
+if len(list(kg_engine._graph.nodes)) == 0:
+    seed_demo_data()
+    print("Seeded demo knowledge graph data.")
 
 
 def process_file(file_path: str) -> List[str]:
@@ -338,6 +361,21 @@ async def api_update_bkt(request: BKTUpdateRequest):
             mistake_type=request.mistake_type,
             careless_penalty=request.careless_penalty,
         )
+        # Persist updated BKT state to Firestore
+        if concept_state_store and request.student_id:
+            updated = result["state"]
+            concept_state_store.save_state(request.student_id, updated.concept_id, {
+                "concept_id": updated.concept_id,
+                "mastery": updated.mastery,
+                "p_learn": updated.p_learn,
+                "p_guess": updated.p_guess,
+                "p_slip": updated.p_slip,
+                "decay_rate": updated.decay_rate,
+                "last_updated": updated.last_updated.isoformat(),
+                "attempts": updated.attempts,
+                "correct": updated.correct,
+                "careless_count": updated.careless_count,
+            })
         return BKTUpdateResponse(
             concept_id=result["concept_id"],
             prior_mastery=result["prior_mastery"],

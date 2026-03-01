@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from openai import OpenAI
 
@@ -46,6 +46,8 @@ def _extract_json_object(raw: str) -> Dict[str, Any]:
 
 
 class AssessmentStateStore:
+    """Legacy JSON-file-based store (fallback when Firestore is unavailable)."""
+
     def __init__(self, path: Path):
         self.path = path
         self._lock = Lock()
@@ -70,7 +72,7 @@ class AssessmentStateStore:
             json.dump(state, f, indent=2)
         tmp.replace(self.path)
 
-    def transaction(self) -> Tuple[Dict[str, Any], callable]:
+    def transaction(self, student_id: str = "") -> Tuple[Dict[str, Any], callable]:
         with self._lock:
             state = self._read()
 
@@ -81,8 +83,8 @@ class AssessmentStateStore:
 
 
 class AssessmentEngine:
-    def __init__(self, state_path: Path):
-        self.store = AssessmentStateStore(state_path)
+    def __init__(self, store: Union[AssessmentStateStore, "FirestoreAssessmentStore"]):
+        self.store = store
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.kg_base_url = os.getenv("KG_API_BASE_URL", "").strip()
         self.client = OpenAI(api_key=self.openai_key) if self.openai_key else None
@@ -309,7 +311,7 @@ class AssessmentEngine:
         if not questions:
             questions = self._fallback_generate_questions(request.concept, request.num_questions)
 
-        state, commit = self.store.transaction()
+        state, commit = self.store.transaction(request.student_id)
         quizzes = state.setdefault("quizzes", {})
         quizzes[request.student_id] = {q.question_id: q.model_dump() for q in questions}
         commit(state)
@@ -333,7 +335,7 @@ class AssessmentEngine:
         }
 
     def evaluate_answer(self, request: QuizSubmitRequest) -> EvaluateResponse:
-        state, _ = self.store.transaction()
+        state, _ = self.store.transaction(request.student_id)
         student_quiz = state.get("quizzes", {}).get(request.student_id, {})
         if not student_quiz:
             raise ValueError("No active quiz found for this student.")
@@ -443,7 +445,7 @@ class AssessmentEngine:
         )
 
     def classify_mistake(self, request: QuizSubmitRequest) -> ClassifyResponse:
-        state, commit = self.store.transaction()
+        state, commit = self.store.transaction(request.student_id)
         quizzes = state.setdefault("quizzes", {})
         history = state.setdefault("attempt_history", {})
         cls_store = state.setdefault("classification_store", {})
@@ -527,7 +529,7 @@ class AssessmentEngine:
         )
 
     def get_self_awareness_score(self, student_id: str) -> SelfAwarenessResponse:
-        state, _ = self.store.transaction()
+        state, _ = self.store.transaction(student_id)
         attempts = state.get("attempt_history", {}).get(student_id, [])
         if not attempts:
             return SelfAwarenessResponse(
@@ -551,7 +553,7 @@ class AssessmentEngine:
         )
 
     def override_classification(self, student_id: str, question_id: str) -> Dict[str, Any]:
-        state, commit = self.store.transaction()
+        state, commit = self.store.transaction(student_id)
         cls_store = state.setdefault("classification_store", {})
         student_cls = cls_store.setdefault(student_id, {})
         existing = student_cls.get(question_id)
@@ -579,7 +581,7 @@ class AssessmentEngine:
             explanation="Transfer + explanation is strongest mastery signal.",
             difficulty="easy",
         )
-        state, commit = self.store.transaction()
+        state, commit = self.store.transaction(student_id)
         quizzes = state.setdefault("quizzes", {})
         quizzes.setdefault(student_id, {})[question.question_id] = question.model_dump()
         commit(state)
@@ -592,7 +594,7 @@ class AssessmentEngine:
         selected_answer: str,
         confidence_1_to_5: int,
     ) -> MicroCheckpointSubmitResponse:
-        state, commit = self.store.transaction()
+        state, commit = self.store.transaction(student_id)
         quizzes = state.setdefault("quizzes", {})
         history = state.setdefault("attempt_history", {})
         student_quiz = quizzes.get(student_id, {})
