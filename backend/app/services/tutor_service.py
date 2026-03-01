@@ -16,7 +16,7 @@ class TutorService:
         self.collection = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
 
     # ── Deliverable 1 ─────────────────────────────────────────────────────────
-    def embed_content(self, content: str, concept_id: str, source: str = None) -> int:
+    def embed_content(self, content: str, concept_id: str, source: str = None, user_id: str = None) -> int:
         splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         chunks = splitter.split_text(content)
         if not chunks:
@@ -30,6 +30,7 @@ class TutorService:
                 "concept_id": concept_id,
                 "source": source or concept_id,
                 "chunk_index": i,
+                "userId": user_id,
                 "created_at": datetime.now(timezone.utc),
             })
         batch.commit()
@@ -44,21 +45,22 @@ class TutorService:
         text_lower = text.lower()
         return sum(1 for t in tokens if t in text_lower) / len(tokens)
 
-    def retrieve_context(self, concept: str, limit: int = 4) -> list:
+    def retrieve_context(self, concept: str, limit: int = 4, user_id: str = None) -> list:
         concept_id_slug = concept.lower().replace(" ", "-").replace("'", "")
 
         # Try concept_id filtered fetch first
-        docs = (
-            self.db.collection(self.collection)
-            .where("concept_id", "==", concept_id_slug)
-            .limit(50)
-            .stream()
-        )
+        query = self.db.collection(self.collection).where("concept_id", "==", concept_id_slug)
+        if user_id:
+            query = query.where("userId", "==", user_id)
+        docs = query.limit(50).stream()
 
         rows = [doc.to_dict() for doc in docs if doc.to_dict()]
         if not rows:
-            # Fallback: scan recent chunks and score by token overlap
-            docs = self.db.collection(self.collection).limit(200).stream()
+            # Fallback: scan recent chunks and score by token overlap (scoped to userId if given)
+            query = self.db.collection(self.collection)
+            if user_id:
+                query = query.where("userId", "==", user_id)
+            docs = query.limit(200).stream()
             rows = [doc.to_dict() for doc in docs if doc.to_dict()]
 
         scored = []
@@ -111,8 +113,8 @@ class TutorService:
             extra += "\nTailor your guiding questions toward these gaps where relevant."
         return base + extra
 
-    def tutor_chat(self, message: str, knowledge_state=None) -> dict:
-        context_chunks = self.retrieve_context(message, limit=3)
+    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None) -> dict:
+        context_chunks = self.retrieve_context(message, limit=3, user_id=user_id)
         context_text = " ".join(c["text"] for c in context_chunks)
         system_prompt = self._build_socratic_prompt(knowledge_state)
 

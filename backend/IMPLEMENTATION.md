@@ -49,13 +49,22 @@ Runs at **http://localhost:3000**
 
 ## Environment Setup
 
-Create `backend/.env` (already exists — do not commit this file):
+`backend/.env` (do not commit):
 
 ```
 OPENAI_API_KEY=sk-...
-FIREBASE_SERVICE_ACCOUNT_PATH=path/to/serviceAccountKey.json
+FIREBASE_SERVICE_ACCOUNT_PATH=/path/to/dlw-project-ff79f-firebase-adminsdk-fbsvc-4b786be89b.json
 FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION=knowledge_chunks
 ```
+
+---
+
+## Content Isolation (userId scoping)
+
+Each user's content is isolated in Firestore by `userId`. Always pass `"userId"` when embedding or querying so your physics content doesn't mix with other users' course material.
+
+- **With userId** → queries filter to only your chunks (both phase 1 and fallback scan)
+- **Without userId** → unscoped, sees all content (backward-compat, but not recommended)
 
 ---
 
@@ -63,9 +72,9 @@ FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION=knowledge_chunks
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/tutor/embed` | POST | Chunk + store course content with concept_id tag |
-| `/api/tutor/context` | POST | Retrieve relevant chunks for a concept |
-| `/api/tutor/chat` | POST | Socratic tutor chat (knowledge-state aware) |
+| `/api/tutor/embed` | POST | Chunk + store course content with concept_id + userId tag |
+| `/api/tutor/context` | POST | Retrieve relevant chunks scoped to userId |
+| `/api/tutor/chat` | POST | Socratic tutor chat (knowledge-state aware, userId scoped) |
 | `/api/tutor/intervene` | POST | Run careless or conceptual intervention |
 | `/api/tutor/session-summary` | POST | Generate session stats + LLM highlights |
 
@@ -84,7 +93,7 @@ curl http://localhost:8000/
 
 ---
 
-### 1. `embed_content` — store course material
+### 1. `embed_content` — store course material (with userId)
 
 ```bash
 curl -X POST http://localhost:8000/api/tutor/embed \
@@ -92,7 +101,8 @@ curl -X POST http://localhost:8000/api/tutor/embed \
   -d '{
     "content": "Newtons Third Law states that for every action there is an equal and opposite reaction. When object A exerts a force on object B, object B exerts an equal force back on A.",
     "concept_id": "newtons-third-law",
-    "source": "physics_notes.pdf"
+    "source": "physics_notes.pdf",
+    "userId": "student_001"
   }'
 ```
 
@@ -103,14 +113,15 @@ Expected response:
 
 ---
 
-### 2. `retrieve_context` — pull relevant chunks
+### 2. `retrieve_context` — pull relevant chunks (scoped to userId)
 
 ```bash
 curl -X POST http://localhost:8000/api/tutor/context \
   -H "Content-Type: application/json" \
   -d '{
     "concept": "newtons third law",
-    "limit": 3
+    "limit": 3,
+    "userId": "student_001"
   }'
 ```
 
@@ -124,9 +135,11 @@ Expected response:
 }
 ```
 
+> Chunks from other users (e.g. Sam's contract law) will NOT appear here.
+
 ---
 
-### 3. `tutor_chat` — Socratic conversation (basic mode)
+### 3. `tutor_chat` — Socratic conversation (basic mode, userId scoped)
 
 ```bash
 curl -X POST http://localhost:8000/api/tutor/chat \
@@ -137,7 +150,7 @@ curl -X POST http://localhost:8000/api/tutor/chat \
   }'
 ```
 
-Expected: A **question** back to the student, never a direct answer.
+Expected: A **question** back to the student referencing physics context only, never a direct answer.
 
 #### With knowledge state (aware mode):
 
@@ -257,9 +270,9 @@ Expected:
 ## Full Integration Flow
 
 ```
-1. Teacher uploads PDF → POST /upload (stores in Firestore)
-2. Tag content by concept → POST /api/tutor/embed
-3. Student asks question → POST /api/tutor/chat (with knowledge_state from frontend)
+1. Teacher uploads PDF → POST /upload (stores in Firestore with userId + concept_id)
+2. Tag content by concept → POST /api/tutor/embed (with userId)
+3. Student asks question → POST /api/tutor/chat (with userId + knowledge_state from frontend)
 4. Student answers quiz → assessment engine classifies mistake
 5. If careless/conceptual → POST /api/tutor/intervene
 6. End of session → POST /api/tutor/session-summary

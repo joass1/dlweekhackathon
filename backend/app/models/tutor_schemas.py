@@ -6,6 +6,7 @@ class EmbedContentRequest(BaseModel):
     content: str
     concept_id: str
     source: Optional[str] = None
+    userId: Optional[str] = None
 
 
 class EmbedContentResponse(BaseModel):
@@ -16,6 +17,7 @@ class EmbedContentResponse(BaseModel):
 class RetrieveContextRequest(BaseModel):
     concept: str
     limit: Optional[int] = 4
+    userId: Optional[str] = None
 
 
 class KnowledgeNode(BaseModel):
