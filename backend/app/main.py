@@ -1,14 +1,16 @@
 import os
 import pathlib
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import CharacterTextSplitter
 from openai import OpenAI
+from pydantic import BaseModel
 
 from app.database.firebase_client import get_firestore_client
 from app.models.adaptive_schemas import (
@@ -36,6 +38,7 @@ from app.models.schemas import (
     SelfAwarenessResponse,
 )
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
+from app.services.knowledge_graph import kg_engine, seed_demo_data
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
 from app.services.assessment_engine import AssessmentEngine
@@ -57,7 +60,7 @@ data_dir.mkdir(exist_ok=True)
 app = FastAPI(title="LearnGraph AI API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,7 +72,7 @@ try:
     db = get_firestore_client()
 except Exception as e:
     db = None
-    print(f"Failed to initialize Firestore: {e}")
+    print(f"Warning: Firestore unavailable ({e}). Upload will still build KG.")
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
@@ -80,6 +83,10 @@ if not openai_api_key:
     print("WARNING: OPENAI_API_KEY not set — AI tutor endpoints will fail at runtime")
 _openai_client = OpenAI(api_key=openai_api_key or "placeholder")
 tutor_service = TutorService(db, _openai_client)
+
+# Seed demo knowledge graph on startup
+seed_demo_data()
+
 
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -122,42 +129,71 @@ async def search_discussions(query: SearchQuery):
 
 @app.post("/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Firestore is not initialized")
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
     uploaded_files = []
+    kg_concepts_added = 0
+
     for file in files:
-        file_path = data_dir / file.filename
-        with open(file_path, "wb") as buffer:
-            buffer.write(await file.read())
+        safe_name = pathlib.Path(file.filename).name if file.filename else "upload.txt"
+        file_path = data_dir / safe_name
 
         try:
-            chunks = process_file(str(file_path))
-            if not chunks:
-                uploaded_files.append({"filename": file.filename, "chunks": 0})
+            content = await file.read()
+            if not content:
+                uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "error", "error": "Empty file"})
                 continue
 
-            batch = db.batch()
-            for idx, chunk in enumerate(chunks):
-                doc_ref = db.collection(vector_search.collection_name).document()
-                batch.set(
-                    doc_ref,
-                    {
-                        "text": chunk,
-                        "source": file.filename,
-                        "chunk_index": idx,
-                        "created_at": datetime.now(timezone.utc),
-                    },
-                )
-            batch.commit()
-            uploaded_files.append({"filename": file.filename, "chunks": len(chunks)})
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+
+            text_chunks = process_file(str(file_path))
+            if not text_chunks:
+                uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "success"})
+                continue
+
+            full_text = " ".join(text_chunks)
+
+            # Store in Firestore if available (non-fatal)
+            if db is not None:
+                try:
+                    batch = db.batch()
+                    for i, chunk in enumerate(text_chunks):
+                        doc_ref = db.collection(vector_search.collection_name).document()
+                        batch.set(doc_ref, {
+                            "text": chunk,
+                            "source": safe_name,
+                            "chunk_index": i,
+                            "created_at": datetime.now(timezone.utc),
+                        })
+                    batch.commit()
+                except Exception as e:
+                    print(f"Warning: Firestore storage failed for {safe_name}: {e}")
+
+            # Build knowledge graph from the extracted text
+            try:
+                openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                added = kg_engine.build_from_material(full_text, openai_client)
+                kg_concepts_added += len(added)
+            except Exception as e:
+                print(f"Warning: KG build failed for {safe_name}: {e}")
+
+            uploaded_files.append({"filename": safe_name, "chunks": len(text_chunks), "status": "success"})
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "error", "error": str(e)})
         finally:
             if file_path.exists():
                 file_path.unlink()
 
-    return {"message": f"Successfully processed {len(uploaded_files)} files", "files": uploaded_files}
+    return {
+        "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
+        "files": uploaded_files,
+        "kg_concepts_added": kg_concepts_added,
+    }
 
 
 @app.post("/api/ai/chat")
@@ -211,6 +247,9 @@ async def get_learning_groups(group_size: int = 4):
         return {"status": "success", "total_groups": len(groups), "group_size": group_size, "groups": groups}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating learning groups: {str(e)}")
+
+
+# ── Assessment Engine endpoints ─────────────────────────────────────────────────
 
 
 @app.post("/api/assessment/generate-quiz")
@@ -267,6 +306,9 @@ async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Adaptive Engine endpoints ──────────────────────────────────────────────────
 
 
 def _payload_to_state(payload: ConceptStatePayload) -> ConceptState:
@@ -363,51 +405,3 @@ async def api_run_rpkt_probe(request: RPKTProbeRequest):
         return RPKTProbeResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
-
-
-# ── Yichen: RAG + Socratic Tutor + Interventions ──────────────────────────────
-
-@app.post("/api/tutor/embed", response_model=EmbedContentResponse)
-async def embed_content_endpoint(request: EmbedContentRequest):
-    try:
-        n = tutor_service.embed_content(request.content, request.concept_id, request.source)
-        return EmbedContentResponse(chunks_embedded=n, concept_id=request.concept_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/tutor/context")
-async def retrieve_context_endpoint(request: RetrieveContextRequest):
-    try:
-        chunks = tutor_service.retrieve_context(request.concept, request.limit)
-        return {"concept": request.concept, "chunks": chunks}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/tutor/chat")
-async def tutor_chat_endpoint(request: TutorChatRequest):
-    try:
-        if not request.query:
-            raise HTTPException(status_code=400, detail="Query is required")
-        return tutor_service.tutor_chat(request.query, request.knowledge_state)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/tutor/intervene", response_model=InterventionResponse)
-async def run_intervention_endpoint(request: InterventionRequest):
-    try:
-        return tutor_service.run_intervention(request)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/tutor/session-summary", response_model=SessionSummaryResponse)
-async def session_summary_endpoint(request: SessionData):
-    try:
-        return tutor_service.generate_session_summary(request)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
