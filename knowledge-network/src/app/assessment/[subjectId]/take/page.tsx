@@ -12,6 +12,7 @@ import {
   type QuizQuestionClient,
   type ClassifyResult,
 } from '@/services/assessment';
+import { apiFetch } from '@/services/api';
 
 type AnswersMap = Record<string, number>;
 type ConfidenceMap = Record<string, number>;
@@ -127,6 +128,36 @@ export default function AssessmentTakePage() {
       const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload);
       const classification = await classifyMistake(studentId, subjectId, answerPayload);
       setClassificationResult(classification);
+
+      // Update KG mastery + BKT for each answered question
+      try {
+        for (const pq of evaluation.per_question) {
+          const cls = classification.classifications.find(c => c.question_id === pq.question_id);
+          const isCareless = cls?.mistake_type === 'careless';
+
+          // Update knowledge graph node mastery
+          await apiFetch('/api/kg/update_mastery', {
+            method: 'POST',
+            body: JSON.stringify({
+              concept_id: subjectId,
+              is_correct: pq.is_correct,
+              is_careless: isCareless,
+            }),
+          });
+
+          // Update BKT state
+          await apiFetch('/api/adaptive/bkt/update', {
+            method: 'POST',
+            body: JSON.stringify({
+              concept: { concept_id: subjectId, mastery: 0.25 },
+              is_correct: pq.is_correct,
+              mistake_type: cls?.mistake_type === 'conceptual' ? 'conceptual' : cls?.mistake_type === 'careless' ? 'careless' : 'normal',
+            }),
+          });
+        }
+      } catch (integrationErr) {
+        console.warn('Non-fatal: KG/BKT update failed:', integrationErr);
+      }
 
       saveRunToSession({
         studentId,
