@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import {
   classifyMistake,
@@ -12,22 +12,11 @@ import {
   type QuizQuestionClient,
   type ClassifyResult,
 } from '@/services/assessment';
+import { apiFetch } from '@/services/api';
+import { useStudentId } from '@/hooks/useStudentId';
 
 type AnswersMap = Record<string, number>;
 type ConfidenceMap = Record<string, number>;
-
-function getStudentId() {
-  if (typeof window === 'undefined') {
-    return 'student-demo';
-  }
-  const existing = window.localStorage.getItem('student_id');
-  if (existing) {
-    return existing;
-  }
-  const created = `student-${Math.random().toString(36).slice(2, 10)}`;
-  window.localStorage.setItem('student_id', created);
-  return created;
-}
 
 export default function AssessmentTakePage() {
   const router = useRouter();
@@ -44,7 +33,7 @@ export default function AssessmentTakePage() {
   const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
   const [checkpointConfidence, setCheckpointConfidence] = useState<number>(3);
   const [classificationResult, setClassificationResult] = useState<ClassifyResult | null>(null);
-  const studentId = useMemo(() => getStudentId(), []);
+  const studentId = useStudentId();
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +116,36 @@ export default function AssessmentTakePage() {
       const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload);
       const classification = await classifyMistake(studentId, subjectId, answerPayload);
       setClassificationResult(classification);
+
+      // Update KG mastery + BKT for each answered question
+      try {
+        for (const pq of evaluation.per_question) {
+          const cls = classification.classifications.find(c => c.question_id === pq.question_id);
+          const isCareless = cls?.mistake_type === 'careless';
+
+          // Update knowledge graph node mastery
+          await apiFetch('/api/kg/update_mastery', {
+            method: 'POST',
+            body: JSON.stringify({
+              concept_id: subjectId,
+              is_correct: pq.is_correct,
+              is_careless: isCareless,
+            }),
+          });
+
+          // Update BKT state
+          await apiFetch('/api/adaptive/bkt/update', {
+            method: 'POST',
+            body: JSON.stringify({
+              concept: { concept_id: subjectId, mastery: 0.25 },
+              is_correct: pq.is_correct,
+              mistake_type: cls?.mistake_type === 'conceptual' ? 'conceptual' : cls?.mistake_type === 'careless' ? 'careless' : 'normal',
+            }),
+          });
+        }
+      } catch (integrationErr) {
+        console.warn('Non-fatal: KG/BKT update failed:', integrationErr);
+      }
 
       saveRunToSession({
         studentId,

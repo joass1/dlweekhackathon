@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
+import { useAuth } from '@/contexts/AuthContext';
 import { ChatHistory, ChatInput, ChatWindow, NotesContext, SubjectsList } from '@/components/ai';
 import { Subject } from '@/types';
 import Split from 'react-split';
@@ -21,7 +21,7 @@ interface ContextItem {
 }
 
 export default function AIAssistantPage() {
-  const { data: session } = useSession();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
@@ -44,7 +44,7 @@ export default function AIAssistantPage() {
         },
         body: JSON.stringify({
           query: content,
-          userId: session?.user?.id,
+          userId: user?.uid,
         })
       });
 
