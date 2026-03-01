@@ -1,10 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Folder, ChevronDown, ChevronRight, FileText, Upload, GripVertical, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 interface Subject {
   id: string;
@@ -29,31 +27,37 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
 
   const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
-  // Real-time listener for user's topics
-  useEffect(() => {
+  const fetchTopics = useCallback(async () => {
     if (!user?.uid) return;
-    const q = query(collection(db, 'user_topics'), where('userId', '==', user.uid));
-    const unsub = onSnapshot(q, (snap) => {
+    setIsLoadingSubjects(true);
+    try {
+      const token = await getIdToken();
+      const res = await fetch(`${base}/api/user-topics`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return;
+      const { topics } = await res.json();
       const grouped: Record<string, Subject> = {};
-      snap.docs.forEach(d => {
-        const row = d.data();
-        const courseId: string = row.courseId || 'uncategorized';
+      topics.forEach((row: { id: string; courseId: string; courseName: string; conceptId: string; title: string }) => {
+        const courseId = row.courseId || 'uncategorized';
         if (!grouped[courseId]) {
           grouped[courseId] = { id: courseId, name: row.courseName || courseId, notes: [] };
         }
         grouped[courseId].notes.push({
-          id: d.id,
-          title: row.title || d.id,
-          conceptId: row.conceptId || toConceptId(row.title || d.id),
+          id: row.id,
+          title: row.title || row.id,
+          conceptId: row.conceptId || toConceptId(row.title || row.id),
         });
       });
       setSubjects(Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name)));
+    } finally {
       setIsLoadingSubjects(false);
-    }, () => {
-      setIsLoadingSubjects(false);
-    });
-    return unsub;
-  }, [user?.uid]);
+    }
+  }, [user?.uid, base, getIdToken]);
+
+  useEffect(() => {
+    fetchTopics();
+  }, [fetchTopics]);
 
   const toggleSubject = (subjectId: string) => {
     const newExpanded = new Set(expandedSubjects);
@@ -74,7 +78,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      // onSnapshot auto-updates the list
+      await fetchTopics();
     } catch (error) {
       console.error('Delete failed:', error);
       alert('Failed to delete topic.');
@@ -107,7 +111,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       const result = await response.json();
       console.log('Upload successful:', result);
       setIsUploadModalOpen(false);
-      // onSnapshot will automatically update the sidebar
+      await fetchTopics();
     } catch (error) {
       console.error('Upload error:', error);
       alert('Failed to upload files. Please try again.');

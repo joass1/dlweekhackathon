@@ -814,6 +814,28 @@ async def session_summary_endpoint(request: SessionData):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/user-topics")
+async def get_user_topics(student_id: str = Depends(get_student_id)):
+    if db is None:
+        return {"topics": []}
+    try:
+        docs = db.collection("user_topics").where("userId", "==", student_id).stream()
+        topics = []
+        for d in docs:
+            data = d.to_dict() or {}
+            topics.append({
+                "id": d.id,
+                "courseId": data.get("courseId", "uncategorized"),
+                "courseName": data.get("courseName", "Uncategorized"),
+                "conceptId": data.get("conceptId", ""),
+                "title": data.get("title", d.id),
+                "chunkCount": data.get("chunkCount", 0),
+            })
+        return {"topics": topics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/user-topics/{doc_id}")
 async def delete_user_topic(doc_id: str, student_id: str = Depends(get_student_id)):
     if db is None:
