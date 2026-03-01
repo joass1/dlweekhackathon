@@ -113,14 +113,16 @@ class AssessmentEngine:
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.kg_base_url = os.getenv("KG_API_BASE_URL", "").strip()
         self.enable_llm_generation = os.getenv("ENABLE_LLM_QUIZ_GENERATION", "true").lower() == "true"
+        self.allow_rule_based_quiz_fallback = os.getenv("ALLOW_RULE_BASED_QUIZ_FALLBACK", "false").lower() == "true"
         self.enable_remote_profile = os.getenv("ENABLE_REMOTE_PROFILE_LOOKUP", "true").lower() == "true"
         self.kg_timeout_s = float(os.getenv("KG_API_TIMEOUT_SECONDS", "2.0"))
-        self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "8.0"))
+        self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "35.0"))
         self.client = (
             OpenAI(api_key=self.openai_key, timeout=self.llm_timeout_s)
             if self.openai_key and self.enable_llm_generation
             else None
         )
+        self._last_quiz_generation_error: Optional[str] = None
 
     def _resolve_kg_concept_id(self, concept: str) -> Optional[str]:
         if not concept:
@@ -515,7 +517,9 @@ class AssessmentEngine:
         kg_context: Dict[str, Any],
         personalization: Dict[str, Any],
     ) -> List[QuizQuestion]:
+        self._last_quiz_generation_error = None
         if not self.client:
+            self._last_quiz_generation_error = "OpenAI client is unavailable."
             return []
 
         prompt = {
@@ -552,28 +556,73 @@ class AssessmentEngine:
             },
         }
 
-        for _ in range(2):
+        collected: List[QuizQuestion] = []
+        seen_keys: set[Tuple[str, Tuple[str, ...]]] = set()
+
+        for _ in range(4):
+            remaining = num_questions - len(collected)
+            if remaining <= 0:
+                break
+            prompt["constraints"]["count"] = remaining
             try:
-                completion = self.client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    temperature=0.4,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "Return only valid JSON. No markdown. No prose.",
-                        },
-                        {"role": "user", "content": json.dumps(prompt)},
-                    ],
-                )
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "Return only valid JSON. No markdown. No prose.",
+                    },
+                    {"role": "user", "content": json.dumps(prompt)},
+                ]
+                try:
+                    completion = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        temperature=0.2,
+                        response_format={"type": "json_object"},
+                        messages=messages,
+                    )
+                except Exception as format_exc:
+                    # Compatibility fallback for SDK/model variants.
+                    self._last_quiz_generation_error = f"response_format mode failed: {format_exc}"
+                    completion = self.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        temperature=0.2,
+                        messages=messages,
+                    )
                 content = completion.choices[0].message.content or "{}"
                 parsed = _extract_json_object(content)
                 questions = parsed.get("questions", [])
-                validated = self._validate_generated_questions(concept, questions, num_questions)
-                if len(validated) >= num_questions:
-                    return validated
-            except Exception:
+                validated = self._validate_generated_questions(concept, questions, remaining)
+                for q in validated:
+                    key = (q.stem.strip().lower(), tuple(opt.strip().lower() for opt in q.options))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    collected.append(q)
+                    if len(collected) >= num_questions:
+                        break
+            except Exception as exc:
+                self._last_quiz_generation_error = f"OpenAI request/parse failure: {exc}"
                 continue
-        return []
+
+        if len(collected) < num_questions:
+            if not self._last_quiz_generation_error:
+                self._last_quiz_generation_error = (
+                    f"Generated only {len(collected)}/{num_questions} valid questions."
+                )
+            return []
+
+        # Re-index IDs deterministically after multi-pass collection.
+        return [
+            QuizQuestion(
+                question_id=f"{concept}-q{i + 1}",
+                concept=q.concept,
+                stem=q.stem,
+                options=q.options,
+                correct_answer=q.correct_answer,
+                explanation=q.explanation,
+                difficulty=q.difficulty,
+            )
+            for i, q in enumerate(collected[:num_questions])
+        ]
 
     def _difficulty_for_mastery(self, mastery: Optional[float]) -> str:
         if mastery is None:
@@ -642,6 +691,12 @@ class AssessmentEngine:
         )
         generation_source = "llm"
         if not questions:
+            if not self.allow_rule_based_quiz_fallback:
+                raise ValueError(
+                    "LLM quiz generation failed or is unavailable. "
+                    "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
+                    f"Details: {self._last_quiz_generation_error or 'unknown'}"
+                )
             questions = self._fallback_generate_questions(
                 request.concept,
                 request.num_questions,

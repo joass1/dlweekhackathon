@@ -3,11 +3,27 @@
  * All frontend services should use `apiFetch` instead of raw `fetch`.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+
+function sanitizeApiBaseUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return 'http://127.0.0.1:8000';
+  }
+}
+
+const API_BASE_URL = sanitizeApiBaseUrl(RAW_API_BASE_URL);
 
 function getCandidateBaseUrls(): string[] {
+  const runtimeHost =
+    typeof window !== 'undefined' && window.location?.hostname
+      ? `http://${window.location.hostname}:8000`
+      : null;
   const candidates = [
     API_BASE_URL,
+    ...(runtimeHost ? [runtimeHost] : []),
     'http://127.0.0.1:8000',
     'http://localhost:8000',
     'http://127.0.0.1:8001',

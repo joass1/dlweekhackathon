@@ -57,15 +57,25 @@ from app.models.tutor_schemas import (
 )
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-load_dotenv()
+BASE_DIR = pathlib.Path(__file__).resolve().parents[1]
+load_dotenv(BASE_DIR / ".env")
 
 data_dir = pathlib.Path("data")
 data_dir.mkdir(exist_ok=True)
 
 app = FastAPI(title="LearnGraph AI API")
+default_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://192.168.0.100:3000",
+]
+extra_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"],
+    allow_origins=[*default_origins, *extra_origins],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -261,6 +271,7 @@ async def upload_files(
     uploaded_files = []
     kg_concepts_added = 0
     user_kg_engine = _get_user_kg_engine(student_id)
+    suggested_quiz_concept: Optional[str] = None
 
     for file in files:
         safe_name = pathlib.Path(file.filename).name if file.filename else "upload.txt"
@@ -325,6 +336,10 @@ async def upload_files(
                     course_name=course_name or None,
                 )
                 kg_concepts_added += len(added)
+                if not suggested_quiz_concept and added:
+                    first_id = added[0].get("id")
+                    if isinstance(first_id, str) and first_id.strip():
+                        suggested_quiz_concept = first_id.strip()
             except Exception as e:
                 print(f"Warning: KG build failed for {safe_name}: {e}")
 
@@ -342,6 +357,7 @@ async def upload_files(
         "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
         "files": uploaded_files,
         "kg_concepts_added": kg_concepts_added,
+        "suggested_quiz_concept": suggested_quiz_concept or (course_id or None),
     }
 
 
@@ -403,8 +419,11 @@ async def get_learning_groups(group_size: int = 4):
 
 @app.post("/api/assessment/generate-quiz")
 async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(get_student_id)):
-    request.student_id = student_id
-    return assessment_engine.generate_quiz(request)
+    try:
+        request.student_id = student_id
+        return assessment_engine.generate_quiz(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/assessment/evaluate", response_model=EvaluateResponse)
@@ -804,30 +823,29 @@ async def get_student_progress(student_id: str, current_user_id: str = Depends(g
         "recent_attempts": [],
     }
 
-    # Assessment data from Firestore
-    if db is not None and isinstance(assessment_store, FirestoreAssessmentStore):
-        try:
-            attempts = assessment_store.get_attempts(student_id)
-            progress["total_attempts"] = len(attempts)
-            progress["correct_attempts"] = sum(1 for a in attempts if a.get("is_correct"))
-            progress["accuracy"] = (
-                round(progress["correct_attempts"] / progress["total_attempts"], 3)
-                if progress["total_attempts"] > 0
-                else 0.0
-            )
-            progress["careless_count"] = sum(
-                1 for a in attempts if a.get("mistake_type") == "careless"
-            )
-            progress["conceptual_count"] = sum(
-                1 for a in attempts if a.get("mistake_type") == "conceptual"
-            )
-            # Last 10 attempts for recent activity
-            progress["recent_attempts"] = attempts[-10:]
-
-            blind_spots = assessment_store.get_blind_spots(student_id)
-            progress["blind_spots"] = blind_spots
-        except Exception as e:
-            print(f"Warning: Could not load assessment progress for {student_id}: {e}")
+    # Assessment data from whichever store is active (Firestore or JSON fallback).
+    try:
+        state, _ = assessment_engine.store.transaction(student_id)
+        attempts = state.get("attempt_history", {}).get(student_id, [])
+        progress["total_attempts"] = len(attempts)
+        progress["correct_attempts"] = sum(1 for a in attempts if a.get("is_correct") is True)
+        progress["accuracy"] = (
+            round(progress["correct_attempts"] / progress["total_attempts"], 3)
+            if progress["total_attempts"] > 0
+            else 0.0
+        )
+        progress["careless_count"] = sum(
+            1 for a in attempts if a.get("mistake_type") == "careless"
+        )
+        progress["conceptual_count"] = sum(
+            1 for a in attempts if a.get("mistake_type") == "conceptual"
+        )
+        progress["recent_attempts"] = attempts[-10:]
+        progress["blind_spots"] = (
+            state.get("blind_spot_counts", {}).get(student_id, {"found": 0, "resolved": 0})
+        )
+    except Exception as e:
+        print(f"Warning: Could not load assessment progress for {student_id}: {e}")
 
     # Self-awareness score
     try:

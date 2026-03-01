@@ -25,8 +25,18 @@ export default function UploadPage() {
   const [selectedCourse, setSelectedCourse] = useState('physics-101');
   const [newCourseName, setNewCourseName] = useState('');
 
+  const getApiBase = () => {
+    const raw = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    try {
+      const parsed = new URL(raw);
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      return 'http://localhost:8000';
+    }
+  };
+
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    const base = getApiBase();
     const load = async () => {
       try {
         const res = await authedFetch(`${base}/api/courses`);
@@ -44,7 +54,7 @@ export default function UploadPage() {
 
   const handleUpload = async (files: FileList) => {
     setIsUploading(true);
-    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    const base = getApiBase();
     const formData = new FormData();
     Array.from(files).forEach(file => formData.append('files', file));
     const selected = courses.find((c) => c.id === selectedCourse);
@@ -70,8 +80,12 @@ export default function UploadPage() {
       const hasSuccess = normalized.some(file => file.status === 'success');
       if (hasSuccess) {
         setIsStartingAssessment(true);
+        const quizConcept =
+          typeof result?.suggested_quiz_concept === 'string' && result.suggested_quiz_concept.trim()
+            ? result.suggested_quiz_concept.trim()
+            : selectedCourse;
         setTimeout(() => {
-          router.push(`/assessment/${selectedCourse}/take`);
+          router.push(`/assessment/${quizConcept}/take`);
         }, 500);
       }
     } catch {
@@ -86,7 +100,7 @@ export default function UploadPage() {
   const handleAddCourse = () => {
     const name = newCourseName.trim();
     if (!name) return;
-    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+    const base = getApiBase();
     const create = async () => {
       try {
         const res = await authedFetch(`${base}/api/courses`, {

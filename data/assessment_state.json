@@ -1,6 +1,781 @@
 {
-  "quizzes": {},
-  "attempt_history": {},
-  "classification_store": {},
-  "blind_spot_counts": {}
+  "quizzes": {
+    "student-wvb3loyx": {
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "stem": "What does Newton's first law of motion state?",
+        "options": [
+          "An object in motion stays in motion unless acted upon by an external force.",
+          "Force equals mass times acceleration.",
+          "For every action, there is an equal and opposite reaction.",
+          "Energy cannot be created or destroyed."
+        ],
+        "correct_answer": "An object in motion stays in motion unless acted upon by an external force.",
+        "explanation": "Newton's first law, also known as the law of inertia, states that an object will remain at rest or in uniform motion unless acted upon by a net external force.",
+        "difficulty": "easy"
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "stem": "Which of the following is an example of Newton's second law of motion?",
+        "options": [
+          "A car accelerates faster when more force is applied.",
+          "A ball thrown in the air will come back down.",
+          "A book resting on a table stays at rest.",
+          "A rocket launches into space."
+        ],
+        "correct_answer": "A car accelerates faster when more force is applied.",
+        "explanation": "Newton's second law states that the acceleration of an object is directly proportional to the net force acting on it and inversely proportional to its mass.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q3": {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "stem": "What is the formula associated with Newton's second law of motion?",
+        "options": [
+          "F = ma",
+          "E = mc^2",
+          "p = mv",
+          "v = d/t"
+        ],
+        "correct_answer": "F = ma",
+        "explanation": "The formula F = ma expresses that force (F) is equal to mass (m) multiplied by acceleration (a), which is the core of Newton's second law.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q4": {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "stem": "According to Newton's third law of motion, what happens for every action?",
+        "options": [
+          "There is an equal and opposite reaction.",
+          "The object will remain at rest.",
+          "The force will decrease.",
+          "The object will accelerate."
+        ],
+        "correct_answer": "There is an equal and opposite reaction.",
+        "explanation": "Newton's third law states that for every action, there is an equal and opposite reaction, meaning forces always occur in pairs.",
+        "difficulty": "hard"
+      },
+      "newtons-laws-q5": {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "stem": "If a 10 kg object is accelerating at 2 m/s\u00b2, what is the net force acting on it?",
+        "options": [
+          "5 N",
+          "10 N",
+          "20 N",
+          "15 N"
+        ],
+        "correct_answer": "20 N",
+        "explanation": "Using Newton's second law (F = ma), the net force is calculated as F = 10 kg * 2 m/s\u00b2 = 20 N.",
+        "difficulty": "hard"
+      },
+      "checkpoint-newtons-laws-170928": {
+        "question_id": "checkpoint-newtons-laws-170928",
+        "concept": "newtons-laws",
+        "stem": "Quick checkpoint: which statement best confirms mastery of newtons-laws?",
+        "options": [
+          "I can explain the concept and apply it to a new problem.",
+          "I only remember the definition word-for-word.",
+          "I can identify a formula but not usage conditions.",
+          "I need a worked solution before attempting anything."
+        ],
+        "correct_answer": "I can explain the concept and apply it to a new problem.",
+        "explanation": "Transfer + explanation is strongest mastery signal.",
+        "difficulty": "easy"
+      }
+    },
+    "student-debug": {
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "stem": "What does Newton's first law of motion state?",
+        "options": [
+          "An object in motion stays in motion unless acted upon by an external force.",
+          "For every action, there is an equal and opposite reaction.",
+          "Force equals mass times acceleration.",
+          "Energy cannot be created or destroyed."
+        ],
+        "correct_answer": "An object in motion stays in motion unless acted upon by an external force.",
+        "explanation": "Newton's first law, also known as the law of inertia, states that an object will remain at rest or in uniform motion unless acted upon by a net external force.",
+        "difficulty": "easy"
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "stem": "Which of the following is an example of Newton's second law of motion?",
+        "options": [
+          "A soccer ball rolls on the ground until it hits a wall.",
+          "A car accelerates faster when more force is applied to the gas pedal.",
+          "A book rests on a table without moving.",
+          "A rocket launches into space."
+        ],
+        "correct_answer": "A car accelerates faster when more force is applied to the gas pedal.",
+        "explanation": "Newton's second law states that the acceleration of an object is directly proportional to the net force acting on it and inversely proportional to its mass (F=ma).",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q3": {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "stem": "What is the relationship described by Newton's third law of motion?",
+        "options": [
+          "Objects at rest tend to stay at rest.",
+          "For every action, there is an equal and opposite reaction.",
+          "The acceleration of an object depends on the net force acting on it.",
+          "Mass and weight are the same."
+        ],
+        "correct_answer": "For every action, there is an equal and opposite reaction.",
+        "explanation": "Newton's third law states that for every action force, there is a reaction force that is equal in size, but opposite in direction.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q4": {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "stem": "If a 10 kg object is subjected to a force of 50 N, what is its acceleration?",
+        "options": [
+          "5 m/s\u00b2",
+          "10 m/s\u00b2",
+          "2 m/s\u00b2",
+          "0.2 m/s\u00b2"
+        ],
+        "correct_answer": "5 m/s\u00b2",
+        "explanation": "Using Newton's second law (F=ma), acceleration (a) can be calculated as a = F/m = 50 N / 10 kg = 5 m/s\u00b2.",
+        "difficulty": "hard"
+      },
+      "newtons-laws-q5": {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "stem": "Which of the following scenarios best illustrates Newton's first law?",
+        "options": [
+          "A skateboarder coasts on a flat surface until friction slows them down.",
+          "A car crashes into a barrier and crumples.",
+          "A ball is thrown and follows a parabolic path.",
+          "A person pushes a heavy box across the floor."
+        ],
+        "correct_answer": "A skateboarder coasts on a flat surface until friction slows them down.",
+        "explanation": "This scenario illustrates inertia, where the skateboarder continues in motion until an external force (friction) acts upon them.",
+        "difficulty": "medium"
+      }
+    },
+    "student-laluvp2i": {
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "stem": "What does Newton's first law of motion state?",
+        "options": [
+          "An object in motion stays in motion unless acted upon by an external force.",
+          "Force equals mass times acceleration.",
+          "For every action, there is an equal and opposite reaction.",
+          "Energy cannot be created or destroyed."
+        ],
+        "correct_answer": "An object in motion stays in motion unless acted upon by an external force.",
+        "explanation": "Newton's first law, also known as the law of inertia, states that an object will remain at rest or in uniform motion unless acted upon by a net external force.",
+        "difficulty": "easy"
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "stem": "Which of the following is an example of Newton's second law of motion?",
+        "options": [
+          "A ball rolling down a hill accelerates due to gravity.",
+          "A book resting on a table stays at rest.",
+          "A rocket launches into space.",
+          "A car stops when the brakes are applied."
+        ],
+        "correct_answer": "A rocket launches into space.",
+        "explanation": "Newton's second law states that force equals mass times acceleration (F=ma). The rocket's engines provide the force needed to accelerate it upwards.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q3": {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "stem": "What is the relationship described by Newton's third law of motion?",
+        "options": [
+          "Objects at rest tend to stay at rest.",
+          "For every action, there is an equal and opposite reaction.",
+          "The acceleration of an object is directly proportional to the net force acting on it.",
+          "An object will continue in its state of motion unless acted upon."
+        ],
+        "correct_answer": "For every action, there is an equal and opposite reaction.",
+        "explanation": "Newton's third law states that for every force exerted, there is a reaction force that is equal in size and opposite in direction.",
+        "difficulty": "medium"
+      },
+      "newtons-laws-q4": {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "stem": "If a car accelerates from rest to a speed of 60 km/h in 10 seconds, what is the average acceleration?",
+        "options": [
+          "6 km/h\u00b2",
+          "60 km/h\u00b2",
+          "0.6 km/h\u00b2",
+          "0.06 km/h\u00b2"
+        ],
+        "correct_answer": "6 km/h\u00b2",
+        "explanation": "Acceleration is calculated as the change in velocity divided by the time taken. Here, the change in velocity is 60 km/h and the time is 10 seconds, giving an average acceleration of 6 km/h\u00b2.",
+        "difficulty": "hard"
+      },
+      "newtons-laws-q5": {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "stem": "Which of the following scenarios best illustrates Newton's first law?",
+        "options": [
+          "A soccer ball rolling on the ground eventually stops due to friction.",
+          "A person pushes a stationary car and it starts moving.",
+          "A skateboarder gliding on a smooth surface continues to move until hitting a wall.",
+          "A balloon deflating slowly."
+        ],
+        "correct_answer": "A skateboarder gliding on a smooth surface continues to move until hitting a wall.",
+        "explanation": "This scenario illustrates inertia, where the skateboarder continues to move in a straight line until an external force (the wall) acts upon them.",
+        "difficulty": "medium"
+      }
+    }
+  },
+  "attempt_history": {
+    "student-wvb3loyx": [
+      {
+        "question_id": "energy-work-q1",
+        "concept": "energy-work",
+        "is_correct": false,
+        "confidence_1_to_5": 4,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T16:19:06.992838+00:00"
+      },
+      {
+        "question_id": "energy-work-q2",
+        "concept": "energy-work",
+        "is_correct": false,
+        "confidence_1_to_5": 2,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T16:19:06.992838+00:00"
+      },
+      {
+        "question_id": "energy-work-q3",
+        "concept": "energy-work",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T16:19:06.992838+00:00"
+      },
+      {
+        "question_id": "energy-work-q4",
+        "concept": "energy-work",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T16:19:06.993376+00:00"
+      },
+      {
+        "question_id": "energy-work-q5",
+        "concept": "energy-work",
+        "is_correct": false,
+        "confidence_1_to_5": 4,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T16:19:06.993376+00:00"
+      },
+      {
+        "question_id": "checkpoint-energy-work-161907",
+        "concept": "energy-work",
+        "is_correct": false,
+        "confidence_1_to_5": 3,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T16:19:11.025308+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:09:28.131898+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:09:28.131898+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:09:28.131898+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:09:28.131898+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 1,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:09:28.135336+00:00"
+      },
+      {
+        "question_id": "checkpoint-newtons-laws-170928",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 3,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:09:31.631350+00:00"
+      }
+    ],
+    "student-laluvp2i": [
+      {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 4,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:02:39.082783+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 2,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:02:39.083510+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:02:39.083510+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:02:39.083510+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 4,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:02:39.083510+00:00"
+      },
+      {
+        "question_id": "checkpoint-newtons-laws-170239",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 3,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:02:41.772699+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 4,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:02:46.456449+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 2,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:02:46.456449+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:02:46.456449+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:02:46.456449+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 4,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:02:46.457458+00:00"
+      },
+      {
+        "question_id": "momentum-q1",
+        "concept": "momentum",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:04:13.161215+00:00"
+      },
+      {
+        "question_id": "momentum-q2",
+        "concept": "momentum",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:04:13.161215+00:00"
+      },
+      {
+        "question_id": "momentum-q3",
+        "concept": "momentum",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:04:13.161215+00:00"
+      },
+      {
+        "question_id": "momentum-q4",
+        "concept": "momentum",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:04:13.161215+00:00"
+      },
+      {
+        "question_id": "momentum-q5",
+        "concept": "momentum",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:04:13.161215+00:00"
+      },
+      {
+        "question_id": "checkpoint-momentum-170413",
+        "concept": "momentum",
+        "is_correct": false,
+        "confidence_1_to_5": 3,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:04:18.341519+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:08:07.541400+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:08:07.541400+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:08:07.541400+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:08:07.541996+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 1,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:08:07.541996+00:00"
+      },
+      {
+        "question_id": "checkpoint-newtons-laws-170807",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 3,
+        "mistake_type": "conceptual",
+        "timestamp": "2026-03-01T17:08:11.294254+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:14.430130+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 1,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:14.433286+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:14.433286+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:18:14.433286+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 1,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:14.433286+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:17.057518+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 1,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:17.057518+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q3",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 5,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:17.057518+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q4",
+        "concept": "newtons-laws",
+        "is_correct": false,
+        "confidence_1_to_5": 5,
+        "mistake_type": "careless",
+        "timestamp": "2026-03-01T17:18:17.057518+00:00"
+      },
+      {
+        "question_id": "newtons-laws-q5",
+        "concept": "newtons-laws",
+        "is_correct": true,
+        "confidence_1_to_5": 1,
+        "mistake_type": null,
+        "timestamp": "2026-03-01T17:18:17.057518+00:00"
+      }
+    ]
+  },
+  "classification_store": {
+    "student-wvb3loyx": {
+      "energy-work-q1": {
+        "question_id": "energy-work-q1",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "F + d",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T16:19:06.992838+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "energy-work-q2": {
+        "question_id": "energy-work-q2",
+        "mistake_type": "conceptual",
+        "missing_concept": "energy-work",
+        "error_span": "Energy cannot transfer",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T16:19:06.992838+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "energy-work-q3": {
+        "question_id": "energy-work-q3",
+        "mistake_type": "conceptual",
+        "missing_concept": "energy-work",
+        "error_span": "F/d",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T16:19:06.992838+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "energy-work-q5": {
+        "question_id": "energy-work-q5",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "mgh always",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T16:19:06.993376+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "For every action, there is an equal and opposite reaction.",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T17:09:28.131898+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "A book resting on a table stays at rest.",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T17:09:28.131898+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "newtons-laws-q4": {
+        "question_id": "newtons-laws-q4",
+        "mistake_type": "conceptual",
+        "missing_concept": "newtons-laws",
+        "error_span": "The object will accelerate.",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T17:09:28.131898+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      }
+    },
+    "student-laluvp2i": {
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "Force equals mass times acceleration.",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T17:02:46.456449+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "mistake_type": "conceptual",
+        "missing_concept": "newtons-laws",
+        "error_span": "An object will not change its state of motion.",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T17:02:46.456449+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": true
+      },
+      "newtons-laws-q3": {
+        "question_id": "newtons-laws-q3",
+        "mistake_type": "conceptual",
+        "missing_concept": "newtons-laws",
+        "error_span": "An object in motion stays in motion.",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T17:08:07.541400+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": true
+      },
+      "newtons-laws-q4": {
+        "question_id": "newtons-laws-q4",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "60 km/h\u00b2",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T17:18:17.057518+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "momentum-q2": {
+        "question_id": "momentum-q2",
+        "mistake_type": "careless",
+        "missing_concept": null,
+        "error_span": "5000 kg\u00b7m/s",
+        "rationale": "High-confidence incorrect answer suggests likely careless execution.",
+        "updated_at": "2026-03-01T17:04:13.161215+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "momentum-q3": {
+        "question_id": "momentum-q3",
+        "mistake_type": "conceptual",
+        "missing_concept": "momentum",
+        "error_span": "A rock falling from a cliff",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T17:04:13.161215+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "momentum-q5": {
+        "question_id": "momentum-q5",
+        "mistake_type": "conceptual",
+        "missing_concept": "momentum",
+        "error_span": "Both will experience the same change",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T17:04:13.161215+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": false
+      },
+      "newtons-laws-q5": {
+        "question_id": "newtons-laws-q5",
+        "mistake_type": "conceptual",
+        "missing_concept": "newtons-laws",
+        "error_span": "A rocket launches into space.",
+        "rationale": "Low-confidence incorrect answer suggests conceptual gap.",
+        "updated_at": "2026-03-01T17:08:07.541996+00:00",
+        "overridden_by_user": false,
+        "override_timestamp": null,
+        "resolved_by_correct": true
+      }
+    }
+  },
+  "blind_spot_counts": {
+    "student-wvb3loyx": {
+      "found": 3,
+      "resolved": 0
+    },
+    "student-laluvp2i": {
+      "found": 5,
+      "resolved": 3
+    }
+  }
 }
