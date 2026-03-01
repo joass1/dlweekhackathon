@@ -39,8 +39,10 @@ export default function AssessmentTakePage() {
   const [confidenceRatings, setConfidenceRatings] = useState<ConfidenceMap>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingQuiz, setIsLoadingQuiz] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [checkpoint, setCheckpoint] = useState<QuizQuestionClient | null>(null);
   const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
+  const [checkpointConfidence, setCheckpointConfidence] = useState<number>(3);
   const [classificationResult, setClassificationResult] = useState<ClassifyResult | null>(null);
   const studentId = useMemo(() => getStudentId(), []);
 
@@ -48,6 +50,7 @@ export default function AssessmentTakePage() {
     let cancelled = false;
     async function loadQuiz() {
       setIsLoadingQuiz(true);
+      setLoadError(null);
       try {
         const generated = await generateQuiz(studentId, subjectId, 5);
         if (!cancelled) {
@@ -55,6 +58,9 @@ export default function AssessmentTakePage() {
         }
       } catch (error) {
         console.error('Error generating quiz:', error);
+        if (!cancelled) {
+          setLoadError('Could not generate the quiz. Please retry.');
+        }
       } finally {
         if (!cancelled) {
           setIsLoadingQuiz(false);
@@ -96,6 +102,8 @@ export default function AssessmentTakePage() {
     try {
       const cp = await getMicroCheckpoint(studentId, subjectId, conceptual.missing_concept || undefined);
       setCheckpoint(cp);
+      setCheckpointAnswer(null);
+      setCheckpointConfidence(3);
       return true;
     } catch (error) {
       console.error('Error loading micro-checkpoint:', error);
@@ -169,7 +177,12 @@ export default function AssessmentTakePage() {
     }
     try {
       const selectedAnswer = checkpoint.options[checkpointAnswer];
-      const result = await submitMicroCheckpoint(studentId, checkpoint.question_id, selectedAnswer, 3);
+      const result = await submitMicroCheckpoint(
+        studentId,
+        checkpoint.question_id,
+        selectedAnswer,
+        checkpointConfidence
+      );
       const currentRaw = window.sessionStorage.getItem(`assessment_result_${subjectId}`);
       const current = currentRaw ? JSON.parse(currentRaw) : {};
       saveRunToSession({
@@ -194,6 +207,23 @@ export default function AssessmentTakePage() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto"></div>
           <p className="mt-4 text-gray-600">Generating quiz...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="max-w-md w-full text-center bg-white rounded-lg border border-red-200 p-6">
+          <h2 className="text-lg font-semibold text-red-700 mb-2">Quiz load failed</h2>
+          <p className="text-sm text-gray-600 mb-4">{loadError}</p>
+          <button
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -309,12 +339,36 @@ export default function AssessmentTakePage() {
               ))}
             </div>
             <div className="flex justify-end gap-2">
-              <button className="px-4 py-2 rounded border border-gray-300" onClick={() => setCheckpoint(null)}>
+              <button
+                className="px-4 py-2 rounded border border-gray-300"
+                onClick={() => {
+                  setCheckpoint(null);
+                  setCheckpointAnswer(null);
+                  setCheckpointConfidence(3);
+                }}
+              >
                 Skip
               </button>
               <button className="px-4 py-2 rounded bg-emerald-600 text-white" onClick={submitCheckpoint}>
                 Submit checkpoint
               </button>
+            </div>
+            <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Confidence for checkpoint answer
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-red-500 w-14">Guessing</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  value={checkpointConfidence}
+                  onChange={(e) => setCheckpointConfidence(parseInt(e.target.value, 10))}
+                  className="flex-1 accent-emerald-600"
+                />
+                <span className="text-xs text-green-600 w-14 text-right">Certain</span>
+              </div>
             </div>
           </div>
         </div>
