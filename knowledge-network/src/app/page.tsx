@@ -6,12 +6,14 @@ import { BookOpen, AlertTriangle, Flame, Rocket, ArrowRight, Loader2, Target, Br
 import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { apiFetch, getStudentId } from '@/services/api';
+import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 
 interface KGNode {
   id: string;
   title: string;
   mastery: number;
   status: 'mastered' | 'learning' | 'weak' | 'not_started';
+  courseId?: string;
   category?: string;
   decayTimestamp?: string | null;
 }
@@ -41,16 +43,22 @@ export default function Page() {
   const [links, setLinks] = useState<KGLink[]>([]);
   const [progress, setProgress] = useState<StudentProgress | null>(null);
   const [loading, setLoading] = useState(true);
+  const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
+  const [selectedCourse, setSelectedCourse] = useState('all');
   const studentId = useMemo(() => getStudentId(), []);
 
   useEffect(() => {
     async function loadData() {
       try {
-        // Load KG graph and student progress in parallel
-        const [graphData, progressData] = await Promise.all([
+        // Load KG graph, courses, and student progress in parallel
+        const [graphData, courseData, progressData] = await Promise.all([
           apiFetch<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph'),
+          apiFetch<{ courses: CourseOption[] }>('/api/courses').catch(() => ({ courses: DEFAULT_COURSES })),
           apiFetch<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
         ]);
+
+        const incoming: CourseOption[] = Array.isArray(courseData.courses) ? courseData.courses : DEFAULT_COURSES;
+        setCourses([{ id: 'all', name: 'All Courses' }, ...incoming]);
 
         setNodes(
           (graphData.nodes ?? []).map((n: any) => ({
@@ -58,6 +66,7 @@ export default function Page() {
             title: String(n.title ?? n.id),
             mastery: Number(n.mastery ?? 0),
             status: (n.status ?? 'not_started') as KGNode['status'],
+            courseId: n.courseId ? String(n.courseId) : undefined,
             category: String(n.category ?? 'General'),
             decayTimestamp: n.decayTimestamp ?? null,
           }))
@@ -78,6 +87,30 @@ export default function Page() {
     }
     loadData();
   }, [studentId]);
+
+  // ── Course filtering (same logic as the full Knowledge Map page) ────────────
+  const filteredNodes = useMemo(() => {
+    if (selectedCourse === 'all') return nodes;
+    const selected = courses.find(c => c.id === selectedCourse);
+    if (!selected) return nodes;
+
+    const normalize = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const courseNameNorm = normalize(selected.name).replace(/\b\d+\b/g, '').trim();
+
+    return nodes.filter(n => {
+      if (n.courseId) return n.courseId === selectedCourse;
+      const categoryNorm = normalize(n.category ?? '');
+      if (!categoryNorm || !courseNameNorm) return false;
+      return categoryNorm === courseNameNorm || categoryNorm.includes(courseNameNorm) || courseNameNorm.includes(categoryNorm);
+    });
+  }, [nodes, selectedCourse, courses]);
+
+  const filteredNodeIds = useMemo(() => new Set(filteredNodes.map(n => n.id)), [filteredNodes]);
+  const linkNodeId = (end: string | { id?: string }) => typeof end === 'string' ? end : String(end?.id ?? '');
+  const filteredLinks = useMemo(
+    () => links.filter(l => filteredNodeIds.has(linkNodeId(l.source as any)) && filteredNodeIds.has(linkNodeId(l.target as any))),
+    [links, filteredNodeIds]
+  );
 
   // Use Firebase progress data when available, fall back to KG-computed stats
   const kgStats = progress?.kg_stats;
@@ -266,9 +299,20 @@ export default function Page() {
         <Card className="lg:col-span-3 overflow-hidden">
           <div className="p-4 border-b flex justify-between items-center">
             <h3 className="font-semibold">Knowledge Map Preview</h3>
-            <Link href="/knowledge-map" className="text-sm text-emerald-600 hover:text-emerald-700 flex items-center gap-1">
-              Full Map <ArrowRight className="w-3 h-3" />
-            </Link>
+            <div className="flex items-center gap-3">
+              <select
+                value={selectedCourse}
+                onChange={e => setSelectedCourse(e.target.value)}
+                className="text-sm p-1.5 border rounded-lg bg-white"
+              >
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <Link href="/knowledge-map" className="text-sm text-emerald-600 hover:text-emerald-700 flex items-center gap-1 whitespace-nowrap">
+                Full Map <ArrowRight className="w-3 h-3" />
+              </Link>
+            </div>
           </div>
           <div className="h-[380px]">
             {loading ? (
@@ -277,7 +321,7 @@ export default function Page() {
               </div>
             ) : (
               <KnowledgeGraph
-                nodes={nodes.map(n => ({
+                nodes={filteredNodes.map(n => ({
                   id: n.id,
                   title: n.title,
                   mastery: n.mastery,
@@ -286,7 +330,7 @@ export default function Page() {
                   decayRate: 0,
                   category: n.category ?? 'General',
                 }))}
-                links={links}
+                links={filteredLinks}
               />
             )}
           </div>
