@@ -68,6 +68,7 @@ class ClassifyResponse(BaseModel):
     classifications: List[MistakeClassification]
     blind_spot_found_count: int
     blind_spot_resolved_count: int
+    integration_actions: List[dict] = []
 
 
 class SelfAwarenessResponse(BaseModel):

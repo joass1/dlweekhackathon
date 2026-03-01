@@ -169,6 +169,12 @@ export default function AssessmentResultsPage() {
     blind_spot_found_count?: number;
     blind_spot_resolved_count?: number;
     classifications?: { question_id: string; mistake_type: string; rationale: string }[];
+    integration_actions?: {
+      question_id: string;
+      mistake_type: string;
+      rpkt_probe?: { concept?: string; missing_concept?: string | null };
+      intervention?: { mistake_type?: string; concept?: string; missing_concept?: string | null };
+    }[];
   } | null>(null);
   const [selfAwareness, setSelfAwareness] = useState<number | null>(null);
 
@@ -187,6 +193,7 @@ export default function AssessmentResultsPage() {
           blind_spot_found_count: parsed?.classification?.blind_spot_found_count,
           blind_spot_resolved_count: parsed?.classification?.blind_spot_resolved_count,
           classifications: parsed?.classification?.classifications || [],
+          integration_actions: parsed?.classification?.integration_actions || [],
         });
         if (parsed?.studentId) {
           getSelfAwarenessScore(parsed.studentId)
@@ -258,6 +265,25 @@ export default function AssessmentResultsPage() {
                     </span>
                   </p>
                   <p className="text-sm text-gray-600 mt-1">{item.rationale}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!!assessmentSummary?.integration_actions?.length && (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-8">
+            <h2 className="text-lg font-semibold mb-3">Integration Hooks (RPKT + Intervention)</h2>
+            <div className="space-y-3">
+              {assessmentSummary.integration_actions.map((item) => (
+                <div key={`${item.question_id}-hook`} className="rounded border border-gray-200 p-3">
+                  <p className="text-sm font-medium">{item.question_id}</p>
+                  <p className="text-sm text-gray-600">
+                    RPKT target: {item.rpkt_probe?.missing_concept || item.rpkt_probe?.concept || '-'}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Intervention path: {item.intervention?.mistake_type || item.mistake_type}
+                  </p>
                 </div>
               ))}
             </div>

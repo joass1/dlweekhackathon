@@ -39,6 +39,12 @@ export interface ClassifyResult {
   classifications: MistakeClassificationClient[];
   blind_spot_found_count: number;
   blind_spot_resolved_count: number;
+  integration_actions?: {
+    question_id: string;
+    mistake_type: 'careless' | 'conceptual';
+    rpkt_probe?: { concept?: string; missing_concept?: string | null };
+    intervention?: { mistake_type?: 'careless' | 'conceptual'; concept?: string; missing_concept?: string | null };
+  }[];
 }
 
 export interface MicroCheckpointQuestion {

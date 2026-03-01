@@ -22,6 +22,7 @@ from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
+from app.services.assessment_engine import AssessmentEngine
 from app.models.schemas import (
     SearchQuery,
     SearchResult,
@@ -57,6 +58,7 @@ app.add_middleware(
 
 # Load environment variables
 load_dotenv()
+assessment_engine = AssessmentEngine(data_dir / "assessment_state.json")
 
 # IRIS Database connection setup
 try:
@@ -539,207 +541,58 @@ async def get_learning_groups(group_size: int = 4):
 
 @app.post("/api/assessment/generate-quiz")
 async def generate_quiz(request: QuizGenerateRequest):
-    concept = request.concept
-    bank = _get_bank(concept)
-    selected = bank[: request.num_questions]
-
-    quiz_map: Dict[str, QuizQuestion] = {}
-    questions_for_client = []
-    for idx, item in enumerate(selected, start=1):
-        q = _make_question(concept, item, idx)
-        quiz_map[q.question_id] = q
-        questions_for_client.append(
-            {
-                "question_id": q.question_id,
-                "concept": q.concept,
-                "stem": q.stem,
-                "options": q.options,
-                "difficulty": q.difficulty,
-            }
-        )
-
-    QUIZ_STORE[request.student_id] = quiz_map
-    return {"questions": questions_for_client}
+    return assessment_engine.generate_quiz(request)
 
 
 @app.post("/api/assessment/evaluate", response_model=EvaluateResponse)
 async def evaluate_answer(request: QuizSubmitRequest):
-    student_quiz = QUIZ_STORE.get(request.student_id, {})
-    if not student_quiz:
-        raise HTTPException(status_code=400, detail="No active quiz found for this student.")
-
-    evaluated: List[EvaluatedAnswer] = []
-    correct = 0
-    for ans in request.answers:
-        q = student_quiz.get(ans.question_id)
-        if not q:
-            raise HTTPException(status_code=400, detail=f"Unknown question_id: {ans.question_id}")
-        is_correct = ans.selected_answer == q.correct_answer
-        if is_correct:
-            correct += 1
-        evaluated.append(
-            EvaluatedAnswer(
-                question_id=ans.question_id,
-                is_correct=is_correct,
-                correct_answer=q.correct_answer,
-            )
-        )
-
-    score = round((correct / len(request.answers)) * 100, 2) if request.answers else 0.0
-    return EvaluateResponse(score=score, per_question=evaluated)
+    try:
+        return assessment_engine.evaluate_answer(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/assessment/classify", response_model=ClassifyResponse)
 async def classify_mistake(request: QuizSubmitRequest):
-    student_quiz = QUIZ_STORE.get(request.student_id, {})
-    if not student_quiz:
-        raise HTTPException(status_code=400, detail="No active quiz found for this student.")
-
-    classification_map = CLASSIFICATION_STORE.setdefault(request.student_id, {})
-    counts = BLIND_SPOT_COUNTS.setdefault(
-        request.student_id,
-        {"found": 0, "resolved": 0},
-    )
-
-    classifications: List[MistakeClassification] = []
-    for ans in request.answers:
-        q = student_quiz.get(ans.question_id)
-        if not q:
-            raise HTTPException(status_code=400, detail=f"Unknown question_id: {ans.question_id}")
-
-        is_correct = ans.selected_answer == q.correct_answer
-        if is_correct:
-            prev = classification_map.get(ans.question_id)
-            if prev and prev.mistake_type == "conceptual":
-                counts["resolved"] += 1
-            _record_attempt(
-                student_id=request.student_id,
-                question_id=ans.question_id,
-                concept=request.concept,
-                is_correct=True,
-                confidence_1_to_5=ans.confidence_1_to_5,
-                mistake_type=None,
-            )
-            continue
-
-        classification = _classify_wrong_answer(
-            concept=request.concept,
-            question=student_quiz[ans.question_id],
-            selected_answer=ans.selected_answer,
-            confidence_1_to_5=ans.confidence_1_to_5,
-        )
-        prev = classification_map.get(ans.question_id)
-        if not prev and classification.mistake_type == "conceptual":
-            counts["found"] += 1
-        classification_map[ans.question_id] = classification
-        classifications.append(classification)
-        _record_attempt(
-            student_id=request.student_id,
-            question_id=ans.question_id,
-            concept=request.concept,
-            is_correct=False,
-            confidence_1_to_5=ans.confidence_1_to_5,
-            mistake_type=classification.mistake_type,
-        )
-
-    return ClassifyResponse(
-        classifications=classifications,
-        blind_spot_found_count=counts["found"],
-        blind_spot_resolved_count=counts["resolved"],
-    )
+    try:
+        return assessment_engine.classify_mistake(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/assessment/self-awareness/{student_id}", response_model=SelfAwarenessResponse)
 async def get_self_awareness_score(student_id: str):
-    attempts = ATTEMPT_HISTORY.get(student_id, [])
-    if not attempts:
-        return SelfAwarenessResponse(
-            student_id=student_id,
-            score=0.0,
-            total_attempts=0,
-            calibration_gap=0.0,
-        )
-
-    squared_errors = []
-    for attempt in attempts:
-        predicted = _confidence_to_probability(attempt["confidence_1_to_5"])
-        actual = 1.0 if attempt["is_correct"] else 0.0
-        squared_errors.append((predicted - actual) ** 2)
-
-    mean_brier = sum(squared_errors) / len(squared_errors)
-    self_awareness = max(0.0, min(1.0, 1.0 - mean_brier))
-    calibration_gap = math.sqrt(mean_brier)
-
-    return SelfAwarenessResponse(
-        student_id=student_id,
-        score=round(self_awareness, 4),
-        total_attempts=len(attempts),
-        calibration_gap=round(calibration_gap, 4),
-    )
+    return assessment_engine.get_self_awareness_score(student_id)
 
 
 @app.post("/api/assessment/override")
 async def override_mistake_classification(request: OverrideRequest):
-    student_map = CLASSIFICATION_STORE.setdefault(request.student_id, {})
-    existing = student_map.get(request.question_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="No classification found for this question.")
-    student_map[request.question_id] = MistakeClassification(
-        question_id=existing.question_id,
-        mistake_type=request.override_to,
-        missing_concept=None,
-        error_span=existing.error_span,
-        rationale="User override: student marked this as rushed/careless.",
-    )
-    return {"updated": True, "question_id": request.question_id}
+    try:
+        return assessment_engine.override_classification(request.student_id, request.question_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/assessment/micro-checkpoint", response_model=MicroCheckpointResponse)
 async def generate_micro_checkpoint(request: MicroCheckpointRequest):
-    target = request.missing_concept or request.concept
-    stem = f"Quick checkpoint: which statement best confirms mastery of {target}?"
-    options = [
-        "I can explain the concept and apply it to a new problem.",
-        "I only remember the definition word-for-word.",
-        "I need to see the full worked solution first.",
-        "I can identify the formula but not when to use it.",
-    ]
-    correct_answer = "I can explain the concept and apply it to a new problem."
-    question = QuizQuestion(
-        question_id=f"checkpoint-{target}-{uuid4().hex[:8]}",
-        concept=request.concept,
-        stem=stem,
-        options=options,
-        correct_answer=correct_answer,
-        explanation="Transfer and explanation indicate stronger conceptual understanding.",
-        difficulty="easy",
+    return assessment_engine.generate_micro_checkpoint(
+        request.student_id,
+        request.concept,
+        request.missing_concept,
     )
-    QUIZ_STORE.setdefault(request.student_id, {})[question.question_id] = question
-    return MicroCheckpointResponse(question=question)
 
 
 @app.post("/api/assessment/micro-checkpoint/submit", response_model=MicroCheckpointSubmitResponse)
 async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest):
-    student_quiz = QUIZ_STORE.get(request.student_id, {})
-    question = student_quiz.get(request.question_id)
-    if not question:
-        raise HTTPException(status_code=404, detail="Checkpoint question not found.")
-
-    is_correct = request.selected_answer == question.correct_answer
-    _record_attempt(
-        student_id=request.student_id,
-        question_id=request.question_id,
-        concept=question.concept,
-        is_correct=is_correct,
-        confidence_1_to_5=request.confidence_1_to_5,
-        mistake_type=None if is_correct else "conceptual",
-    )
-
-    return MicroCheckpointSubmitResponse(
-        question_id=request.question_id,
-        is_correct=is_correct,
-        next_action="resolved" if is_correct else "needs_intervention",
-    )
+    try:
+        return assessment_engine.submit_micro_checkpoint(
+            request.student_id,
+            request.question_id,
+            request.selected_answer,
+            request.confidence_1_to_5,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 # Cleanup on shutdown
 @app.on_event("shutdown")
