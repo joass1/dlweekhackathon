@@ -1,0 +1,37 @@
+{
+  "quizzes": {
+    "smoke": {
+      "newtons-laws-q1": {
+        "question_id": "newtons-laws-q1",
+        "concept": "newtons-laws",
+        "stem": "What does Newton's first law of motion state?",
+        "options": [
+          "An object at rest will stay at rest unless acted upon by a force.",
+          "Force equals mass times acceleration.",
+          "For every action, there is an equal and opposite reaction.",
+          "Energy cannot be created or destroyed."
+        ],
+        "correct_answer": "An object at rest will stay at rest unless acted upon by a force.",
+        "explanation": "Newton's first law, also known as the law of inertia, states that an object will remain at rest or in uniform motion in a straight line unless acted upon by a net external force.",
+        "difficulty": "easy"
+      },
+      "newtons-laws-q2": {
+        "question_id": "newtons-laws-q2",
+        "concept": "newtons-laws",
+        "stem": "Which of the following best describes Newton's second law of motion?",
+        "options": [
+          "The acceleration of an object is directly proportional to the net force acting on it and inversely proportional to its mass.",
+          "For every action, there is an equal and opposite reaction.",
+          "An object in motion stays in motion unless acted upon by a force.",
+          "The gravitational force is proportional to the mass of the objects."
+        ],
+        "correct_answer": "The acceleration of an object is directly proportional to the net force acting on it and inversely proportional to its mass.",
+        "explanation": "Newton's second law can be expressed with the formula F=ma, where F is the net force, m is the mass, and a is the acceleration. This law explains how the velocity of an object changes when it is subjected to an external force.",
+        "difficulty": "medium"
+      }
+    }
+  },
+  "attempt_history": {},
+  "classification_store": {},
+  "blind_spot_counts": {}
+}
