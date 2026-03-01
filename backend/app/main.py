@@ -24,10 +24,14 @@ from app.models.adaptive_schemas import (
     ConceptStatePayload,
     DecayRequest,
     DecayResponse,
+    MatchHubsRequest,
+    MatchHubsResponse,
     MasteryRequest,
     MasteryResponse,
     RPKTProbeRequest,
     RPKTProbeResponse,
+    StudyPlanRequest,
+    StudyPlanResponse,
 )
 from app.models.schemas import SearchQuery, SearchResult
 from app.models.schemas import (
@@ -46,7 +50,15 @@ from app.services.adaptive_engine import AdaptiveEngine, ConceptState
 from app.services.knowledge_graph import init_kg_engine, kg_engine, seed_demo_data
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
-from app.services.assessment_engine import AssessmentEngine, AssessmentStateStore
+from app.services.assessment_engine import AssessmentEngine
+from app.services.tutor_service import TutorService
+from app.models.tutor_schemas import (
+    EmbedContentRequest, EmbedContentResponse,
+    RetrieveContextRequest,
+    TutorChatRequest,
+    InterventionRequest, InterventionResponse,
+    SessionData, SessionSummaryResponse,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
@@ -73,28 +85,16 @@ except Exception as e:
 
 vector_search = VectorSearch(db)
 learning_groups_search = VectorSearch1(db)
+assessment_engine = AssessmentEngine(data_dir / "assessment_state.json")
 
-# ── Initialise stores: Firestore-backed when available, JSON fallback ─────────
-if db is not None:
-    assessment_store = FirestoreAssessmentStore(db)
-    kg_store = FirestoreKnowledgeGraphStore(db)
-    concept_state_store = FirestoreConceptStateStore(db)
-    print("Using Firestore-backed stores for assessment, KG, and concept state.")
-else:
-    assessment_store = AssessmentStateStore(data_dir / "assessment_state.json")
-    kg_store = None
-    concept_state_store = None
-    print("Using local JSON fallback for assessment state.")
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    print("WARNING: OPENAI_API_KEY not set — AI tutor endpoints will fail at runtime")
+_openai_client = OpenAI(api_key=openai_api_key or "placeholder")
+tutor_service = TutorService(db, _openai_client)
 
-assessment_engine = AssessmentEngine(assessment_store)
-
-# Initialise knowledge graph with Firestore persistence
-kg_engine = init_kg_engine(firestore_store=kg_store)
-
-# Seed demo data only if the graph is empty (first run)
-if len(list(kg_engine._graph.nodes)) == 0:
-    seed_demo_data()
-    print("Seeded demo knowledge graph data.")
+# Seed demo knowledge graph on startup
+seed_demo_data()
 
 
 def process_file(file_path: str) -> List[str]:
@@ -431,6 +431,32 @@ async def api_run_rpkt_probe(request: RPKTProbeRequest):
         raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
 
 
+@app.post("/api/adaptive/planner/study-plan", response_model=StudyPlanResponse)
+async def api_generate_study_plan(request: StudyPlanRequest):
+    try:
+        result = adaptive_engine.generate_study_plan(
+            minutes=request.minutes,
+            concepts=[c.model_dump() for c in request.concepts],
+            prerequisites=request.prerequisites,
+            as_of=request.as_of,
+        )
+        return StudyPlanResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Study plan generation failed: {str(e)}")
+
+
+@app.post("/api/adaptive/hubs/match", response_model=MatchHubsResponse)
+async def api_match_hubs(request: MatchHubsRequest):
+    try:
+        result = adaptive_engine.match_hubs(
+            students=[s.model_dump() for s in request.students],
+            hub_size=request.hub_size,
+        )
+        return MatchHubsResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Hub matching failed: {str(e)}")
+
+
 # ── Knowledge Graph Engine endpoints ───────────────────────────────────────────
 
 
@@ -545,3 +571,51 @@ async def render_graph():
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to render graph: {str(e)}")
+
+
+# ── Yichen: RAG + Socratic Tutor + Interventions ──────────────────────────────
+
+@app.post("/api/tutor/embed", response_model=EmbedContentResponse)
+async def embed_content_endpoint(request: EmbedContentRequest):
+    try:
+        n = tutor_service.embed_content(request.content, request.concept_id, request.source)
+        return EmbedContentResponse(chunks_embedded=n, concept_id=request.concept_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/context")
+async def retrieve_context_endpoint(request: RetrieveContextRequest):
+    try:
+        chunks = tutor_service.retrieve_context(request.concept, request.limit)
+        return {"concept": request.concept, "chunks": chunks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/chat")
+async def tutor_chat_endpoint(request: TutorChatRequest):
+    try:
+        if not request.query:
+            raise HTTPException(status_code=400, detail="Query is required")
+        return tutor_service.tutor_chat(request.query, request.knowledge_state)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/intervene", response_model=InterventionResponse)
+async def run_intervention_endpoint(request: InterventionRequest):
+    try:
+        return tutor_service.run_intervention(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/session-summary", response_model=SessionSummaryResponse)
+async def session_summary_endpoint(request: SessionData):
+    try:
+        return tutor_service.generate_session_summary(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

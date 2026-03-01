@@ -6,7 +6,9 @@ Thumbs.db
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyc
 *.pyo
 *.pyd
 *.so
@@ -39,4 +41,3 @@ pnpm-debug.log*
 *.sqlite
 *.db
 backend/qdrant_db/
-
