@@ -501,6 +501,24 @@ async def get_prerequisites(concept_id: str):
     return {"concept_id": concept_id, "prerequisites": kg_engine.get_prerequisites(concept_id)}
 
 
+@app.get("/api/kg/concepts/{concept_id}")
+async def get_concept(concept_id: str):
+    nodes = {node["id"]: node for node in kg_engine.get_graph_data().get("nodes", [])}
+    node = nodes.get(concept_id)
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Concept '{concept_id}' not found")
+    prereqs = kg_engine.get_prerequisites(concept_id)
+    return {
+        "concept": node.get("id", concept_id),
+        "title": node.get("title"),
+        "category": node.get("category"),
+        "mastery": node.get("mastery"),
+        "status": node.get("status"),
+        "prerequisites": prereqs,
+        "summary": f"{node.get('title', concept_id)} in {node.get('category', 'General')}",
+    }
+
+
 @app.get("/api/kg/dependents/{concept_id}")
 async def get_dependents(concept_id: str):
     return {"concept_id": concept_id, "dependents": kg_engine.get_dependents(concept_id)}

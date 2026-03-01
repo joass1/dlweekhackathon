@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from app.models.schemas import QuizGenerateRequest, QuizSubmitRequest, StudentAnswer
@@ -64,12 +65,21 @@ class AssessmentEngineTests(unittest.TestCase):
             QuizSubmitRequest(student_id=self.student_id, concept=self.concept, answers=answers)
         )
         self.assertTrue(classify.classifications)
+        self.assertGreaterEqual(classify.blind_spot_found_count, 1)
         updated = self.engine.override_classification(self.student_id, first["question_id"])
         self.assertTrue(updated["updated"])
+        # Override should reduce conceptual blind-spot found count by one.
+        state = json.loads((Path(self.temp_dir.name) / "assessment_state.json").read_text(encoding="utf-8"))
+        blind = state["blind_spot_counts"][self.student_id]
+        self.assertEqual(blind["found"], 0)
+        stored = state["classification_store"][self.student_id][first["question_id"]]
+        self.assertTrue(stored["overridden_by_user"])
+        self.assertEqual(stored["mistake_type"], "careless")
 
     def test_micro_checkpoint_flow(self):
         checkpoint = self.engine.generate_micro_checkpoint(self.student_id, self.concept, self.concept)
         self.assertTrue(checkpoint.question.question_id.startswith("checkpoint-"))
+        self.assertEqual(checkpoint.question.concept, self.concept)
         submit = self.engine.submit_micro_checkpoint(
             self.student_id,
             checkpoint.question.question_id,
@@ -90,6 +100,38 @@ class AssessmentEngineTests(unittest.TestCase):
             QuizGenerateRequest(student_id="persist-user", concept="momentum", num_questions=2)
         )
         self.assertEqual(len(out["questions"]), 2)
+
+    def test_resolved_count_increments_once(self):
+        first = self.generated["questions"][0]
+        wrong = [
+            StudentAnswer(
+                question_id=first["question_id"],
+                selected_answer="__definitely_wrong__",
+                confidence_1_to_5=1,
+            )
+        ]
+        self.engine.classify_mistake(
+            QuizSubmitRequest(student_id=self.student_id, concept=self.concept, answers=wrong)
+        )
+        state_after_wrong = json.loads((Path(self.temp_dir.name) / "assessment_state.json").read_text(encoding="utf-8"))
+        correct_answer = state_after_wrong["quizzes"][self.student_id][first["question_id"]]["correct_answer"]
+        right = [
+            StudentAnswer(
+                question_id=first["question_id"],
+                selected_answer=correct_answer,
+                confidence_1_to_5=4,
+            )
+        ]
+        self.engine.classify_mistake(
+            QuizSubmitRequest(student_id=self.student_id, concept=self.concept, answers=right)
+        )
+        # Repeated correct submits should not double-count resolution.
+        self.engine.classify_mistake(
+            QuizSubmitRequest(student_id=self.student_id, concept=self.concept, answers=right)
+        )
+        state = json.loads((Path(self.temp_dir.name) / "assessment_state.json").read_text(encoding="utf-8"))
+        blind = state["blind_spot_counts"][self.student_id]
+        self.assertEqual(blind["resolved"], 1)
 
 
 if __name__ == "__main__":
