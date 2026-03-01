@@ -6,7 +6,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
-  sendSignInWithEmailLink,
+  sendSignInLinkToEmail,
   isSignInWithEmailLink,
   signInWithEmailLink,
   signInWithPopup,
@@ -110,7 +110,7 @@ export default function SignInPage() {
     }
     setLoading(true);
     try {
-      await sendSignInWithEmailLink(auth, email, {
+      await sendSignInLinkToEmail(auth, email, {
         url: window.location.origin + "/auth/signin",
         handleCodeInApp: true,
       });

@@ -133,9 +133,10 @@ if not openai_api_key:
 _openai_client = OpenAI(api_key=openai_api_key or "placeholder")
 tutor_service = TutorService(db, _openai_client)
 
-# Seed demo knowledge graph only when store is empty.
-if not kg_engine.get_graph_data().get("nodes"):
-    seed_demo_data()
+# Seed demo knowledge graph only when explicitly enabled.
+if os.getenv("SEED_DEMO_DATA", "false").lower() == "true":
+    if not kg_engine.get_graph_data().get("nodes"):
+        seed_demo_data()
 
 
 def _courses_collection(student_id: str):
@@ -152,6 +153,29 @@ def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
     user_engine = KnowledgeGraphEngine(firestore_store=user_store)
     user_engine.load_from_firestore()
     return user_engine
+
+
+def _normalize_lookup(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _resolve_user_concept_id(raw_concept: str, nodes: List[dict]) -> Optional[str]:
+    if not raw_concept:
+        return None
+
+    exact = next((n for n in nodes if str(n.get("id", "")) == raw_concept), None)
+    if exact:
+        return str(exact.get("id"))
+
+    lookup = _normalize_lookup(raw_concept)
+    if not lookup:
+        return None
+    for node in nodes:
+        node_id = str(node.get("id", ""))
+        title = str(node.get("title", ""))
+        if _normalize_lookup(node_id) == lookup or _normalize_lookup(title) == lookup:
+            return node_id
+    return None
 
 
 def process_file(file_path: str) -> List[str]:
@@ -369,7 +393,7 @@ async def upload_files(
         "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
         "files": uploaded_files,
         "kg_concepts_added": kg_concepts_added,
-        "suggested_quiz_concept": suggested_quiz_concept or (course_id or None),
+        "suggested_quiz_concept": suggested_quiz_concept,
     }
 
 
@@ -431,8 +455,24 @@ async def get_learning_groups(group_size: int = 4):
 
 @app.post("/api/assessment/generate-quiz")
 async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id)
+    nodes = user_kg_engine.get_graph_data().get("nodes", [])
+    if not nodes:
+        raise HTTPException(
+            status_code=400,
+            detail="No knowledge-map concepts found for this student. Upload study materials first.",
+        )
+
+    concept_id = _resolve_user_concept_id(request.concept, nodes)
+    if not concept_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Concept '{request.concept}' not found in your knowledge map.",
+        )
+
     try:
         request.student_id = student_id
+        request.concept = concept_id
         return assessment_engine.generate_quiz(request)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

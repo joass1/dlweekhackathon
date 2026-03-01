@@ -79,14 +79,16 @@ export default function UploadPage() {
 
       const hasSuccess = normalized.some(file => file.status === 'success');
       if (hasSuccess) {
-        setIsStartingAssessment(true);
         const quizConcept =
           typeof result?.suggested_quiz_concept === 'string' && result.suggested_quiz_concept.trim()
             ? result.suggested_quiz_concept.trim()
-            : selectedCourse;
-        setTimeout(() => {
-          router.push(`/assessment/${quizConcept}/take`);
-        }, 500);
+            : '';
+        if (quizConcept) {
+          setIsStartingAssessment(true);
+          setTimeout(() => {
+            router.push(`/assessment/${quizConcept}/take`);
+          }, 500);
+        }
       }
     } catch {
       Array.from(files).forEach(file => {

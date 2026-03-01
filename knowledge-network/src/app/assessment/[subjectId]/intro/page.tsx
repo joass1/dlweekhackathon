@@ -1,64 +1,143 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
+import { useAuthedApi } from '@/hooks/useAuthedApi';
+
+interface ConceptDetails {
+  concept: string;
+  title?: string;
+  category?: string;
+  summary?: string;
+  prerequisites?: { id?: string; title?: string }[];
+}
+
+function getApiBase(): string {
+  const raw = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return 'http://127.0.0.1:8000';
+  }
+}
 
 export default function AssessmentIntroPage() {
   const router = useRouter();
   const params = useParams();
-  const subjectId = params.subjectId;
+  const subjectId = params.subjectId as string;
+  const { authedFetch } = useAuthedApi();
+  const [subject, setSubject] = useState<ConceptDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const getSubjectInfo = (id: string) => {
-    // This would be replaced with actual data lookup
-    return {
-      title: "Newton's Laws of Motion",
-      description: "Test your understanding of the fundamental principles of motion and forces.",
-      topics: [
-        "First Law - Inertia",
-        "Second Law - Force and Acceleration",
-        "Third Law - Action and Reaction"
-      ]
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await authedFetch(`${getApiBase()}/api/kg/concepts/${encodeURIComponent(subjectId)}`);
+        if (!res.ok) {
+          throw new Error(`Concept not found (${res.status})`);
+        }
+        const data = await res.json();
+        if (!cancelled) {
+          setSubject(data);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setSubject(null);
+          setError(e instanceof Error ? e.message : 'Failed to load concept');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     };
-  };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [authedFetch, subjectId]);
 
-  const subject = getSubjectInfo(subjectId as string);
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="bg-white rounded-xl shadow-sm p-8 text-center text-gray-600">Loading concept...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !subject) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="bg-white rounded-xl shadow-sm p-8 text-center">
+            <h1 className="text-2xl font-semibold mb-2">Concept unavailable</h1>
+            <p className="text-gray-600 mb-6">
+              This assessment concept is not in your knowledge map. Upload materials first or choose an existing concept.
+            </p>
+            <div className="flex justify-center gap-3">
+              <Link href="/upload" className="px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+                Upload Materials
+              </Link>
+              <Link href="/assessment" className="px-5 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">
+                Back to Assessments
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const prereqs = Array.isArray(subject.prerequisites) ? subject.prerequisites : [];
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       <div className="max-w-4xl mx-auto px-4">
         <div className="bg-white rounded-xl shadow-sm p-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold mb-4">LearnGraph: {subject.title}</h1>
+            <h1 className="text-3xl font-bold mb-3">LearnGraph: {subject.title || subject.concept}</h1>
             <p className="text-gray-600 max-w-2xl mx-auto">
-              {subject.description}
+              {subject.summary || `Assess your current mastery for ${subject.title || subject.concept}.`}
             </p>
           </div>
 
           <div className="bg-emerald-50 rounded-lg p-6 mb-8">
-            <h2 className="text-xl font-semibold mb-4">Topics Covered</h2>
-            <ul className="space-y-3">
-              {subject.topics.map((topic, index) => (
-                <li key={index} className="flex items-start">
-                  <span className="text-emerald-500 mr-2">•</span>
-                  {topic}
-                </li>
-              ))}
-            </ul>
+            <h2 className="text-xl font-semibold mb-4">Prerequisites</h2>
+            {prereqs.length === 0 ? (
+              <p className="text-sm text-emerald-800">No prerequisites detected for this concept.</p>
+            ) : (
+              <ul className="space-y-3">
+                {prereqs.map((p, index) => (
+                  <li key={`${p.id || p.title || 'p'}-${index}`} className="flex items-start">
+                    <span className="text-emerald-500 mr-2">•</span>
+                    {p.title || p.id}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="text-center">
             <button
               onClick={() => router.push(`/assessment/${subjectId}/take`)}
-              className="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700 transform hover:scale-105 transition-all"
+              className="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700"
             >
               Start Assessment
             </button>
             <p className="mt-4 text-sm text-gray-500">
-              Your results will update your knowledge graph and help find peer learning partners
+              Results will update your knowledge graph and concept mastery.
             </p>
           </div>
         </div>
       </div>
     </div>
   );
-} 
+}

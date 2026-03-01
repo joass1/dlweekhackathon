@@ -29,6 +29,7 @@ export default function AssessmentTakePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingQuiz, setIsLoadingQuiz] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isEmptyAssessment, setIsEmptyAssessment] = useState(false);
   const [checkpoint, setCheckpoint] = useState<QuizQuestionClient | null>(null);
   const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
   const [checkpointConfidence, setCheckpointConfidence] = useState<number>(3);
@@ -40,15 +41,30 @@ export default function AssessmentTakePage() {
     async function loadQuiz() {
       setIsLoadingQuiz(true);
       setLoadError(null);
+      setIsEmptyAssessment(false);
       try {
         const generated = await generateQuiz(studentId, subjectId, 5);
         if (!cancelled) {
           setQuestions(generated);
+          setIsEmptyAssessment(generated.length === 0);
         }
       } catch (error) {
         console.error('Error generating quiz:', error);
         if (!cancelled) {
-          setLoadError('Could not generate the quiz. Please retry.');
+          const msg = error instanceof Error ? error.message : '';
+          const isNoConceptState =
+            msg.includes('No knowledge-map concepts found') ||
+            msg.includes('not found in your knowledge map') ||
+            msg.includes('API 400') ||
+            msg.includes('API 404');
+
+          if (isNoConceptState) {
+            setQuestions([]);
+            setIsEmptyAssessment(true);
+            setLoadError(null);
+          } else {
+            setLoadError('Could not generate the quiz. Please retry.');
+          }
         }
       } finally {
         if (!cancelled) {
@@ -242,6 +258,25 @@ export default function AssessmentTakePage() {
             onClick={() => window.location.reload()}
           >
             Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isEmptyAssessment) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="max-w-md w-full text-center bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">No assessment available yet</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Your knowledge map has no concepts for this assessment yet. Upload study materials first.
+          </p>
+          <button
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700"
+            onClick={() => router.push('/upload')}
+          >
+            Upload Materials
           </button>
         </div>
       </div>
