@@ -19,6 +19,8 @@ uvicorn app.main:app --reload
 
 `--reload` watches for file changes and auto-restarts. You do **not** need to manually restart after saving a `.py` file.
 
+## kill backend thats running in background
+pkill -f "uvicorn app.main"
 ---
 
 ## After a `git pull`

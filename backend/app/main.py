@@ -551,3 +551,51 @@ async def render_graph():
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to render graph: {str(e)}")
+
+
+# ── Yichen: RAG + Socratic Tutor + Interventions ──────────────────────────────
+
+@app.post("/api/tutor/embed", response_model=EmbedContentResponse)
+async def embed_content_endpoint(request: EmbedContentRequest):
+    try:
+        n = tutor_service.embed_content(request.content, request.concept_id, request.source)
+        return EmbedContentResponse(chunks_embedded=n, concept_id=request.concept_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/context")
+async def retrieve_context_endpoint(request: RetrieveContextRequest):
+    try:
+        chunks = tutor_service.retrieve_context(request.concept, request.limit)
+        return {"concept": request.concept, "chunks": chunks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/chat")
+async def tutor_chat_endpoint(request: TutorChatRequest):
+    try:
+        if not request.query:
+            raise HTTPException(status_code=400, detail="Query is required")
+        return tutor_service.tutor_chat(request.query, request.knowledge_state)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/intervene", response_model=InterventionResponse)
+async def run_intervention_endpoint(request: InterventionRequest):
+    try:
+        return tutor_service.run_intervention(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/session-summary", response_model=SessionSummaryResponse)
+async def session_summary_endpoint(request: SessionData):
+    try:
+        return tutor_service.generate_session_summary(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
