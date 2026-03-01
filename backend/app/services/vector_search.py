@@ -1,32 +1,50 @@
-from sentence_transformers import SentenceTransformer
+import os
+from typing import Dict, List, Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class VectorSearch:
-    def __init__(self, cursor):
-        self.cursor = cursor
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
-    
-    def search_discussions(self, query: str, limit: int = 5):
-        search_vector = self.model.encode(query, normalize_embeddings=True).tolist()
-        
-        sql = """
-            SELECT TOP ? 
-                student_name,
-                topic,
-                discussion,
-                VECTOR_DOT_PRODUCT(discussion_vector, TO_VECTOR(?)) as similarity
-            FROM student_discussions
-            ORDER BY similarity DESC
-        """
-        
-        self.cursor.execute(sql, [limit, str(search_vector)])
-        results = self.cursor.fetchall()
-        
-        return [
-            {
-                "student": row[0],
-                "topic": row[1],
-                "discussion": row[2],
-                "similarity": float(row[3])
-            }
-            for row in results
-        ]
+    def __init__(self, db):
+        self.db = db
+        self.collection_name = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
+
+    @staticmethod
+    def _token_overlap_score(query: str, text: str) -> float:
+        q_tokens = {t for t in query.lower().split() if t}
+        if not q_tokens:
+            return 0.0
+        text_l = text.lower()
+        hits = sum(1 for token in q_tokens if token in text_l)
+        return hits / len(q_tokens)
+
+    def search_discussions(self, query: str, limit: int = 5) -> List[Dict]:
+        if self.db is None:
+            raise RuntimeError("Firestore is not initialized")
+
+        max_scan = int(os.getenv("FIREBASE_MAX_CHUNKS_SCAN", "300"))
+        docs = self.db.collection(self.collection_name).limit(max_scan).stream()
+
+        scored: List[Dict] = []
+        for doc in docs:
+            row = doc.to_dict() or {}
+            text = str(row.get("text", ""))
+            if not text:
+                continue
+            score = self._token_overlap_score(query, text)
+            if score <= 0:
+                continue
+
+            scored.append(
+                {
+                    "student": str(row.get("student", "firebase_user")),
+                    "topic": str(row.get("source", "uploaded_material")),
+                    "discussion": text,
+                    "similarity": float(score),
+                }
+            )
+
+        scored.sort(key=lambda x: x["similarity"], reverse=True)
+        return scored[: max(1, int(limit or 5))]

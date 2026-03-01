@@ -1,48 +1,16 @@
-# app/database/setup.py
-import iris
-import os
-from dotenv import load_dotenv
+from app.database.firebase_client import get_firestore_client
 
-load_dotenv()
 
 def setup_database():
-    """Set up the IRIS database and create necessary tables"""
-    print("Setting up database connection...")
-    
-    username = 'demo'
-    password = 'demo'
-    hostname = os.getenv('IRIS_HOSTNAME', 'localhost')
-    port = '1972'
-    namespace = 'USER'
-    
-    CONNECTION_STRING = f"{hostname}:{port}/{namespace}"
-    
-    try:
-        conn = iris.connect(CONNECTION_STRING, username, password)
-        cursor = conn.cursor()
-        
-        # Drop existing table if it exists
-        try:
-            cursor.execute("DROP TABLE student_discussions")
-            print("Dropped existing table")
-        except:
-            print("No existing table to drop")
-        
-        # Create the table with vector support
-        create_table_sql = """
-        CREATE TABLE student_discussions (
-            student_name VARCHAR(255),
-            topic VARCHAR(255),
-            discussion VARCHAR(5000),
-            discussion_vector VECTOR(DOUBLE, 384)
-        )
-        """
-        
-        cursor.execute(create_table_sql)
-        print("Created new table")
-        
-        return conn, cursor
-        
-    except Exception as e:
-        print(f"Error setting up database: {e}")
-        raise
+    """Initialize Firestore collections for discussion data."""
+    db = get_firestore_client()
+    # Firestore collections are created on first write. Seed metadata doc.
+    db.collection("student_discussions_meta").document("schema").set(
+        {
+            "collection": "knowledge_chunks",
+            "fields": ["student", "source", "text", "chunk_index", "created_at"],
+        },
+        merge=True,
+    )
+    print("Firestore discussion schema metadata initialized")
+    return db

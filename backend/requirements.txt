@@ -8,15 +8,19 @@ requests>=2.31.0
 
 # AI / LLM
 openai>=1.0.0
+sentence-transformers>=2.0.0
 
 # Document processing
-langchain>=0.2.0
 langchain-community>=0.2.0
 langchain-text-splitters>=0.2.0
 pypdf>=4.0.0
 
 # Data
 pandas>=2.0.0
+numpy>=1.26.0
 
 # Cloud database
 firebase-admin>=6.5.0
+
+# Backend integrations
+supabase>=2.0.0

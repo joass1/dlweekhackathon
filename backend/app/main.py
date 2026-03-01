@@ -1,17 +1,16 @@
 import os
 import pathlib
 from datetime import datetime, timezone
-from math import ceil
-from typing import Dict, List
+from typing import List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from firebase_admin import credentials, firestore, initialize_app
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import CharacterTextSplitter
 from openai import OpenAI
 
+from app.database.firebase_client import get_firestore_client
 from app.models.adaptive_schemas import (
     BKTUpdateRequest,
     BKTUpdateResponse,
@@ -25,34 +24,14 @@ from app.models.adaptive_schemas import (
 )
 from app.models.schemas import SearchQuery, SearchResult
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
+from app.services.vector_search import VectorSearch
+from app.services.vector_search1 import VectorSearch1
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
 
 data_dir = pathlib.Path("data")
 data_dir.mkdir(exist_ok=True)
-
-FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
-KNOWLEDGE_CHUNKS_COLLECTION = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
-LEARNING_ANALYTICS_COLLECTION = os.getenv("FIREBASE_LEARNING_ANALYTICS_COLLECTION", "learning_analytics")
-MAX_CHUNKS_SCAN = int(os.getenv("FIREBASE_MAX_CHUNKS_SCAN", "300"))
-
-
-def _init_firestore():
-    if FIREBASE_SERVICE_ACCOUNT_PATH:
-        cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH)
-        initialize_app(cred)
-    else:
-        initialize_app()
-    return firestore.client()
-
-
-try:
-    db = _init_firestore()
-except Exception as e:
-    db = None
-    print(f"Failed to initialize Firestore: {e}")
-
 
 app = FastAPI(title="LearnGraph AI API")
 app.add_middleware(
@@ -65,88 +44,24 @@ app.add_middleware(
 
 adaptive_engine = AdaptiveEngine()
 
+try:
+    db = get_firestore_client()
+except Exception as e:
+    db = None
+    print(f"Failed to initialize Firestore: {e}")
+
+vector_search = VectorSearch(db)
+learning_groups_search = VectorSearch1(db)
+
 
 def process_file(file_path: str) -> List[str]:
-    text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-
-    if file_path.endswith(".pdf"):
-        loader = PyPDFLoader(file_path)
-    else:
-        loader = TextLoader(file_path)
-
-    documents = loader.load()
-    full_text = "".join([doc.page_content for doc in documents]).strip()
+    splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    loader = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
+    docs = loader.load()
+    full_text = "".join(doc.page_content for doc in docs).strip()
     if not full_text:
         return []
-    return text_splitter.split_text(full_text)
-
-
-def _token_overlap_score(query: str, text: str) -> float:
-    q_tokens = {t for t in query.lower().split() if t}
-    if not q_tokens:
-        return 0.0
-    text_l = text.lower()
-    hits = sum(1 for token in q_tokens if token in text_l)
-    return hits / len(q_tokens)
-
-
-def _fetch_relevant_chunks(query: str, limit: int) -> List[Dict]:
-    if db is None:
-        raise HTTPException(status_code=500, detail="Firestore is not initialized.")
-
-    docs = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).limit(MAX_CHUNKS_SCAN).stream()
-    scored: List[Dict] = []
-    for doc in docs:
-        row = doc.to_dict() or {}
-        text = str(row.get("text", ""))
-        if not text:
-            continue
-        score = _token_overlap_score(query, text)
-        if score <= 0:
-            continue
-        scored.append(
-            {
-                "id": doc.id,
-                "text": text,
-                "source": str(row.get("source", "unknown")),
-                "score": score,
-            }
-        )
-
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:limit]
-
-
-def _to_float(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _group_learners(learners: List[Dict], group_size: int) -> List[List[Dict]]:
-    if not learners:
-        return []
-    if group_size <= 1:
-        return [[learner] for learner in learners]
-
-    sorted_learners = sorted(learners, key=lambda x: _to_float(x.get("ai_adjusted_confidence"), 0.0), reverse=True)
-    num_groups = max(1, ceil(len(sorted_learners) / group_size))
-    groups: List[List[Dict]] = [[] for _ in range(num_groups)]
-
-    idx = 0
-    direction = 1
-    for learner in sorted_learners:
-        groups[idx].append(learner)
-        idx += direction
-        if idx >= num_groups:
-            idx = num_groups - 1
-            direction = -1
-        elif idx < 0:
-            idx = 0
-            direction = 1
-
-    return [g for g in groups if g]
+    return splitter.split_text(full_text)
 
 
 @app.get("/")
@@ -157,14 +72,14 @@ async def root():
 @app.get("/test")
 async def test_connection():
     if db is None:
-        raise HTTPException(status_code=500, detail="Firestore is not initialized.")
+        raise HTTPException(status_code=500, detail="Firestore is not initialized")
     try:
-        _ = list(db.collection(KNOWLEDGE_CHUNKS_COLLECTION).limit(1).stream())
+        list(db.collection(vector_search.collection_name).limit(1).stream())
         return {
             "status": "success",
             "database": "firebase_firestore",
-            "knowledge_chunks_collection": KNOWLEDGE_CHUNKS_COLLECTION,
-            "learning_analytics_collection": LEARNING_ANALYTICS_COLLECTION,
+            "knowledge_chunks_collection": vector_search.collection_name,
+            "learning_analytics_collection": learning_groups_search.collection_name,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Firestore connection failed: {str(e)}")
@@ -173,19 +88,7 @@ async def test_connection():
 @app.post("/search", response_model=List[SearchResult])
 async def search_discussions(query: SearchQuery):
     try:
-        limit = query.limit or 5
-        results = _fetch_relevant_chunks(query.query, limit)
-        return [
-            {
-                "student": "firebase_user",
-                "topic": item["source"],
-                "discussion": item["text"],
-                "similarity": item["score"],
-            }
-            for item in results
-        ]
-    except HTTPException:
-        raise
+        return vector_search.search_discussions(query.query, query.limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error performing search: {str(e)}")
 
@@ -193,7 +96,7 @@ async def search_discussions(query: SearchQuery):
 @app.post("/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
     if db is None:
-        raise HTTPException(status_code=500, detail="Firestore is not initialized.")
+        raise HTTPException(status_code=500, detail="Firestore is not initialized")
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -201,33 +104,28 @@ async def upload_files(files: List[UploadFile] = File(...)):
     for file in files:
         file_path = data_dir / file.filename
         with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+            buffer.write(await file.read())
 
         try:
-            if not file_path.exists():
-                raise HTTPException(status_code=404, detail=f"File not found: {file.filename}")
-
-            text_chunks = process_file(str(file_path))
-            if not text_chunks:
+            chunks = process_file(str(file_path))
+            if not chunks:
                 uploaded_files.append({"filename": file.filename, "chunks": 0})
                 continue
 
             batch = db.batch()
-            for i, chunk in enumerate(text_chunks):
-                doc_ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).document()
+            for idx, chunk in enumerate(chunks):
+                doc_ref = db.collection(vector_search.collection_name).document()
                 batch.set(
                     doc_ref,
                     {
                         "text": chunk,
                         "source": file.filename,
-                        "chunk_index": i,
+                        "chunk_index": idx,
                         "created_at": datetime.now(timezone.utc),
                     },
                 )
             batch.commit()
-
-            uploaded_files.append({"filename": file.filename, "chunks": len(text_chunks)})
+            uploaded_files.append({"filename": file.filename, "chunks": len(chunks)})
         finally:
             if file_path.exists():
                 file_path.unlink()
@@ -242,27 +140,36 @@ async def chat(request: dict):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        context_rows = _fetch_relevant_chunks(query, limit=3)
-        unique_context = [
-            {
-                "id": row["id"],
-                "score": row["score"],
-                "text": row["text"][:300] + "..." if len(row["text"]) > 300 else row["text"],
-            }
-            for row in context_rows
-        ]
+        hits = vector_search.search_discussions(query, 3)
+        unique_context = []
+        seen = set()
+        for hit in hits:
+            text = str(hit.get("discussion", ""))
+            text_hash = hash(text)
+            if text_hash in seen:
+                continue
+            seen.add(text_hash)
+            unique_context.append(
+                {
+                    "id": str(len(unique_context) + 1),
+                    "score": float(hit.get("similarity", 0.0)),
+                    "text": text[:300] + "..." if len(text) > 300 else text,
+                }
+            )
 
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         context_text = " ".join([ctx["text"] for ctx in unique_context])
-        messages = [
-            {
-                "role": "system",
-                "content": "You are the LearnGraph AI Socratic Tutor. Guide with probing questions, not direct answers. Keep responses concise (max 150 words).",
-            },
-            {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {query}"},
-        ]
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are the LearnGraph AI Socratic Tutor. Instead of giving direct answers, guide the student with probing questions. Keep responses concise (max 150 words).",
+                },
+                {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {query}"},
+            ],
+        )
 
-        response = client.chat.completions.create(model="gpt-3.5-turbo", messages=messages)
         return {"answer": response.choices[0].message.content, "context": unique_context}
     except HTTPException:
         raise
@@ -272,33 +179,9 @@ async def chat(request: dict):
 
 @app.get("/api/learning-groups")
 async def get_learning_groups(group_size: int = 4):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Firestore is not initialized.")
     try:
-        rows = list(db.collection(LEARNING_ANALYTICS_COLLECTION).stream())
-        learners: List[Dict] = []
-        for row in rows:
-            data = row.to_dict() or {}
-            learners.append(
-                {
-                    "user_id": data.get("user_id", row.id),
-                    "topic": data.get("topic", ""),
-                    "self_confidence": data.get("self_confidence"),
-                    "ai_adjusted_confidence": data.get("ai_adjusted_confidence"),
-                    "errors": data.get("errors"),
-                    "transition_difficulty": data.get("transition_difficulty"),
-                    "learning_modality": data.get("learning_modality"),
-                    "frustration": data.get("frustration"),
-                }
-            )
-
-        groups = _group_learners(learners, max(2, group_size))
-        return {
-            "status": "success",
-            "total_groups": len(groups),
-            "group_size": group_size,
-            "groups": groups,
-        }
+        groups = learning_groups_search.cluster_similar_learners(group_size)
+        return {"status": "success", "total_groups": len(groups), "group_size": group_size, "groups": groups}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating learning groups: {str(e)}")
 
