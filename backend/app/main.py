@@ -7,10 +7,20 @@ from typing import Dict, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from firebase_admin import credentials, firestore, initialize_app
+from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import CharacterTextSplitter
 from openai import OpenAI
+from pydantic import BaseModel
+from typing import Optional
+
+# Firebase — optional, may not be installed or configured
+try:
+    from firebase_admin import credentials, firestore, initialize_app
+    _firebase_available = True
+except ImportError:
+    _firebase_available = False
+    print("Warning: firebase-admin not installed. Firestore features unavailable.")
 
 from app.models.adaptive_schemas import (
     BKTUpdateRequest,
@@ -25,6 +35,7 @@ from app.models.adaptive_schemas import (
 )
 from app.models.schemas import SearchQuery, SearchResult
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
+from app.services.knowledge_graph import kg_engine, seed_demo_data
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 load_dotenv()
@@ -39,6 +50,8 @@ MAX_CHUNKS_SCAN = int(os.getenv("FIREBASE_MAX_CHUNKS_SCAN", "300"))
 
 
 def _init_firestore():
+    if not _firebase_available:
+        return None
     if FIREBASE_SERVICE_ACCOUNT_PATH:
         cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH)
         initialize_app(cred)
@@ -51,13 +64,13 @@ try:
     db = _init_firestore()
 except Exception as e:
     db = None
-    print(f"Failed to initialize Firestore: {e}")
+    print(f"Warning: Firestore unavailable ({e}). Upload will still build KG.")
 
 
 app = FastAPI(title="LearnGraph AI API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -192,47 +205,71 @@ async def search_discussions(query: SearchQuery):
 
 @app.post("/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Firestore is not initialized.")
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
     uploaded_files = []
+    kg_concepts_added = 0
+
     for file in files:
-        file_path = data_dir / file.filename
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+        safe_name = pathlib.Path(file.filename).name if file.filename else "upload.txt"
+        file_path = data_dir / safe_name
 
         try:
-            if not file_path.exists():
-                raise HTTPException(status_code=404, detail=f"File not found: {file.filename}")
+            content = await file.read()
+            if not content:
+                uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "error", "error": "Empty file"})
+                continue
+
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
 
             text_chunks = process_file(str(file_path))
             if not text_chunks:
-                uploaded_files.append({"filename": file.filename, "chunks": 0})
+                uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "success"})
                 continue
 
-            batch = db.batch()
-            for i, chunk in enumerate(text_chunks):
-                doc_ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).document()
-                batch.set(
-                    doc_ref,
-                    {
-                        "text": chunk,
-                        "source": file.filename,
-                        "chunk_index": i,
-                        "created_at": datetime.now(timezone.utc),
-                    },
-                )
-            batch.commit()
+            full_text = " ".join(text_chunks)
 
-            uploaded_files.append({"filename": file.filename, "chunks": len(text_chunks)})
+            # Store in Firestore if available (non-fatal)
+            if db is not None:
+                try:
+                    batch = db.batch()
+                    for i, chunk in enumerate(text_chunks):
+                        doc_ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).document()
+                        batch.set(doc_ref, {
+                            "text": chunk,
+                            "source": safe_name,
+                            "chunk_index": i,
+                            "created_at": datetime.now(timezone.utc),
+                        })
+                    batch.commit()
+                except Exception as e:
+                    print(f"Warning: Firestore storage failed for {safe_name}: {e}")
+
+            # Build knowledge graph from the extracted text
+            try:
+                openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                added = kg_engine.build_from_material(full_text, openai_client)
+                kg_concepts_added += len(added)
+            except Exception as e:
+                print(f"Warning: KG build failed for {safe_name}: {e}")
+
+            uploaded_files.append({"filename": safe_name, "chunks": len(text_chunks), "status": "success"})
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "error", "error": str(e)})
         finally:
             if file_path.exists():
                 file_path.unlink()
 
-    return {"message": f"Successfully processed {len(uploaded_files)} files", "files": uploaded_files}
+    return {
+        "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
+        "files": uploaded_files,
+        "kg_concepts_added": kg_concepts_added,
+    }
 
 
 @app.post("/api/ai/chat")
@@ -397,3 +434,121 @@ async def api_run_rpkt_probe(request: RPKTProbeRequest):
         return RPKTProbeResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RPKT probe failed: {str(e)}")
+
+
+# ── Knowledge Graph Engine ─────────────────────────────────────────────────────
+
+seed_demo_data()
+
+
+class AddConceptRequest(BaseModel):
+    concept_id: str
+    title: str
+    category: str
+    prerequisites: Optional[List[str]] = []
+    initial_mastery: Optional[float] = 0.0
+
+
+class UpdateMasteryRequest(BaseModel):
+    concept_id: str
+    is_correct: bool
+    is_careless: Optional[bool] = False
+
+
+class DiagnoseMistakeRequest(BaseModel):
+    concept_id: str
+    student_answer: str
+    correct_answer: str
+    confidence: int  # 1–5
+
+
+class BuildFromMaterialRequest(BaseModel):
+    text: str
+    course_id: Optional[str] = None
+
+
+@app.post("/api/kg/add_concept")
+async def add_concept(req: AddConceptRequest):
+    try:
+        node = kg_engine.add_concept(
+            concept_id=req.concept_id,
+            title=req.title,
+            category=req.category,
+            prerequisites=req.prerequisites or [],
+            initial_mastery=req.initial_mastery or 0.0,
+        )
+        return {"status": "ok", "node": node}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/kg/update_mastery")
+async def kg_update_mastery(req: UpdateMasteryRequest):
+    try:
+        result = kg_engine.update_mastery(
+            concept_id=req.concept_id,
+            is_correct=req.is_correct,
+            is_careless=req.is_careless or False,
+        )
+        return {"status": "ok", **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/kg/prerequisites/{concept_id}")
+async def get_prerequisites(concept_id: str):
+    return {"concept_id": concept_id, "prerequisites": kg_engine.get_prerequisites(concept_id)}
+
+
+@app.get("/api/kg/dependents/{concept_id}")
+async def get_dependents(concept_id: str):
+    return {"concept_id": concept_id, "dependents": kg_engine.get_dependents(concept_id)}
+
+
+@app.get("/api/kg/chain/{concept_id}")
+async def get_prerequisite_chain(concept_id: str):
+    return {"concept_id": concept_id, "chain": kg_engine.get_prerequisite_chain(concept_id)}
+
+
+@app.get("/api/kg/graph")
+async def get_graph():
+    return kg_engine.get_graph_data()
+
+
+@app.post("/api/kg/build_from_material")
+async def build_from_material(req: BuildFromMaterialRequest):
+    try:
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        added = kg_engine.build_from_material(req.text, openai_client)
+        return {"status": "ok", "added": len(added), "nodes": added}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build from material: {str(e)}")
+
+
+@app.post("/api/kg/diagnose_mistake")
+async def diagnose_mistake(req: DiagnoseMistakeRequest):
+    try:
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        result = kg_engine.diagnose_mistake(
+            concept_id=req.concept_id,
+            student_answer=req.student_answer,
+            correct_answer=req.correct_answer,
+            confidence=req.confidence,
+            openai_client=openai_client,
+        )
+        return {"status": "ok", **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Diagnosis failed: {str(e)}")
+
+
+@app.get("/api/kg/render_graph", response_class=HTMLResponse)
+async def render_graph():
+    try:
+        html = kg_engine.render_graph()
+        return HTMLResponse(content=html)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render graph: {str(e)}")

@@ -18,5 +18,9 @@ pypdf>=4.0.0
 # Data
 pandas>=2.0.0
 
+# Knowledge graph
+networkx>=3.0
+pyvis>=0.3.0
+
 # Cloud database
 firebase-admin>=6.5.0
