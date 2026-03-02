@@ -36,11 +36,11 @@ export const Sidebar = () => {
       <div className="mb-6">
         <div className="mb-4 flex items-start justify-between">
           <Image
-            src="/logo-images/logo.png"
+            src="/logo-images/logo_dark_mode.png"
             alt="Mentora"
             width={280}
             height={88}
-            className="h-14 w-auto brightness-0 invert"
+            className="h-14 w-auto"
             priority
           />
           <button

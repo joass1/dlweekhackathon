@@ -1,7 +1,9 @@
+import json
 import os
 import pathlib
+import re
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -265,6 +267,19 @@ class CourseCreateRequest(BaseModel):
     id: Optional[str] = None
 
 
+class StudyMissionChunksRequest(BaseModel):
+    course_id: Optional[str] = None
+    concept_ids: Optional[List[str]] = None
+    limit: int = 80
+
+
+class StudyMissionFlashcardsRequest(BaseModel):
+    course_id: Optional[str] = None
+    concept_ids: Optional[List[str]] = None
+    num_cards: int = 12
+    chunk_limit: int = 120
+
+
 @app.get("/api/courses")
 async def get_courses(student_id: str = Depends(get_student_id)):
     if db is None:
@@ -316,6 +331,348 @@ async def create_course(request: CourseCreateRequest, student_id: str = Depends(
         return {"course": {"id": course_id, "name": name}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create course: {str(e)}")
+
+
+_STUDY_MISSION_FLASHCARD_STOPWORDS = {
+    "about", "above", "after", "again", "against", "among", "and", "because", "before", "being",
+    "between", "both", "could", "during", "each", "from", "have", "into", "just", "like", "many",
+    "more", "most", "must", "other", "over", "some", "such", "that", "their", "there", "these",
+    "they", "this", "those", "through", "under", "using", "very", "what", "when", "where", "which",
+    "while", "with", "would", "your",
+}
+
+
+def _load_study_mission_chunks(
+    student_id: str,
+    course_id: Optional[str],
+    concept_ids: Optional[List[str]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    if db is None:
+        return []
+
+    safe_limit = max(10, min(240, int(limit or 80)))
+    stream_limit = min(900, max(safe_limit * 4, 160))
+    docs = list(
+        db.collection(vector_search.collection_name)
+        .where("userId", "==", student_id)
+        .limit(stream_limit)
+        .stream()
+    )
+
+    selected_course = (course_id or "").strip()
+    scoped_course_id = selected_course if selected_course and selected_course != "all" else None
+    preferred_concepts = [
+        str(concept_id).strip()
+        for concept_id in (concept_ids or [])
+        if str(concept_id).strip()
+    ]
+    concept_filter = set(preferred_concepts)
+    concept_rank = {concept_id: index for index, concept_id in enumerate(preferred_concepts)}
+
+    def collect_chunks(apply_concept_filter: bool) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            text = str(data.get("text") or "").strip()
+            if not text:
+                continue
+
+            chunk_course_id = str(data.get("course_id") or "").strip()
+            chunk_concept_id = str(data.get("concept_id") or "").strip()
+            if scoped_course_id and chunk_course_id != scoped_course_id:
+                continue
+            if apply_concept_filter and concept_filter and chunk_concept_id not in concept_filter:
+                continue
+
+            chunk_index_raw = data.get("chunk_index", 0)
+            chunk_index = int(chunk_index_raw) if isinstance(chunk_index_raw, (int, float)) else 0
+
+            rows.append(
+                {
+                    "id": doc.id,
+                    "text": text,
+                    "source": str(data.get("source") or ""),
+                    "course_id": chunk_course_id or None,
+                    "course_name": str(data.get("course_name") or ""),
+                    "concept_id": chunk_concept_id,
+                    "chunk_index": chunk_index,
+                }
+            )
+        return rows
+
+    chunks = collect_chunks(apply_concept_filter=True)
+    if not chunks and concept_filter:
+        chunks = collect_chunks(apply_concept_filter=False)
+
+    if concept_filter:
+        chunks.sort(
+            key=lambda row: (
+                concept_rank.get(str(row.get("concept_id") or ""), 10_000),
+                int(row.get("chunk_index") or 0),
+                str(row.get("id") or ""),
+            )
+        )
+    else:
+        chunks.sort(
+            key=lambda row: (
+                str(row.get("concept_id") or ""),
+                int(row.get("chunk_index") or 0),
+                str(row.get("id") or ""),
+            )
+        )
+
+    return chunks[:safe_limit]
+
+
+def _fallback_study_mission_flashcards(chunks: List[Dict[str, Any]], num_cards: int) -> List[Dict[str, Any]]:
+    cards: List[Dict[str, Any]] = []
+    seen = set()
+
+    for chunk in chunks:
+        chunk_text = re.sub(r"\s+", " ", str(chunk.get("text") or "")).strip()
+        if not chunk_text:
+            continue
+
+        source_label = str(chunk.get("source") or chunk.get("course_name") or "course material").strip() or "course material"
+        concept_id = str(chunk.get("concept_id") or "course-material").strip() or "course-material"
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", chunk_text) if s.strip()]
+
+        for sentence in sentences:
+            if len(sentence) < 40 or len(sentence) > 280:
+                continue
+            tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", sentence)
+            tokens = [t for t in tokens if t.lower() not in _STUDY_MISSION_FLASHCARD_STOPWORDS]
+            if not tokens:
+                continue
+            keyword = max(tokens, key=len)
+            masked = re.sub(rf"\b{re.escape(keyword)}\b", "_____", sentence, count=1, flags=re.IGNORECASE)
+            if masked == sentence:
+                continue
+            dedupe_key = f"{masked.lower()}|{keyword.lower()}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            cards.append(
+                {
+                    "id": f"fallback-{len(cards) + 1}",
+                    "concept_id": concept_id,
+                    "front": f"Fill in the blank from {source_label}:\n{masked}",
+                    "back": f"Correct answer: {keyword}",
+                    "tags": ["Chunk", "Fallback"],
+                    "source": source_label,
+                }
+            )
+            if len(cards) >= num_cards:
+                break
+        if len(cards) >= num_cards:
+            break
+
+    if not cards:
+        for chunk in chunks[:num_cards]:
+            source_label = str(chunk.get("source") or chunk.get("course_name") or "course material").strip() or "course material"
+            concept_id = str(chunk.get("concept_id") or "course-material").strip() or "course-material"
+            cards.append(
+                {
+                    "id": f"fallback-{len(cards) + 1}",
+                    "concept_id": concept_id,
+                    "front": f"State one key idea from {source_label}.",
+                    "back": "Correct answer: Review the related source chunk for this concept.",
+                    "tags": ["Chunk", "Fallback"],
+                    "source": source_label,
+                }
+            )
+
+    if cards and len(cards) < num_cards:
+        base_cards = list(cards)
+        clone_index = 0
+        while len(cards) < num_cards:
+            src = dict(base_cards[clone_index % len(base_cards)])
+            src["id"] = f"{src.get('id', 'fallback')}-repeat-{clone_index + 1}"
+            cards.append(src)
+            clone_index += 1
+
+    return cards[:num_cards]
+
+
+def _generate_study_mission_flashcards_with_ai(chunks: List[Dict[str, Any]], num_cards: int) -> List[Dict[str, Any]]:
+    if not chunks:
+        return []
+    if _openai_client is None:
+        return _fallback_study_mission_flashcards(chunks, num_cards)
+
+    payload_chunks = []
+    for index, chunk in enumerate(chunks[:160], start=1):
+        chunk_text = re.sub(r"\s+", " ", str(chunk.get("text") or "")).strip()
+        if not chunk_text:
+            continue
+        payload_chunks.append(
+            {
+                "index": index,
+                "concept_id": str(chunk.get("concept_id") or ""),
+                "source": str(chunk.get("source") or chunk.get("course_name") or "course material"),
+                "text": chunk_text[:520],
+            }
+        )
+
+    if not payload_chunks:
+        return []
+
+    system_prompt = (
+        "You are an expert flashcard writer for spaced repetition and active recall.\n"
+        "Create high-quality flashcards ONLY from the supplied chunks.\n"
+        "Do NOT use outside knowledge. If a fact is not explicitly supported by the chunks, do not include it.\n"
+        "\n"
+        "OUTPUT FORMAT (STRICT):\n"
+        "Return a single JSON object with exactly one top-level key: \"flashcards\".\n"
+        "\"flashcards\" must be an array of objects. No other top-level keys.\n"
+        "Each flashcard object must have EXACTLY these keys (no extras):\n"
+        "- front (string)\n"
+        "- back (string)\n"
+        "- concept_id (string)\n"
+        "- source (string)\n"
+        "- tags (array of strings)\n"
+        "\n"
+        "CONTENT RULES:\n"
+        "- Every flashcard must be grounded in ONE or more supplied chunks.\n"
+        "- Assign concept_id and source from the chunk metadata (do not invent new ids).\n"
+        "- Each card should test ONE concept only.\n"
+        "- Prefer understanding + application + discrimination (e.g., why/how/when/choose between) over copying.\n"
+        "- Avoid vague prompts. The question must be answerable precisely from the chunks.\n"
+        "- Avoid trivia, overly broad questions, and multi-part questions.\n"
+        "\n"
+        "TEXT CONSTRAINTS:\n"
+        "- front: <= 240 characters.\n"
+        "- back: <= 220 characters.\n"
+        "- back MUST start exactly with: \"Correct answer: \"\n"
+        "- No markdown, no bullet lists, no code fences.\n"
+        "\n"
+        "QUALITY GUIDELINES:\n"
+        "- Use diverse question stems (define, compare, diagnose, predict, example/non-example, best next step, explain why).\n"
+        "- Include a minimal explanation after the answer when space allows.\n"
+        "- Include at least one tag reflecting the card type, chosen from: "
+        "['definition','application','comparison','procedure','pitfall','diagnostic','example'].\n"
+        "\n"
+        "SAFETY / VALIDATION:\n"
+        "- If the chunks do not support making a valid flashcard for a concept_id, omit it.\n"
+        "- Do not include any text outside the JSON object.\n"
+    )
+
+    user_payload = {
+        "target_cards": num_cards,
+        "chunks": payload_chunks,
+    }
+
+    try:
+        completion = _openai_client.chat.completions.create(
+            model="gpt-5.2",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+        )
+        raw = (completion.choices[0].message.content or "{}").strip()
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            parsed = json.loads(match.group(0)) if match else {}
+
+        result_cards = parsed.get("flashcards") if isinstance(parsed, dict) else []
+        normalized_cards: List[Dict[str, Any]] = []
+        seen_prompts = set()
+
+        for idx, row in enumerate(result_cards or []):
+            if not isinstance(row, dict):
+                continue
+            front = re.sub(r"\s+", " ", str(row.get("front") or row.get("question") or "")).strip()
+            back = re.sub(r"\s+", " ", str(row.get("back") or "")).strip()
+            if not front:
+                continue
+            if not back:
+                answer_text = re.sub(r"\s+", " ", str(row.get("answer") or "")).strip()
+                back = f"Correct answer: {answer_text}" if answer_text else "Correct answer: Not available"
+            if not back.lower().startswith("correct answer:"):
+                back = f"Correct answer: {back}"
+
+            dedupe_key = f"{front.lower()}|{back.lower()}"
+            if dedupe_key in seen_prompts:
+                continue
+            seen_prompts.add(dedupe_key)
+
+            concept_id = str(row.get("concept_id") or "course-material").strip() or "course-material"
+            source = str(row.get("source") or "course material").strip() or "course material"
+            tags_raw = row.get("tags")
+            tags = [str(tag).strip() for tag in (tags_raw if isinstance(tags_raw, list) else []) if str(tag).strip()]
+            tags = tags[:4] if tags else ["AI", "Chunk"]
+
+            normalized_cards.append(
+                {
+                    "id": f"ai-{idx + 1}",
+                    "concept_id": concept_id,
+                    "front": front,
+                    "back": back,
+                    "tags": tags,
+                    "source": source,
+                }
+            )
+            if len(normalized_cards) >= num_cards:
+                break
+
+        if len(normalized_cards) < num_cards:
+            fallback_cards = _fallback_study_mission_flashcards(chunks, num_cards)
+            existing_keys = {f"{c['front'].lower()}|{c['back'].lower()}" for c in normalized_cards}
+            for card in fallback_cards:
+                key = f"{str(card.get('front', '')).lower()}|{str(card.get('back', '')).lower()}"
+                if key in existing_keys:
+                    continue
+                normalized_cards.append(card)
+                existing_keys.add(key)
+                if len(normalized_cards) >= num_cards:
+                    break
+
+        return normalized_cards[:num_cards]
+    except Exception as e:
+        print(f"Warning: AI flashcard generation failed ({e}). Falling back.")
+        return _fallback_study_mission_flashcards(chunks, num_cards)
+
+
+@app.post("/api/study-mission/chunks")
+async def get_study_mission_chunks(request: StudyMissionChunksRequest, student_id: str = Depends(get_student_id)):
+    try:
+        chunks = _load_study_mission_chunks(
+            student_id=student_id,
+            course_id=request.course_id,
+            concept_ids=request.concept_ids,
+            limit=request.limit,
+        )
+        return {"chunks": chunks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load study chunks: {str(e)}")
+
+
+@app.post("/api/study-mission/flashcards")
+async def generate_study_mission_flashcards(
+    request: StudyMissionFlashcardsRequest,
+    student_id: str = Depends(get_student_id),
+):
+    try:
+        safe_num_cards = max(1, min(70, int(request.num_cards or 12)))
+        safe_chunk_limit = max(40, min(240, int(request.chunk_limit or 120)))
+        chunks = _load_study_mission_chunks(
+            student_id=student_id,
+            course_id=request.course_id,
+            concept_ids=request.concept_ids,
+            limit=safe_chunk_limit,
+        )
+        if not chunks:
+            return {"flashcards": []}
+        flashcards = _generate_study_mission_flashcards_with_ai(chunks, safe_num_cards)
+        return {"flashcards": flashcards}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate study mission flashcards: {str(e)}")
 
 
 @app.post("/upload")

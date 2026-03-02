@@ -6,7 +6,7 @@ import { ChatInput, ChatWindow, MicroCheckpoint, NotesContext, SubjectsList } fr
 import type { CheckpointQuestion } from '@/components/ai';
 import { ScopedTopic } from '@/components/ai/ChatInput';
 import Split from 'react-split';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 interface Message {
@@ -23,6 +23,9 @@ interface ContextItem {
   index?: number;
 }
 
+const STUDY_MISSION_TIMER_KEY = 'mentora:studyMissionTimer';
+const STUDY_MISSION_SESSION_KEY = 'mentora:studyMissionSession';
+
 const SocraticBackground3D = dynamic(
   () => import('@/components/ai/SocraticBackground3D'),
   { ssr: false }
@@ -31,6 +34,7 @@ const SocraticBackground3D = dynamic(
 export default function AIAssistantPage() {
   const initialSocraticPrompt =
     'Hello there! Drag a topic from the side into the chatbox and start chatting with me!';
+  const router = useRouter();
   const { getIdToken } = useAuth();
   const searchParams = useSearchParams();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -38,6 +42,9 @@ export default function AIAssistantPage() {
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
   const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
+  const [missionTimerRemaining, setMissionTimerRemaining] = useState<number | null>(null);
+  const [missionTimerCourse, setMissionTimerCourse] = useState<string>('all');
+  const missionTimeoutHandledRef = useRef(false);
 
   // Micro-checkpoint state
   const sessionIdRef = useRef<string>(crypto.randomUUID());
@@ -82,6 +89,61 @@ export default function AIAssistantPage() {
         : [...prev, { id, title: topic, subjectName, conceptId }]
     );
   }, [searchParams]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncMissionTimer = () => {
+      try {
+        const raw = window.localStorage.getItem(STUDY_MISSION_TIMER_KEY);
+        if (!raw) {
+          setMissionTimerRemaining(null);
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as {
+          active?: boolean;
+          endAt?: number | null;
+          selectedCourse?: string;
+        };
+
+        if (!parsed?.active || !parsed?.endAt) {
+          setMissionTimerRemaining(null);
+          missionTimeoutHandledRef.current = false;
+          return;
+        }
+
+        const remaining = Math.max(0, Math.ceil((parsed.endAt - Date.now()) / 1000));
+        setMissionTimerRemaining(remaining);
+        setMissionTimerCourse(parsed.selectedCourse || 'all');
+        if (remaining > 0) {
+          missionTimeoutHandledRef.current = false;
+        }
+
+        if (remaining <= 0 && !missionTimeoutHandledRef.current) {
+          missionTimeoutHandledRef.current = true;
+          window.localStorage.removeItem(STUDY_MISSION_TIMER_KEY);
+          window.localStorage.removeItem(STUDY_MISSION_SESSION_KEY);
+          const destination = parsed.selectedCourse && parsed.selectedCourse !== 'all'
+            ? `/assessment?courseId=${encodeURIComponent(parsed.selectedCourse)}`
+            : '/assessment';
+          router.replace(destination);
+        }
+      } catch {
+        setMissionTimerRemaining(null);
+      }
+    };
+
+    syncMissionTimer();
+    const interval = setInterval(syncMissionTimer, 1000);
+    return () => clearInterval(interval);
+  }, [router]);
+
+  const formatTimer = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const handleTopicDrop = (topic: ScopedTopic) =>
     setScopedTopics(prev => prev.find(t => t.id === topic.id) ? prev : [...prev, topic]);
@@ -281,8 +343,23 @@ export default function AIAssistantPage() {
           />
 
           <div className="relative z-10 p-4 border-b border-slate-300/50 bg-[#e0f4fb]/78 backdrop-blur-sm">
-            <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
-            <p className="text-sm font-medium text-sky-900">I guide you with questions to help you discover answers yourself</p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
+                <p className="text-sm font-medium text-sky-900">I guide you with questions to help you discover answers yourself</p>
+              </div>
+              {missionTimerRemaining !== null && (
+                <button
+                  type="button"
+                  onClick={() => router.push('/study-mission')}
+                  className="rounded-full border border-[#03b2e6]/40 bg-white/70 px-3 py-1 text-xs font-semibold text-[#0287ba] hover:bg-white transition-colors"
+                  title="Return to Study Mission"
+                >
+                  Study Mission: {formatTimer(missionTimerRemaining)}
+                  {missionTimerCourse !== 'all' ? ` | ${missionTimerCourse}` : ''}
+                </button>
+              )}
+            </div>
           </div>
           <div className="relative z-10 flex-1" />
           <div className="relative z-10 p-4 border-t border-slate-300/50 bg-white/78 backdrop-blur-sm">
