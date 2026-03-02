@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -29,6 +29,25 @@ const SocraticBackground3D = dynamic(
   { ssr: false }
 );
 
+function generateId(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto) {
+    if (typeof globalThis.crypto.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+
+    if (typeof globalThis.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      globalThis.crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+      return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+    }
+  }
+
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function AIAssistantPage() {
   const initialSocraticPrompt =
     'Hello there! Drag a topic from the side into the chatbox and start chatting with me!';
@@ -41,7 +60,7 @@ export default function AIAssistantPage() {
   const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
 
   // Micro-checkpoint state
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const sessionIdRef = useRef<string>(generateId());
   const messageCountRef = useRef(0);
   const lastCheckpointAtRef = useRef(-8); // start so first check fires at msg 3
   const checkpointedConceptsRef = useRef<string[]>([]);
@@ -233,7 +252,7 @@ export default function AIAssistantPage() {
     setHighlightedSourceIndex(null);
     try {
       const userMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         content,
         role: 'user',
         timestamp: new Date()
@@ -275,7 +294,7 @@ export default function AIAssistantPage() {
       });
 
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         content: remappedAnswer,
         role: 'assistant',
         timestamp: new Date(),
@@ -283,7 +302,7 @@ export default function AIAssistantPage() {
       };
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Micro-checkpoint trigger: fire after ≥3 msgs with 8-msg cooldown
+      // Micro-checkpoint trigger: fire after â‰¥3 msgs with 8-msg cooldown
       messageCountRef.current += 1;
       const mc = messageCountRef.current;
       if (
@@ -380,7 +399,7 @@ export default function AIAssistantPage() {
         </div>
       </Split>
 
-      {/* Micro-checkpoint popup — fixed overlay, outside Split */}
+      {/* Micro-checkpoint popup â€” fixed overlay, outside Split */}
       {activeCheckpoint && (
         <MicroCheckpoint
           checkpoint={activeCheckpoint}
@@ -392,3 +411,4 @@ export default function AIAssistantPage() {
     </div>
   );
 }
+

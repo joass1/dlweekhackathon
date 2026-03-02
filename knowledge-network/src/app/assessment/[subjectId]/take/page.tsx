@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams, useSearchParams } from 'next/navigation';
@@ -181,7 +181,6 @@ export default function AssessmentTakePage() {
             per_question: classification.per_question,
           }
         : await evaluateAnswer(studentId, subjectId, answerPayload, token);
-      // Backend classify endpoint already performs integration updates (KG + tracking).
 
       saveRunToSession({
         studentId,
@@ -204,10 +203,10 @@ export default function AssessmentTakePage() {
 
   if (isLoadingQuiz) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
+      <div className="min-h-full flex items-center justify-center">
+        <div className="text-center rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg px-8 py-10 text-slate-900">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03b2e6] mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">{GENERATING_QUIZ_PHRASES[loadingPhraseIdx]}</p>
+          <p className="mt-4 text-slate-700">{GENERATING_QUIZ_PHRASES[loadingPhraseIdx]}</p>
         </div>
       </div>
     );
@@ -215,14 +214,11 @@ export default function AssessmentTakePage() {
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="max-w-md w-full text-center bg-white rounded-lg border border-red-200 p-6">
-          <h2 className="text-lg font-semibold text-red-700 mb-2">Quiz load failed</h2>
-          <p className="text-sm text-muted-foreground mb-4">{loadError}</p>
-          <button
-            className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]"
-            onClick={() => window.location.reload()}
-          >
+      <div className="min-h-full flex items-center justify-center px-4">
+        <div className="max-w-md w-full text-center rounded-xl border border-red-300/40 bg-red-500/15 backdrop-blur-sm p-6 text-slate-900 shadow-lg">
+          <h2 className="text-lg font-semibold text-red-100 mb-2">Quiz load failed</h2>
+          <p className="text-sm text-red-100/90 mb-4">{loadError}</p>
+          <button className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]" onClick={() => window.location.reload()}>
             Retry
           </button>
         </div>
@@ -232,16 +228,13 @@ export default function AssessmentTakePage() {
 
   if (isEmptyAssessment) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="max-w-md w-full text-center bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">No assessment available yet</h2>
-          <p className="text-sm text-muted-foreground mb-4">
+      <div className="min-h-full flex items-center justify-center px-4">
+        <div className="max-w-md w-full text-center rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm p-6 text-slate-900 shadow-lg">
+          <h2 className="text-lg font-semibold mb-2">No assessment available yet</h2>
+          <p className="text-sm text-slate-700 mb-4">
             Your knowledge map has no concepts for this assessment yet. Upload study materials first.
           </p>
-          <button
-            className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]"
-            onClick={() => router.push('/upload')}
-          >
+          <button className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]" onClick={() => router.push('/upload')}>
             Upload Materials
           </button>
         </div>
@@ -250,16 +243,16 @@ export default function AssessmentTakePage() {
   }
 
   return (
-    <div className="min-h-screen bg-background py-8">
+    <div className="min-h-full py-8">
       <div className="max-w-3xl mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-2">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
-        <p className="text-sm text-muted-foreground mb-8">Answer each question, then rate how confident you are in your answer.</p>
+        <h1 className="text-2xl font-bold mb-2 text-slate-900">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
+        <p className="text-sm text-slate-700 mb-8">Answer each question, then rate how confident you are in your answer.</p>
 
         <div className="space-y-8">
           {questions.map((question) => (
-            <div key={question.question_id} className="bg-white p-6 rounded-lg shadow-sm">
+            <div key={question.question_id} className="border border-black/10 bg-white/65 backdrop-blur-sm p-6 rounded-lg shadow-lg text-slate-900">
               <h3 className="text-lg font-medium mb-1">{question.stem}</h3>
-              <span className="inline-block text-xs px-2 py-1 rounded-full mb-4 bg-blue-100 text-blue-700">
+              <span className="inline-block text-xs px-2 py-1 rounded-full mb-4 bg-[#03b2e6]/20 border border-[#03b2e6]/30 text-[#4cc9f0]">
                 {question.difficulty}
               </span>
 
@@ -269,8 +262,8 @@ export default function AssessmentTakePage() {
                     key={index}
                     className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
                       answers[question.question_id] === index
-                        ? 'border-[#03b2e6] bg-[#e0f4fb]'
-                        : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-[#03b2e6]/70 bg-[#03b2e6]/20'
+                        : 'border-black/10 bg-white/40 hover:bg-white/400'
                     }`}
                     onClick={() => handleAnswer(question.question_id, index)}
                   >
@@ -282,7 +275,7 @@ export default function AssessmentTakePage() {
                       onChange={() => handleAnswer(question.question_id, index)}
                       className="mr-3 accent-[#03b2e6]"
                     />
-                    <label htmlFor={`${question.question_id}-${index}`} className="cursor-pointer flex-1">
+                    <label htmlFor={`${question.question_id}-${index}`} className="cursor-pointer flex-1 text-slate-900">
                       {option}
                     </label>
                   </div>
@@ -290,10 +283,10 @@ export default function AssessmentTakePage() {
               </div>
 
               {answers[question.question_id] !== undefined && (
-                <div className="mt-4 p-4 bg-background rounded-lg border border-muted">
-                  <label className="block text-sm font-medium text-foreground mb-2">How confident are you in this answer?</label>
+                <div className="mt-4 p-4 bg-white/400 rounded-lg border border-black/10">
+                  <label className="block text-sm font-medium text-slate-900 mb-2">How confident are you in this answer?</label>
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-red-500 w-14">Guessing</span>
+                    <span className="text-xs text-red-300 w-14">Guessing</span>
                     <input
                       type="range"
                       min="1"
@@ -308,10 +301,8 @@ export default function AssessmentTakePage() {
                       }
                       className="flex-1 accent-[#03b2e6] cursor-pointer"
                     />
-                    <span className="text-sm font-semibold w-6 text-center text-foreground">
-                      {confidenceRatings[question.question_id] || 3}
-                    </span>
-                    <span className="text-xs text-green-600 w-14 text-right">Certain</span>
+                    <span className="text-sm font-semibold w-6 text-center text-slate-900">{confidenceRatings[question.question_id] || 3}</span>
+                    <span className="text-xs text-green-300 w-14 text-right">Certain</span>
                   </div>
                 </div>
               )}
@@ -332,4 +323,6 @@ export default function AssessmentTakePage() {
     </div>
   );
 }
+
+
 
