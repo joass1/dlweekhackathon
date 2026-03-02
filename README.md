@@ -8,7 +8,7 @@
 
 ## The Problem
 
-Every study tool tracks what students get right or wrong — but none of them can:
+Every study tool tracks what students get right or wrong - but none of them can:
 - Distinguish a **careless arithmetic slip** from a **deep conceptual misunderstanding**
 - Trace a failure on binary search trees back to a **shaky grasp of recursion** three prerequisites down
 - Tell a student exactly **what to do with the 30 minutes** they have before an exam
@@ -20,15 +20,15 @@ Mentora does all three.
 ## How It Works
 
 ### 1. Upload → Knowledge Graph
-Upload course material (PDF, TXT, MD). An LLM parses it and constructs a **directed knowledge graph** — concepts and their prerequisite relationships. This becomes the student's living learning map, visualized as an interactive D3 force graph with nodes color-coded by mastery (green/amber/red/gray) and animated prerequisite edges.
+Upload course material (PDF, TXT, MD). An LLM parses it and constructs a **directed knowledge graph**: concepts and their prerequisite relationships. This becomes the student's living learning map, visualized as an interactive D3 force graph with nodes color-coded by mastery (green/amber/red/gray) and animated prerequisite edges.
 
 ### 2. Assessment → Careless vs Conceptual Classification
-AI generates diagnostic quizzes **grounded in the student's own material** via RAG retrieval. Before each answer is revealed, students rate their **confidence (1–5)**. An LLM then classifies every wrong answer:
+AI generates diagnostic quizzes **grounded in the student's own material** via RAG retrieval. Before each answer is revealed, students rate their **confidence (1-5)**. An LLM then classifies every wrong answer:
 - **Careless** → warning badge, mastery preserved
 - **Conceptual** → mastery drops, triggers RPKT
 
 ### 3. Recursive Prerequisite Knowledge Tracing (RPKT)
-When a conceptual gap is detected, the system walks **backward through the prerequisite chain**, probing at each level until it finds the **knowledge boundary** — the deepest concept where all prerequisites pass but the concept itself fails. These are the student's **unknown unknowns**.
+When a conceptual gap is detected, the system walks **backward through the prerequisite chain**, probing at each level until it finds the **knowledge boundary**: the deepest concept where all prerequisites pass but the concept itself fails. These are the student's **unknown unknowns**.
 
 ### 4. Study Missions
 Enter a time budget (e.g. 25 minutes). The system generates an optimized study queue using a scoring formula:
@@ -40,7 +40,7 @@ score = gap_severity × prereq_depth × decay_risk × careless_frequency
 Concepts are filled greedily into the time budget. Each comes with **AI-generated flashcards** from uploaded material. A **Socratic tutor** guides the student through each concept with **micro-checkpoints** every few messages that update mastery in real time.
 
 ### 5. Peer Learning Hubs + Boss Battle
-A matching algorithm groups students into **balanced peer hubs** where each member's strengths complement others' weaknesses (4-tier snake distribution with complementarity scoring). In a live **video session** (Twilio WebRTC), AI generates one question per member targeting their weakest concept — weakest student leads first (**protégé effect**). Correct answers deal damage to a **shared 3D boss**. All players see the boss HP drop in real time. The session ends when the team defeats it together.
+A matching algorithm groups students into **balanced peer hubs** where each member's strengths complement others' weaknesses (4-tier snake distribution with complementarity scoring). In a live **video session** (Twilio WebRTC), AI generates one question per member targeting their weakest concept. The weakest student leads first (**protégé effect**). Correct answers deal damage to a **shared 3D boss**. All players see the boss HP drop in real time. The session ends when the team defeats it together.
 
 ---
 
