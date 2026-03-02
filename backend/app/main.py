@@ -312,6 +312,13 @@ def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
     return user_engine
 
 
+def _clean_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if len(value) >= 2 and ((value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")):
+        value = value[1:-1].strip()
+    return value
+
+
 def _normalize_lookup(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
@@ -1442,13 +1449,17 @@ async def create_peer_video_token(
     if student_id not in member_ids:
         raise HTTPException(status_code=403, detail="You are not a member of this session")
 
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-    api_key = os.getenv("TWILIO_API_KEY", "").strip()
-    api_secret = os.getenv("TWILIO_API_SECRET", "").strip()
+    account_sid = _clean_env("TWILIO_ACCOUNT_SID")
+    api_key = _clean_env("TWILIO_API_KEY") or _clean_env("TWILIO_API_KEY_SID")
+    api_secret = _clean_env("TWILIO_API_SECRET") or _clean_env("TWILIO_API_KEY_SECRET")
     if not account_sid or not api_key or not api_secret:
         raise HTTPException(
             status_code=500,
-            detail="Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_API_KEY, and TWILIO_API_SECRET.",
+            detail=(
+                "Twilio is not configured. Set TWILIO_ACCOUNT_SID + "
+                "(TWILIO_API_KEY or TWILIO_API_KEY_SID) + "
+                "(TWILIO_API_SECRET or TWILIO_API_KEY_SECRET)."
+            ),
         )
 
     try:
