@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from "@/components/ui/card";
 import { BookOpen, AlertTriangle, Loader2, Target, Maximize2, Minimize2 } from 'lucide-react';
 import Link from 'next/link';
@@ -51,13 +51,22 @@ export default function Page() {
   const [isKGExpanded, setIsKGExpanded] = useState(false);
   const studentId = useStudentId();
   const { user } = useAuth();
-  const { setIsCollapsed } = useSidebar();
+  const { isCollapsed, setIsCollapsed } = useSidebar();
   const { apiFetchWithAuth } = useAuthedApi();
+  // Snapshot of sidebar state captured at the moment KG expands
+  const sidebarStateBeforeKGExpand = useRef<boolean>(false);
 
   const toggleKG = () => {
-    const next = !isKGExpanded;
-    setIsKGExpanded(next);
-    setIsCollapsed(next);
+    const expanding = !isKGExpanded;
+    setIsKGExpanded(expanding);
+    if (expanding) {
+      // Save current sidebar state, then collapse it
+      sidebarStateBeforeKGExpand.current = isCollapsed;
+      setIsCollapsed(true);
+    } else {
+      // Restore sidebar to whatever it was before KG was expanded
+      setIsCollapsed(sidebarStateBeforeKGExpand.current);
+    }
   };
 
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'Student';
@@ -224,7 +233,9 @@ export default function Page() {
         {/* Knowledge Map — expands to fixed viewport card */}
         <div
           className={`group lg:col-span-3 transition-all duration-300 ${
-            isKGExpanded ? 'fixed inset-8 z-40' : ''
+            isKGExpanded
+              ? `fixed top-8 bottom-8 right-8 z-40 ${isCollapsed ? 'left-8' : 'left-[288px]'}`
+              : ''
           }`}
         >
           <Card className="overflow-hidden h-full flex flex-col">
