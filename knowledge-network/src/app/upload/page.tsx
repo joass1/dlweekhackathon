@@ -7,6 +7,12 @@ import Link from 'next/link';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useRouter } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
+import dynamic from 'next/dynamic';
+
+const UploadCharacter3D = dynamic(
+  () => import('@/components/upload/UploadCharacter3D'),
+  { ssr: false }
+);
 
 interface UploadedFile {
   filename: string;
@@ -115,9 +121,13 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="min-h-full p-6 max-w-4xl mx-auto">
+    <div
+      className="relative min-h-full overflow-x-hidden bg-cover bg-center bg-no-repeat bg-fixed"
+      style={{ backgroundImage: "url('/backgrounds/uploadback.png')" }}
+    >
+    <div className="relative z-10 p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2 text-black">Upload Course Materials</h1>
-      <p className="text-black/70 mb-6">
+      <p className="text-black/70 mb-4">
         Upload your lecture notes, textbooks, and study materials. Mentora will analyze them
         to build your personalized knowledge graph.
       </p>
@@ -211,6 +221,9 @@ export default function UploadPage() {
           </div>
         </div>
       </Card>
+    </div>
+
+    <UploadCharacter3D className="pointer-events-none absolute bottom-4 right-4 z-20 h-[320px] w-[260px] transform -translate-y-[20%] block" />
     </div>
   );
 }

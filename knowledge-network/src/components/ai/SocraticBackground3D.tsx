@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 
 type CharacterModelProps = {
@@ -105,9 +105,25 @@ function expandSpeechCitations(
 
 function CharacterModel({ isSpeaking }: CharacterModelProps) {
   const gltf = useGLTF('/models/king.gltf');
+  const { actions } = useAnimations(gltf.animations, gltf.scene);
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const headPitchRef = useRef(0);
+
+  useEffect(() => {
+    const idleNeutral = actions?.Idle_Neutral ?? actions?.Idle;
+    if (!idleNeutral) return;
+
+    idleNeutral.reset();
+    idleNeutral.setLoop(THREE.LoopRepeat, Infinity);
+    idleNeutral.clampWhenFinished = false;
+    idleNeutral.fadeIn(0.25).play();
+
+    return () => {
+      idleNeutral.fadeOut(0.2);
+      idleNeutral.stop();
+    };
+  }, [actions]);
 
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
@@ -126,16 +142,16 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
   useFrame(({ clock }, delta) => {
     if (!motionGroupRef.current) return;
     const t = clock.getElapsedTime();
-    const breathe = 1 + Math.sin(t * 1.0) * 0.001225;
-    const sway = Math.sin(t * 0.45) * 0.00147;
-    const bob = Math.sin(t * 0.65) * 0.001225;
+    const breathe = 1 + Math.sin(t * 0.7) * 0.0005;
+    const sway = Math.sin(t * 0.22) * 0.0006;
+    const bob = Math.sin(t * 0.3) * 0.0005;
 
     motionGroupRef.current.position.x = sway;
     motionGroupRef.current.position.y = bob;
-    motionGroupRef.current.rotation.y = Math.sin(t * 0.2) * 0.0049;
+    motionGroupRef.current.rotation.y = Math.sin(t * 0.15) * 0.0025;
     motionGroupRef.current.scale.set(breathe, breathe, breathe);
 
-    const targetPitch = isSpeaking ? Math.sin(t * 4.8) * 0.00343 : 0;
+    const targetPitch = isSpeaking ? Math.sin(t * 4.2) * 0.004 : 0;
     headPitchRef.current += (targetPitch - headPitchRef.current) * Math.min(1, delta * 8);
     motionGroupRef.current.rotation.x = headPitchRef.current;
   });
