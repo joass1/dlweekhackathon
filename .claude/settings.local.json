@@ -3,7 +3,11 @@
     "allow": [
       "Bash(npx next build)",
       "Bash(npm install firebase)",
-      "Bash(npm install @tailwindcss/typography)"
+      "Bash(npm install @tailwindcss/typography)",
+      "Bash(find /Applications/MAMP/htdocs/dlweekhackathon -type f -name \"*ai*\" -o -name \"*assistant*\" -o -name \"*tutor*\" -o -name \"*socratic*\" -o -name \"*chat*\" 2>/dev/null | head -50)",
+      "Bash(find /Applications/MAMP/htdocs/dlweekhackathon -type f -name \"*.md\" 2>/dev/null | head -20)",
+      "Bash(ls -la /Applications/MAMP/htdocs/dlweekhackathon/*.md)",
+      "Bash(find /Applications/MAMP/htdocs/dlweekhackathon/backend/knowledge-network/src/app -type f -name \"*.ts\" -o -name \"*.tsx\" 2>/dev/null | sort)"
     ]
   }
 }
