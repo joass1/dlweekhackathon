@@ -422,49 +422,6 @@ async def upload_files(
     }
 
 
-@app.post("/api/ai/chat")
-async def chat(request: dict, student_id: str = Depends(get_student_id)):
-    try:
-        query = request.get("query")
-        if not query:
-            raise HTTPException(status_code=400, detail="Query is required")
-
-        hits = vector_search.search_discussions(query, 3, user_id=student_id)
-        unique_context = []
-        seen = set()
-        for hit in hits:
-            text = str(hit.get("discussion", ""))
-            text_hash = hash(text)
-            if text_hash in seen:
-                continue
-            seen.add(text_hash)
-            unique_context.append(
-                {
-                    "id": str(len(unique_context) + 1),
-                    "score": float(hit.get("similarity", 0.0)),
-                    "text": text[:300] + "..." if len(text) > 300 else text,
-                }
-            )
-
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        context_text = " ".join([ctx["text"] for ctx in unique_context])
-        response = client.chat.completions.create(
-            model="gpt-5.2",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are the Mentora Socratic Tutor. Instead of giving direct answers, guide the student with probing questions. Keep responses concise (max 150 words).",
-                },
-                {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {query}"},
-            ],
-        )
-
-        return {"answer": response.choices[0].message.content, "context": unique_context}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
-
 
 @app.get("/api/learning-groups")
 async def get_learning_groups(group_size: int = 4):
