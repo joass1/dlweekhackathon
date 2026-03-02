@@ -32,7 +32,7 @@ export const Sidebar = () => {
   ];
 
   return (
-    <div className="w-64 h-screen bg-slate-100 p-6 flex flex-col">
+    <div className="w-64 h-full bg-slate-100 p-6 flex flex-col overflow-y-auto overscroll-contain">
       {/* Brand */}
       <div className="mb-8">
         <div className="mb-4 flex items-start justify-between">

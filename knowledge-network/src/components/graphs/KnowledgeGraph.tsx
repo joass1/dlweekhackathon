@@ -23,9 +23,10 @@ interface Link extends d3.SimulationLinkDatum<Node> {
 interface KnowledgeGraphProps {
   nodes?: Node[];
   links?: Link[];
+  showLabels?: boolean;
 }
 
-const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
+const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: KnowledgeGraphProps) => {
   const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -40,6 +41,18 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
       const targetId = typeof l.target === 'string' ? l.target : String((l.target as Node).id);
       return { ...l, source: sourceId, target: targetId };
     });
+
+    const degreeMap = new Map<string, number>();
+    for (const node of graphNodes) {
+      degreeMap.set(node.id, 0);
+    }
+    for (const link of graphLinks) {
+      const sourceId = String(link.source);
+      const targetId = String(link.target);
+      degreeMap.set(sourceId, (degreeMap.get(sourceId) ?? 0) + 1);
+      degreeMap.set(targetId, (degreeMap.get(targetId) ?? 0) + 1);
+    }
+    const isEdgeNode = (d: Node) => (degreeMap.get(d.id) ?? 0) <= 1;
     if (graphNodes.length === 0) {
       return;
     }
@@ -94,14 +107,28 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
       .join('g')
       .style('cursor', 'pointer');
 
+    // Edge-node ring (leaf nodes with only one connection)
+    nodeGroup.append('circle')
+      .attr('class', 'edge-node-ring')
+      .attr('r', d => nodeR(d) + 4)
+      .style('fill', 'none')
+      .style('stroke', '#0ea5e9')
+      .style('stroke-width', d => isEdgeNode(d) ? 1.8 : 0)
+      .style('stroke-dasharray', '3,2')
+      .style('opacity', d => isEdgeNode(d) ? 0.95 : 0);
+
     // Main ball body
     nodeGroup.append('circle')
       .attr('class', 'node-body')
       .attr('r', nodeR)
-      .style('fill', d => ballColors[d.status].fill)
+      .style('fill', d => (
+        isEdgeNode(d) && d.status === 'not_started' ? '#dbeafe' : ballColors[d.status].fill
+      ))
       .style('fill-opacity', 0.78)
-      .style('stroke', d => ballColors[d.status].stroke)
-      .style('stroke-width', 1.6);
+      .style('stroke', d => (
+        isEdgeNode(d) && d.status === 'not_started' ? '#0284c7' : ballColors[d.status].stroke
+      ))
+      .style('stroke-width', d => isEdgeNode(d) ? 2.2 : 1.6);
 
     // Mastery number centered
     nodeGroup.append('text')
@@ -111,11 +138,14 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
       .attr('font-size', d => `${Math.max(9, nodeR(d) * 0.42)}px`)
       .attr('font-weight', 'bold')
       .attr('font-family', 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial')
-      .attr('fill', d => ballColors[d.status].text)
+      .attr('fill', d => (
+        isEdgeNode(d) && d.status === 'not_started' ? '#0c4a6e' : ballColors[d.status].text
+      ))
       .style('pointer-events', 'none');
 
     // Labels next to nodes
     const label = svg.append('g')
+      .attr('display', showLabels ? null : 'none')
       .selectAll('text')
       .data(graphNodes)
       .join('text')
@@ -140,13 +170,17 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
 
     nodeGroup.on('mouseover', function(event, d) {
       const group = d3.select(this);
-      group.select<SVGCircleElement>('.node-body').transition().duration(140).style('stroke-width', 2.4);
+      group.select<SVGCircleElement>('.node-body')
+        .transition()
+        .duration(140)
+        .style('stroke-width', isEdgeNode(d) ? 3 : 2.4);
 
       tooltip.style('opacity', 1)
         .html(`
           <strong>${d.title}</strong><br/>
           Mastery: ${d.mastery}%<br/>
           Status: ${d.status.replace('_', ' ')}<br/>
+          ${isEdgeNode(d) ? 'Edge node (leaf)<br/>' : ''}
           ${d.lastReviewed ? `Last reviewed: ${d.lastReviewed}` : 'Not yet reviewed'}<br/>
           ${d.decayRate > 0 ? `Decay in: ${d.decayRate} days` : ''}
         `)
@@ -154,7 +188,10 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
         .style('top', (event.pageY - 10) + 'px');
     }).on('mouseout', function(_, d) {
       const group = d3.select(this);
-      group.select<SVGCircleElement>('.node-body').transition().duration(140).style('stroke-width', 1.6);
+      group.select<SVGCircleElement>('.node-body')
+        .transition()
+        .duration(140)
+        .style('stroke-width', isEdgeNode(d) ? 2.2 : 1.6);
       tooltip.style('opacity', 0);
     }).on('click', function(_, d) {
       setSelectedNode(d);
@@ -203,7 +240,7 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
     });
 
     return () => { tooltip.remove(); };
-  }, [nodes, links]);
+  }, [nodes, links, showLabels]);
 
   return (
     <div className="w-full h-full relative">
@@ -213,6 +250,10 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-yellow-500 inline-block" /> Learning</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Weak</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-gray-300 inline-block" /> Not Started</div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded-full border-2 border-sky-500 border-dashed inline-block" />
+          Suggested Start Points
+        </div>
       </div>
 
       {selectedNode && (
