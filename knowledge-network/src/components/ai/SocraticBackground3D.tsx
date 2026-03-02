@@ -102,7 +102,12 @@ function CharacterModel({
             className="pointer-events-auto relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm"
           >
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
-            <div className="overflow-y-auto whitespace-pre-wrap pr-0.5 touch-pan-y" style={{ maxHeight: `${bubbleMaxHeight}px` }}>
+            <div
+              className="overflow-y-auto whitespace-pre-wrap pr-0.5 touch-pan-y"
+              style={{ maxHeight: `${bubbleMaxHeight}px` }}
+              onWheel={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
+            >
               {expandSpeechCitations(speechText, onCitationClick)}
             </div>
           </div>
