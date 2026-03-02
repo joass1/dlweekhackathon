@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Loader2, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { Sidebar } from './Sidebar';
@@ -20,7 +21,14 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#03b2e6]" />
+        <Image
+          src="/logo-images/favicon.png"
+          alt="Loading"
+          width={56}
+          height={56}
+          className="animate-bounce"
+          priority
+        />
       </div>
     );
   }

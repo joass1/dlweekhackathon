@@ -12,6 +12,7 @@ import {
   signOut as firebaseSignOut,
   type User,
 } from "firebase/auth";
+import Image from "next/image";
 import { auth } from "@/lib/firebase-auth";
 import { useRouter, usePathname } from "next/navigation";
 
@@ -75,7 +76,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         children
       ) : (
         <div className="flex items-center justify-center min-h-screen">
-          <div className="w-6 h-6 border-2 border-[#03b2e6] border-t-transparent rounded-full animate-spin" />
+          <Image
+            src="/logo-images/favicon.png"
+            alt="Loading"
+            width={56}
+            height={56}
+            className="animate-bounce"
+            priority
+          />
         </div>
       )}
     </AuthContext.Provider>

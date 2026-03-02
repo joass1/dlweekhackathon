@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { useRouter, useParams } from 'next/navigation';
 import {
   classifyMistake,
@@ -259,7 +260,16 @@ export default function AssessmentTakePage() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03b2e6] mx-auto"></div>
+          <div className="flex items-center justify-center">
+            <Image
+              src="/logo-images/favicon.png"
+              alt="Loading"
+              width={48}
+              height={48}
+              className="animate-bounce"
+              priority
+            />
+          </div>
           <p className="mt-4 text-muted-foreground">Generating quiz...</p>
         </div>
       </div>
@@ -305,7 +315,7 @@ export default function AssessmentTakePage() {
   return (
     <div className="min-h-screen bg-background py-8">
       <div className="max-w-3xl mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-2">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
+        <h1 className="text-2xl font-bold mb-2">Mentora Assessment: {subjectId.replace(/-/g, ' ')}</h1>
         <p className="text-sm text-muted-foreground mb-8">Answer each question, then rate how confident you are in your answer.</p>
 
         <div className="space-y-8">

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 
 interface Student {
@@ -44,7 +45,16 @@ export default function ResultsPage() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+          <div className="flex items-center justify-center">
+            <Image
+              src="/logo-images/favicon.png"
+              alt="Loading"
+              width={48}
+              height={48}
+              className="animate-bounce"
+              priority
+            />
+          </div>
           <p className="mt-4 text-muted-foreground">Finding your perfect study group...</p>
         </div>
       </div>
