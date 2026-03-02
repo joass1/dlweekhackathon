@@ -236,7 +236,7 @@ Return ONLY valid JSON:
 }}"""
 
         response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-5.2",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -420,7 +420,7 @@ Course material:
 {text[:4000]}"""
 
         response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-5.2",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )

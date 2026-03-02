@@ -594,7 +594,7 @@ class AssessmentEngine:
                 ]
                 try:
                     completion = self.client.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model="gpt-5.2",
                         temperature=0.2,
                         response_format={"type": "json_object"},
                         messages=messages,
@@ -603,7 +603,7 @@ class AssessmentEngine:
                     # Compatibility fallback for SDK/model variants.
                     self._last_quiz_generation_error = f"response_format mode failed: {format_exc}"
                     completion = self.client.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model="gpt-5.2",
                         temperature=0.2,
                         messages=messages,
                     )
@@ -805,7 +805,7 @@ class AssessmentEngine:
         for _ in range(2):
             try:
                 completion = self.client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-5.2",
                     temperature=0,
                     messages=[
                         {
