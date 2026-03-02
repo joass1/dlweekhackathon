@@ -351,7 +351,7 @@ export default function Page() {
                 </button>
               </div>
             </div>
-            <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[680px]'}`}>
+            <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[544px]'}`}>
               {loading ? (
                 <div className="h-full flex items-center justify-center text-sm text-white/60">
                   <span className="mr-2 inline-flex"><BounceLoader size={20} /></span> Loading knowledge graph...

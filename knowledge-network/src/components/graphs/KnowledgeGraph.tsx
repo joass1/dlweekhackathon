@@ -69,7 +69,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     defs.append('marker')
       .attr('id', 'arrowhead')
       .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 25)
+      .attr('refX', 30)
       .attr('refY', 0)
       .attr('orient', 'auto')
       .attr('markerWidth', 6)
@@ -86,10 +86,10 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     };
 
     const simulation = d3.forceSimulation<Node>(graphNodes)
-      .force('link', d3.forceLink<Node, Link>(graphLinks).id(d => d.id).distance(100))
+      .force('link', d3.forceLink<Node, Link>(graphLinks).id(d => d.id).distance(110))
       .force('charge', d3.forceManyBody().strength(-300))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(38));
+      .force('collision', d3.forceCollide().radius(44));
 
     // Links
     const link = svg.append('g')
@@ -101,7 +101,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .style('stroke-dasharray', d => d.type === 'prerequisite' ? 'none' : '4,4')
       .attr('marker-end', d => d.type === 'prerequisite' ? 'url(#arrowhead)' : '');
 
-    const nodeR = (d: Node) => 15.4 + (d.mastery / 100) * 13.2;
+    const nodeR = (d: Node) => 18.5 + (d.mastery / 100) * 15.8;
 
     // Node groups (minimal flat circles + centered number)
     const nodeGroup = svg.append('g')
