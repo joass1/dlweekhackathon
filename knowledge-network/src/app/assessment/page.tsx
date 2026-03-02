@@ -4,11 +4,13 @@ import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
+import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 
 interface GraphNode {
   id: string;
   title?: string;
   category?: string;
+  courseId?: string;
   mastery?: number;
   status?: string;
 }
@@ -17,6 +19,8 @@ export default function AssessmentSelectionPage() {
   const router = useRouter();
   const { apiFetchWithAuth } = useAuthedApi();
   const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
+  const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,13 +30,19 @@ export default function AssessmentSelectionPage() {
       setLoading(true);
       setError(null);
       try {
-        const data = await apiFetchWithAuth<{ nodes?: GraphNode[] }>('/api/kg/graph');
+        const [graphData, courseData] = await Promise.all([
+          apiFetchWithAuth<{ nodes?: GraphNode[] }>('/api/kg/graph'),
+          apiFetchWithAuth<{ courses?: CourseOption[] }>('/api/courses').catch(() => ({ courses: DEFAULT_COURSES })),
+        ]);
         if (!cancelled) {
-          setNodes(Array.isArray(data?.nodes) ? data.nodes : []);
+          setNodes(Array.isArray(graphData?.nodes) ? graphData.nodes : []);
+          const incomingCourses = Array.isArray(courseData?.courses) ? courseData.courses : DEFAULT_COURSES;
+          setCourses(incomingCourses);
         }
       } catch (e) {
         if (!cancelled) {
           setNodes([]);
+          setCourses(DEFAULT_COURSES);
           setError(e instanceof Error ? e.message : 'Failed to load assessment concepts');
         }
       } finally {
@@ -53,10 +63,48 @@ export default function AssessmentSelectionPage() {
         id: String(n.id),
         title: String(n.title || n.id).trim(),
         category: String(n.category || 'General'),
-        masteryPct: Math.round(Math.max(0, Math.min(1, Number(n.mastery ?? 0))) * 100),
+        courseId: n.courseId ? String(n.courseId) : '',
+        masteryPct: (() => {
+          const value = Number(n.mastery ?? 0);
+          if (Number.isNaN(value)) return 0;
+          const pct = value <= 1 ? value * 100 : value;
+          return Math.round(Math.max(0, Math.min(100, pct)));
+        })(),
       })),
     [nodes]
   );
+
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const belongsToCourse = (concept: { courseId: string; category: string }, course: CourseOption) => {
+    if (concept.courseId) return concept.courseId === course.id;
+    const categoryNorm = normalize(concept.category);
+    const courseNameNorm = normalize(course.name).replace(/\b\d+\b/g, '').trim();
+    if (!categoryNorm || !courseNameNorm) return false;
+    return (
+      categoryNorm === courseNameNorm ||
+      categoryNorm.includes(courseNameNorm) ||
+      courseNameNorm.includes(categoryNorm)
+    );
+  };
+
+  const coursesWithCounts = useMemo(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        topicCount: concepts.filter((c) => belongsToCourse(c, course)).length,
+      })),
+    [courses, concepts]
+  );
+
+  const selectedCourseMeta = useMemo(
+    () => coursesWithCounts.find((c) => c.id === selectedCourse) || null,
+    [coursesWithCounts, selectedCourse]
+  );
+
+  const selectedCourseConcepts = useMemo(() => {
+    if (!selectedCourseMeta) return [];
+    return concepts.filter((c) => belongsToCourse(c, selectedCourseMeta));
+  }, [concepts, selectedCourseMeta]);
 
   return (
     <div className="min-h-screen bg-background py-12">
@@ -94,27 +142,80 @@ export default function AssessmentSelectionPage() {
           </div>
         ) : null}
 
-        {!loading && !error && concepts.length > 0 ? (
-          <div className="grid md:grid-cols-3 gap-6">
-            {concepts.map((concept) => (
-              <button
-                key={concept.id}
-                className="text-left bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow"
-                onClick={() => router.push(`/assessment/${concept.id}/intro`)}
-              >
-                <div className="p-6">
-                  <h2 className="text-xl font-semibold mb-2">{concept.title}</h2>
-                  <p className="text-muted-foreground mb-4">{concept.category}</p>
-                  <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <span>5 questions</span>
-                    <span>{concept.masteryPct}% mastery</span>
+        {!loading && !error && concepts.length > 0 && !selectedCourse ? (
+          <div>
+            <h2 className="text-xl font-semibold mb-4">Select A Course</h2>
+            <div className="grid md:grid-cols-3 gap-6">
+              {coursesWithCounts.map((course) => (
+                <button
+                  key={course.id}
+                  className={`text-left bg-white rounded-xl shadow-sm overflow-hidden transition-shadow ${
+                    course.topicCount > 0 ? 'hover:shadow-md' : 'opacity-70'
+                  }`}
+                  onClick={() => setSelectedCourse(course.id)}
+                >
+                  <div className="p-6">
+                    <h3 className="text-xl font-semibold mb-2">{course.name}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {course.topicCount} topic{course.topicCount === 1 ? '' : 's'} ready
+                    </p>
                   </div>
-                </div>
-                <div className="bg-[#e0f4fb] p-4 text-center">
-                  <span className="text-[#03b2e6] font-medium">Begin Assessment</span>
-                </div>
+                  <div className="bg-[#e0f4fb] p-4 text-center">
+                    <span className="text-[#03b2e6] font-medium">
+                      {course.topicCount > 0 ? 'View Topics' : 'No Topics Yet'}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {!loading && !error && selectedCourse && selectedCourseMeta ? (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold">{selectedCourseMeta.name}</h2>
+                <p className="text-sm text-muted-foreground">
+                  {selectedCourseConcepts.length} topic{selectedCourseConcepts.length === 1 ? '' : 's'} available
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedCourse(null)}
+                className="px-4 py-2 rounded-full border border-gray-300 text-sm hover:bg-gray-50"
+              >
+                Back To Courses
               </button>
-            ))}
+            </div>
+
+            {selectedCourseConcepts.length === 0 ? (
+              <div className="bg-white border rounded-xl p-8 text-center text-muted-foreground">
+                No topics found for this course yet.
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-3 gap-6">
+                {selectedCourseConcepts.map((concept) => (
+                  <button
+                    key={concept.id}
+                    className="text-left bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow"
+                    onClick={() => router.push(`/assessment/${concept.id}/intro`)}
+                  >
+                    <div className="p-6">
+                      <h3 className="text-xl font-semibold mb-2">{concept.title}</h3>
+                      <p className="text-muted-foreground mb-4">{concept.category}</p>
+                      <div className="flex items-center justify-between text-sm text-muted-foreground">
+                        <span>5 questions</span>
+                        <span>{concept.masteryPct}% mastery</span>
+                      </div>
+                    </div>
+                    <div className="bg-[#e0f4fb] p-4 text-center">
+                      <span className="text-[#03b2e6] font-medium">Begin Assessment</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : null}
       </div>

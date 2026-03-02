@@ -242,7 +242,21 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
+                onClick={() => {
+                  const params = new URLSearchParams({
+                    topic: selectedNode.title,
+                    conceptId: selectedNode.id,
+                    subject: selectedNode.category || 'Knowledge Map',
+                  });
+                  router.push(`/assessment/${encodeURIComponent(selectedNode.id)}/intro?${params.toString()}`);
+                }}
+              >
+                Go To Assessment
+              </button>
               <button
                 type="button"
                 className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
