@@ -118,21 +118,6 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
   }
 
   return (
-<<<<<<< Updated upstream
-    <div className="p-4 text-slate-100">
-      <h2 className="text-lg font-semibold mb-4 text-white">Related Context</h2>
-      <div className="space-y-4">
-        {activeNotes.map((note, index) => (
-          <div
-            key={createUniqueKey(note.text, index)}
-            className="p-3 rounded-lg border border-white/15 bg-white/10 hover:bg-white/15 cursor-pointer transition-colors"
-            onClick={() => onNoteClick(note)}
-          >
-            <p className="text-sm text-slate-200">{note.text}</p>
-            <p className="text-xs text-slate-300 mt-1">Relevance: {Math.round(note.score * 100)}%</p>
-          </div>
-        ))}
-=======
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
@@ -146,7 +131,6 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
             {showAll ? 'Show fewer' : `Show all ${relevantGroups.length} ↓`}
           </button>
         )}
->>>>>>> Stashed changes
       </div>
 
       <div className="space-y-2">
@@ -247,8 +231,4 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
       )}
     </div>
   );
-<<<<<<< Updated upstream
-} 
-=======
 }
->>>>>>> Stashed changes

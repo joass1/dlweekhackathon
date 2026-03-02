@@ -253,15 +253,10 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                 {expandedSubjects.has(subject.id) && (
                   <div className="ml-6 space-y-1 mt-1">
                     {subject.notes.map((note) => (
-<<<<<<< Updated upstream
                       <div
                         key={note.id}
                         className="group flex items-center rounded-md border border-white/20 bg-slate-900/45"
                       >
-=======
-                      <div key={note.id} className="group flex items-center">
-                        {/* File row — title tooltip (Problem 11) */}
->>>>>>> Stashed changes
                         <button
                           draggable
                           title={note.title}

@@ -12,7 +12,34 @@ type CharacterModelProps = {
   canGoNext: boolean;
   onGoPrevious: () => void;
   onGoNext: () => void;
+  onCitationClick?: (n: number) => void;
 };
+
+/** Split text on [N] citation markers and render clickable superscript badges. */
+function expandSpeechCitations(
+  text: string,
+  onCitationClick?: (n: number) => void
+): React.ReactNode {
+  if (!/\[\d+\]/.test(text)) return text;
+  const parts = text.split(/(\[\d+\])/);
+  return parts.map((part, i) => {
+    const m = part.match(/^\[(\d+)\]$/);
+    if (m) {
+      const n = Number(m[1]);
+      return (
+        <sup
+          key={i}
+          className="cursor-pointer inline-flex items-center justify-center w-4 h-4 text-[0.6em] font-bold text-white bg-[#03b2e6] hover:bg-[#0291be] rounded-full ml-0.5 mr-0.5 transition-colors"
+          onClick={() => onCitationClick?.(n)}
+          title={`Jump to source ${n}`}
+        >
+          {n}
+        </sup>
+      );
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
 
 function CharacterModel({
   speechText,
@@ -21,6 +48,7 @@ function CharacterModel({
   canGoNext,
   onGoPrevious,
   onGoNext,
+  onCitationClick,
 }: CharacterModelProps) {
   const gltf = useGLTF('/models/king.gltf');
   const fitGroupRef = useRef<THREE.Group>(null);
@@ -82,7 +110,9 @@ function CharacterModel({
             className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm"
           >
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
-            <p className="overflow-auto whitespace-pre-wrap pr-0.5" style={{ maxHeight: `${bubbleMaxHeight}px` }}>{speechText}</p>
+            <p className="overflow-auto whitespace-pre-wrap pr-0.5" style={{ maxHeight: `${bubbleMaxHeight}px` }}>
+              {expandSpeechCitations(speechText, onCitationClick)}
+            </p>
             <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2">
               <button
                 type="button"
@@ -156,6 +186,7 @@ export default function SocraticBackground3D({
   canGoNext = false,
   onGoPrevious = () => {},
   onGoNext = () => {},
+  onCitationClick,
 }: {
   speechText?: string;
   isSpeaking?: boolean;
@@ -163,6 +194,7 @@ export default function SocraticBackground3D({
   canGoNext?: boolean;
   onGoPrevious?: () => void;
   onGoNext?: () => void;
+  onCitationClick?: (n: number) => void;
 }) {
   return (
     <BackgroundErrorBoundary>
@@ -185,6 +217,7 @@ export default function SocraticBackground3D({
               canGoNext={canGoNext}
               onGoPrevious={onGoPrevious}
               onGoNext={onGoNext}
+              onCitationClick={onCitationClick}
             />
           </Suspense>
         </Canvas>

@@ -11,11 +11,8 @@ interface Message {
 interface ChatWindowProps {
   messages: Message[];
   isLoading: boolean;
-<<<<<<< Updated upstream
   showAssistantMessages?: boolean;
-=======
   onCitationClick?: (index: number) => void;
->>>>>>> Stashed changes
 }
 
 const THINKING_PHRASES = [
@@ -68,16 +65,6 @@ function ThinkingIndicator() {
   );
 }
 
-<<<<<<< Updated upstream
-export function ChatWindow({
-  messages,
-  isLoading,
-  showAssistantMessages = true,
-}: ChatWindowProps) {
-  const visibleMessages = showAssistantMessages
-    ? messages
-    : messages.filter((message) => message.role !== 'assistant');
-=======
 /**
  * Replace [N] citation markers with %%CITE:N%% so they survive markdown parsing
  * as plain text without being interpreted as link syntax.
@@ -129,7 +116,16 @@ function processChildren(
   });
 }
 
-export function ChatWindow({ messages, isLoading, onCitationClick }: ChatWindowProps) {
+export function ChatWindow({
+  messages,
+  isLoading,
+  showAssistantMessages = true,
+  onCitationClick,
+}: ChatWindowProps) {
+  const visibleMessages = showAssistantMessages
+    ? messages
+    : messages.filter((message) => message.role !== 'assistant');
+
   // Custom markdown components that expand %%CITE:N%% inside text nodes
   const mdComponents = {
     p: ({ children }: { children?: React.ReactNode }) => (
@@ -139,7 +135,6 @@ export function ChatWindow({ messages, isLoading, onCitationClick }: ChatWindowP
       <li>{processChildren(children, onCitationClick)}</li>
     ),
   };
->>>>>>> Stashed changes
 
   return (
     <div className="p-4 space-y-4">

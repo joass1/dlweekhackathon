@@ -37,8 +37,8 @@ export default function AIAssistantPage() {
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
   const [mode, setMode] = useState<'socratic' | 'content_aware'>('socratic');
-<<<<<<< Updated upstream
   const [selectedAssistantIndex, setSelectedAssistantIndex] = useState<number>(-1);
+  const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
 
   const assistantMessages = useMemo(
     () => messages.filter((m) => m.role === 'assistant'),
@@ -68,9 +68,6 @@ export default function AIAssistantPage() {
 
   const canGoPreviousReply = selectedAssistantIndex > 0;
   const canGoNextReply = selectedAssistantIndex >= 0 && selectedAssistantIndex < assistantMessages.length - 1;
-=======
-  const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
->>>>>>> Stashed changes
 
   useEffect(() => {
     const topic = (searchParams.get('topic') || '').trim();
@@ -147,7 +144,6 @@ export default function AIAssistantPage() {
         aria-hidden
       />
 
-<<<<<<< Updated upstream
       <Split
         className="relative z-10 flex h-screen overflow-hidden bg-transparent"
         sizes={[20, 50, 30]}
@@ -160,19 +156,6 @@ export default function AIAssistantPage() {
             onNoteSelect={(noteId) => {
               // Handle note selection
             }}
-=======
-      {/* Main chat area */}
-      <div className="h-screen flex flex-col">
-        <div className="p-4 border-b bg-[#e0f4fb]">
-          <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
-          <p className="text-sm text-[#03b2e6]">I guide you with questions to help you discover answers yourself</p>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <ChatWindow
-            messages={messages}
-            isLoading={isLoading}
-            onCitationClick={(n) => setHighlightedSourceIndex(n)}
->>>>>>> Stashed changes
           />
         </div>
 
@@ -189,18 +172,19 @@ export default function AIAssistantPage() {
             onGoNext={() =>
               setSelectedAssistantIndex((idx) => Math.min(assistantMessages.length - 1, idx + 1))
             }
+            onCitationClick={(n) => setHighlightedSourceIndex(n)}
           />
 
-        <div className="relative z-10 p-4 border-b border-slate-300/50 bg-[#e0f4fb]/78 backdrop-blur-sm">
-          <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
-          <p className="text-sm font-medium text-sky-900">I guide you with questions to help you discover answers yourself</p>
-        </div>
-        <div className="relative z-10 flex-1" />
-        <div className="relative z-10 p-4 border-t border-slate-300/50 bg-white/78 backdrop-blur-sm">
-          <ChatInput
-            onSendMessage={handleSendMessage}
-            isLoading={isLoading}
-            placeholder="Ask the Socratic Tutor about any concept..."
+          <div className="relative z-10 p-4 border-b border-slate-300/50 bg-[#e0f4fb]/78 backdrop-blur-sm">
+            <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
+            <p className="text-sm font-medium text-sky-900">I guide you with questions to help you discover answers yourself</p>
+          </div>
+          <div className="relative z-10 flex-1" />
+          <div className="relative z-10 p-4 border-t border-slate-300/50 bg-white/78 backdrop-blur-sm">
+            <ChatInput
+              onSendMessage={handleSendMessage}
+              isLoading={isLoading}
+              placeholder="Ask the Socratic Tutor about any concept..."
               scopedTopics={scopedTopics}
               onTopicDrop={handleTopicDrop}
               onTopicRemove={handleTopicRemove}
@@ -210,7 +194,6 @@ export default function AIAssistantPage() {
           </div>
         </div>
 
-<<<<<<< Updated upstream
         {/* Right sidebar */}
         <div className="relative z-10 border-l border-white/20 bg-slate-900/58 h-screen backdrop-blur-sm flex flex-col">
           <div className="flex-1 overflow-y-auto">
@@ -219,6 +202,7 @@ export default function AIAssistantPage() {
               onNoteClick={(note) => {
                 console.log('Note clicked:', note);
               }}
+              highlightedSourceIndex={highlightedSourceIndex}
             />
           </div>
           <div className="border-t border-white/20 bg-slate-950/35 p-3">
@@ -234,16 +218,5 @@ export default function AIAssistantPage() {
         </div>
       </Split>
     </div>
-=======
-      {/* Right sidebar */}
-      <div className="border-l h-screen overflow-y-auto">
-        <NotesContext
-          activeNotes={activeNotes}
-          onNoteClick={(note) => console.log('Note clicked:', note)}
-          highlightedSourceIndex={highlightedSourceIndex}
-        />
-      </div>
-    </Split>
->>>>>>> Stashed changes
   );
 }
