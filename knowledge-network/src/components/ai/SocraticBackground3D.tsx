@@ -1,14 +1,12 @@
 'use client';
 
-import React, { Suspense, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Html, useGLTF } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 
 type CharacterModelProps = {
-  speechText: string;
   isSpeaking: boolean;
-  onCitationClick?: (n: number) => void;
 };
 
 /** Expand [N] citations in a single text segment. */
@@ -52,57 +50,15 @@ function expandSpeechCitations(
   ));
 }
 
-/** Native wheel handler — stops propagation so the bubble scrolls, not the page. */
-function handleWheel(e: WheelEvent) {
-  const el = e.currentTarget as HTMLDivElement;
-  if (!el) return;
-  const { scrollTop, scrollHeight, clientHeight } = el;
-  const atTop = scrollTop <= 0 && e.deltaY < 0;
-  const atBottom = scrollTop + clientHeight >= scrollHeight && e.deltaY > 0;
-  // Only stop propagation when there's room to scroll (or content overflows)
-  if (!atTop && !atBottom) {
-    e.stopPropagation();
-  }
-}
-
-function CharacterModel({
-  speechText,
-  isSpeaking,
-  onCitationClick,
-}: CharacterModelProps) {
+function CharacterModel({ isSpeaking }: CharacterModelProps) {
   const gltf = useGLTF('/models/king.gltf');
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const headPitchRef = useRef(0);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Imperatively attach a non-passive wheel listener so we can call
-  // preventDefault + stopPropagation — guarantees the bubble scrolls
-  // instead of the event leaking to parent/canvas layers.
-  const attachWheelHandler = useCallback((node: HTMLDivElement | null) => {
-    // Detach from previous node
-    if (scrollRef.current) {
-      scrollRef.current.removeEventListener('wheel', handleWheel);
-    }
-    scrollRef.current = node;
-    if (node) {
-      node.addEventListener('wheel', handleWheel, { passive: false });
-    }
-  }, []);
-
-  const bubbleMaxHeight = useMemo(() => {
-    const words = speechText.trim() ? speechText.trim().split(/\s+/).length : 0;
-    const base = 240;
-    // Gradually expand up to +20% (vertical) for longer AI responses.
-    const growth = Math.min(1, words / 120) * 0.2;
-    return Math.round(base * (1 + growth));
-  }, [speechText]);
-
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
 
-    // Normalize model size and center so it is reliably visible in camera.
     const box = new THREE.Box3().setFromObject(fitGroupRef.current);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -121,13 +77,11 @@ function CharacterModel({
     const sway = Math.sin(t * 0.45) * 0.00147;
     const bob = Math.sin(t * 0.65) * 0.001225;
 
-    // Keep idle subtle so the character is mostly stable.
     motionGroupRef.current.position.x = sway;
     motionGroupRef.current.position.y = bob;
     motionGroupRef.current.rotation.y = Math.sin(t * 0.2) * 0.0049;
     motionGroupRef.current.scale.set(breathe, breathe, breathe);
 
-    // Add a light talking nod when speech bubble is visible.
     const targetPitch = isSpeaking ? Math.sin(t * 4.8) * 0.00343 : 0;
     headPitchRef.current += (targetPitch - headPitchRef.current) * Math.min(1, delta * 8);
     motionGroupRef.current.rotation.x = headPitchRef.current;
@@ -140,23 +94,6 @@ function CharacterModel({
           <primitive object={gltf.scene} />
         </group>
       </group>
-      {speechText ? (
-        <Html position={[0.02, 0.63, 0.12]} center style={{ pointerEvents: 'auto' }}>
-          <div
-            className="pointer-events-auto relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm"
-          >
-            <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
-            <div
-              ref={attachWheelHandler}
-              className="overflow-y-auto whitespace-pre-wrap pr-0.5 touch-pan-y"
-              style={{ maxHeight: `${bubbleMaxHeight}px`, overscrollBehavior: 'contain' }}
-              onTouchMove={(e) => e.stopPropagation()}
-            >
-              {expandSpeechCitations(speechText, onCitationClick)}
-            </div>
-          </div>
-        </Html>
-      ) : null}
     </group>
   );
 }
@@ -211,6 +148,13 @@ export default function SocraticBackground3D({
   isSpeaking?: boolean;
   onCitationClick?: (n: number) => void;
 }) {
+  const bubbleMaxHeight = useMemo(() => {
+    const words = speechText.trim() ? speechText.trim().split(/\s+/).length : 0;
+    const base = 240;
+    const growth = Math.min(1, words / 120) * 0.2;
+    return Math.round(base * (1 + growth));
+  }, [speechText]);
+
   return (
     <BackgroundErrorBoundary>
       <div className="absolute inset-0" aria-hidden>
@@ -226,14 +170,25 @@ export default function SocraticBackground3D({
           <AnimatedAccentLight />
 
           <Suspense fallback={null}>
-            <CharacterModel
-              speechText={speechText}
-              isSpeaking={isSpeaking}
-              onCitationClick={onCitationClick}
-            />
+            <CharacterModel isSpeaking={isSpeaking} />
           </Suspense>
         </Canvas>
       </div>
+
+      {/* Speech bubble rendered as plain HTML outside Canvas — no portal issues */}
+      {speechText ? (
+        <div className="absolute left-1/2 top-[18%] -translate-x-1/2 z-10 pointer-events-auto">
+          <div className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm">
+            <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
+            <div
+              className="overflow-y-auto whitespace-pre-wrap pr-0.5"
+              style={{ maxHeight: `${bubbleMaxHeight}px`, overscrollBehavior: 'contain' }}
+            >
+              {expandSpeechCitations(speechText, onCitationClick)}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </BackgroundErrorBoundary>
   );
 }
