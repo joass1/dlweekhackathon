@@ -542,37 +542,85 @@ class AssessmentEngine:
             self._last_quiz_generation_error = "OpenAI client is unavailable."
             return []
 
+        target_concept = kg_context.get("concept", concept)
+        prerequisites = kg_context.get("prerequisites", [])
+        context_summary = kg_context.get("summary", "")
+        mastery = personalization.get("mastery", 0.5)
+
+        # Build a natural-language system prompt for higher quality generation
+        system_prompt = (
+            "You are an expert educator creating personalized multiple-choice quiz questions.\n\n"
+            "RULES:\n"
+            "- Each question must have exactly 4 options with exactly ONE correct answer.\n"
+            "- The correct_answer field must be the FULL TEXT of the correct option (not a letter).\n"
+            "- Write clear, unambiguous question stems. Avoid trick questions.\n"
+            "- Options should be plausible — wrong answers should reflect common misconceptions.\n"
+            "- Explanations should be concise (1-2 sentences) and teach WHY the answer is correct.\n"
+            "- Vary question styles: definitions, applications, comparisons, scenarios, cause-effect.\n"
+            "- Each question must specify which concept it tests in the `concept` field.\n"
+            "- Return ONLY valid JSON. No markdown fences. No extra text.\n"
+        )
+
+        # Build a structured user prompt with all context
+        user_prompt_parts = [
+            f"Generate {num_questions} multiple-choice question(s) about: **{target_concept}**\n",
+        ]
+
+        if context_summary:
+            user_prompt_parts.append(f"Course context:\n{context_summary}\n")
+
+        if prerequisites:
+            user_prompt_parts.append(f"Prerequisite concepts: {', '.join(prerequisites)}")
+
+        # Adaptive difficulty based on student mastery
+        if mastery < 0.3:
+            difficulty_guidance = (
+                "The student is a beginner. Focus on foundational recall and definition questions. "
+                "Use mostly 'easy' difficulty with at most one 'medium' question."
+            )
+        elif mastery < 0.6:
+            difficulty_guidance = (
+                "The student has moderate understanding. Mix 'easy' and 'medium' difficulty. "
+                "Include application-based questions that connect prerequisites to the target concept."
+            )
+        else:
+            difficulty_guidance = (
+                "The student has strong foundations. Focus on 'medium' and 'hard' difficulty. "
+                "Include synthesis questions, edge cases, and questions that require deeper reasoning."
+            )
+
+        user_prompt_parts.append(f"\nDifficulty guidance: {difficulty_guidance}")
+
+        # Personalization from student profile
+        weak_areas = personalization.get("weak_prerequisites", [])
+        if weak_areas:
+            user_prompt_parts.append(
+                f"\nThe student is weak in these prerequisites: {', '.join(weak_areas)}. "
+                "Include questions that reinforce these areas."
+            )
+
+        high_decay = personalization.get("high_decay_concepts", [])
+        if high_decay:
+            user_prompt_parts.append(
+                f"These concepts are decaying: {', '.join(high_decay)}. Include review questions for them."
+            )
+
+        user_prompt_parts.append(
+            f"\nAt least one question must directly test '{target_concept}'."
+        )
+
+        user_prompt_parts.append(
+            '\nReturn JSON in this exact format:\n'
+            '{"questions": [{"concept": "string", "stem": "string", '
+            '"options": ["A", "B", "C", "D"], "correct_answer": "full text of correct option", '
+            '"explanation": "string", "difficulty": "easy|medium|hard"}]}'
+        )
+
         prompt = {
-            "task": "Generate personalized multiple-choice quiz questions",
+            "_system": system_prompt,
+            "_user": "\n".join(user_prompt_parts),
             "constraints": {
                 "count": num_questions,
-                "options_per_question": 4,
-                "one_correct_answer_in_options": True,
-                "include_explanation": True,
-                "difficulty_values": ["easy", "medium", "hard"],
-                "return_only_json": True,
-            },
-            "concept": kg_context.get("concept", concept),
-            "prerequisites": kg_context.get("prerequisites", []),
-            "context_summary": kg_context.get("summary", ""),
-            "student_profile": personalization,
-            "personalization_requirements": [
-                "Prioritize weak prerequisite areas and high-decay concepts.",
-                "Bias difficulty by mastery: low mastery -> easier scaffolded questions.",
-                "Include at least one question directly on target concept.",
-                "For each question include `concept` field indicating which concept is tested.",
-            ],
-            "output_format": {
-                "questions": [
-                    {
-                        "concept": "string",
-                        "stem": "string",
-                        "options": ["string", "string", "string", "string"],
-                        "correct_answer": "string",
-                        "explanation": "string",
-                        "difficulty": "easy|medium|hard",
-                    }
-                ]
             },
         }
 
@@ -588,13 +636,15 @@ class AssessmentEngine:
                 messages = [
                     {
                         "role": "system",
-                        "content": "Return only valid JSON. No markdown. No prose.",
+                        "content": prompt["_system"],
                     },
-                    {"role": "user", "content": json.dumps(prompt)},
+                    {"role": "user", "content": prompt["_user"].replace(
+                        f"Generate {num_questions}", f"Generate {remaining}"
+                    ) if remaining != num_questions else prompt["_user"]},
                 ]
                 try:
                     completion = self.client.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model="gpt-5.2",
                         temperature=0.2,
                         response_format={"type": "json_object"},
                         messages=messages,
@@ -603,7 +653,7 @@ class AssessmentEngine:
                     # Compatibility fallback for SDK/model variants.
                     self._last_quiz_generation_error = f"response_format mode failed: {format_exc}"
                     completion = self.client.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model="gpt-5.2",
                         temperature=0.2,
                         messages=messages,
                     )
@@ -805,7 +855,7 @@ class AssessmentEngine:
         for _ in range(2):
             try:
                 completion = self.client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-5.2",
                     temperature=0,
                     messages=[
                         {

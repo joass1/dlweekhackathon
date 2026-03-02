@@ -439,7 +439,7 @@ async def chat(request: dict, student_id: str = Depends(get_student_id)):
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         context_text = " ".join([ctx["text"] for ctx in unique_context])
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-5.2",
             messages=[
                 {
                     "role": "system",
