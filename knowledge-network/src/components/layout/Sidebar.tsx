@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Users, MessageSquare, ClipboardCheck, LineChart, Upload, Rocket, Home, LogOut, PanelLeftClose } from 'lucide-react';
+import { Users, MessageSquare, ClipboardCheck, Upload, Rocket, Home, LogOut, PanelLeftClose } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 
@@ -28,7 +28,6 @@ export const Sidebar = () => {
     { name: 'Study Missions', path: '/study-mission', icon: Rocket },
     { name: 'Socratic Tutor', path: '/ai-assistant', icon: MessageSquare },
     { name: 'Peer Hubs', path: '/groups', icon: Users },
-    { name: 'Progress', path: '/profile', icon: LineChart },
   ];
 
   return (

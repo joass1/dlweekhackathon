@@ -52,6 +52,7 @@ export default function Page() {
   const [isKGExpanded, setIsKGExpanded] = useState(false);
   const [isNeedsAttentionOpen, setIsNeedsAttentionOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [isCourseProgressOpen, setIsCourseProgressOpen] = useState(false);
   const [showMapLabels, setShowMapLabels] = useState(false);
   const studentId = useStudentId();
   const { user } = useAuth();
@@ -149,6 +150,31 @@ export default function Page() {
   const accuracy = progress?.accuracy ?? 0;
   const accuracyPct = Math.round(accuracy * 100);
   const recentAttempts = progress?.recent_attempts ?? [];
+  const courseProgress = useMemo(() => {
+    const grouped: Record<string, KGNode[]> = {};
+    nodes.forEach((n) => {
+      const key = n.courseId || n.category || 'General';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(n);
+    });
+
+    return Object.entries(grouped)
+      .map(([key, courseNodes]) => {
+        const course = courses.find(c => c.id === key);
+        const masteredCount = courseNodes.filter(n => n.status === 'mastered').length;
+        const weakCountForCourse = courseNodes.filter(n => n.status === 'weak').length;
+        const totalMastery = courseNodes.reduce((sum, n) => sum + n.mastery, 0);
+        const avgMastery = courseNodes.length > 0 ? Math.round(totalMastery / courseNodes.length) : 0;
+        return {
+          name: course?.name || key.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          total: courseNodes.length,
+          mastered: masteredCount,
+          weak: weakCountForCourse,
+          progress: avgMastery,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [nodes, courses]);
 
   const faded = 'opacity-0 pointer-events-none';
   const visible = 'opacity-100';
@@ -164,18 +190,19 @@ export default function Page() {
   );
 
   useEffect(() => {
-    if (!isNeedsAttentionOpen && !isActivityOpen) return;
+    if (!isNeedsAttentionOpen && !isActivityOpen && !isCourseProgressOpen) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsNeedsAttentionOpen(false);
         setIsActivityOpen(false);
+        setIsCourseProgressOpen(false);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isNeedsAttentionOpen, isActivityOpen]);
+  }, [isNeedsAttentionOpen, isActivityOpen, isCourseProgressOpen]);
 
   return (
     <div className="relative p-6 max-w-7xl mx-auto">
@@ -248,24 +275,31 @@ export default function Page() {
         </Card>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
-          <Card className="p-5 rounded-2xl border-green-200/50 bg-white/90 backdrop-blur h-full min-h-[148px]">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
-                {loading ? (
-                  <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
-                ) : (
-                  <>
-                    <p className="text-3xl font-bold mt-2">{masteryRate}%</p>
-                    <p className="text-sm text-muted-foreground mt-1">{mastered} of {total} concepts mastered</p>
-                  </>
-                )}
+          <button
+            type="button"
+            onClick={() => setIsCourseProgressOpen(true)}
+            className="w-full h-full text-left rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Open course mastery progress"
+          >
+            <Card className="p-5 rounded-2xl border-green-200/50 bg-white/90 backdrop-blur h-full min-h-[148px] transition-shadow hover:shadow-md">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
+                  {loading ? (
+                    <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold mt-2">{masteryRate}%</p>
+                      <p className="text-sm text-muted-foreground mt-1">{mastered} of {total} concepts mastered</p>
+                    </>
+                  )}
+                </div>
+                <div className="p-2.5 rounded-xl bg-green-50">
+                  <BookOpen className="h-5 w-5 text-green-500" />
+                </div>
               </div>
-              <div className="p-2.5 rounded-xl bg-green-50">
-                <BookOpen className="h-5 w-5 text-green-500" />
-              </div>
-            </div>
-          </Card>
+            </Card>
+          </button>
 
           <button
             type="button"
@@ -321,9 +355,58 @@ export default function Page() {
         </section>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-8">
+      <section className={`mt-8 space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {progress && progress.self_awareness.total_attempts > 0 && (
+            <Card className="rounded-2xl border-indigo-200/60 bg-white/95 p-5">
+              <h3 className="font-semibold mb-3">Self-Awareness Score</h3>
+              <div className="flex items-center gap-6">
+                <div>
+                  <p className="text-3xl font-bold text-indigo-600">{Math.round(progress.self_awareness.score * 100)}%</p>
+                  <p className="text-xs text-muted-foreground">Confidence calibration</p>
+                </div>
+                <div className="flex-1">
+                  <div className="w-full bg-muted rounded-full h-3">
+                    <div className="bg-indigo-500 h-3 rounded-full" style={{ width: `${progress.self_awareness.score * 100}%` }} />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>Over-confident</span>
+                    <span>Well-calibrated</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-medium">{(progress.self_awareness.calibration_gap * 100).toFixed(0)}% gap</p>
+                  <p className="text-xs text-muted-foreground">{progress.self_awareness.total_attempts} rated</p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {progress && progress.total_attempts > 0 && (
+            <Card className="rounded-2xl border-orange-200/60 bg-white/95 p-5">
+              <h3 className="font-semibold mb-3">Mistake Breakdown</h3>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <p className="text-2xl font-bold text-green-600">{progress.correct_attempts}</p>
+                  <p className="text-xs text-muted-foreground">Correct</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-orange-600">{progress.careless_count}</p>
+                  <p className="text-xs text-muted-foreground">Careless</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-red-600">{progress.conceptual_count}</p>
+                  <p className="text-xs text-muted-foreground">Conceptual</p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-6 mt-8">
         <div
-          className={`group lg:col-span-8 transition-all duration-300 ${
+          className={`group transition-all duration-300 ${
             isKGExpanded ? 'fixed inset-8 z-40' : ''
           }`}
         >
@@ -383,59 +466,6 @@ export default function Page() {
                   showLabels={showMapLabels}
                 />
               )}
-            </div>
-          </Card>
-        </div>
-
-        <div className={`lg:col-span-4 space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
-          <Card className="rounded-2xl border-amber-200/60 bg-white/95">
-            <div className="p-4 border-b bg-amber-50/70">
-              <h3 className="font-semibold">Focus Queue</h3>
-              <p className="text-xs text-muted-foreground mt-1">Lowest mastery concepts first</p>
-            </div>
-            <div className="p-4 space-y-3">
-              {loading ? (
-                <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-                  <span className="mr-2 inline-flex"><BounceLoader size={18} /></span>
-                  Building queue...
-                </div>
-              ) : attentionConcepts.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">No concepts currently need attention.</p>
-              ) : (
-                attentionConcepts.slice(0, 5).map((concept) => (
-                  <div key={concept.id} className="rounded-xl border border-amber-100 p-3 bg-white">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium leading-snug">{concept.title}</p>
-                      <span className="text-xs text-muted-foreground">{concept.mastery}%</span>
-                    </div>
-                    <div className="w-full bg-muted rounded-full h-1.5 mt-2">
-                      <div
-                        className={`h-1.5 rounded-full ${
-                          concept.mastery >= 70 ? 'bg-green-500' : concept.mastery >= 40 ? 'bg-yellow-500' : 'bg-red-500'
-                        }`}
-                        style={{ width: `${concept.mastery}%` }}
-                      />
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
-
-          <Card className="rounded-2xl border-cyan-200/60 bg-white/95">
-            <div className="p-4 border-b bg-cyan-50/70">
-              <h3 className="font-semibold">Quick Actions</h3>
-            </div>
-            <div className="p-4 space-y-2">
-              <Link href="/study-mission" className="block w-full p-3 bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] text-center text-sm font-medium transition-colors">
-                Start Study Mission
-              </Link>
-              <Link href="/assessment" className="block w-full p-3 border border-border rounded-full hover:bg-accent text-center text-sm font-medium transition-colors">
-                Take an Assessment
-              </Link>
-              <Link href="/upload" className="block w-full p-3 border border-[#03b2e6] text-[#03b2e6] rounded-full hover:bg-[#03b2e6]/5 text-center text-sm font-medium transition-colors">
-                Upload Materials
-              </Link>
             </div>
           </Card>
         </div>
@@ -559,6 +589,67 @@ export default function Page() {
                       <span className={`text-xs ${attempt.is_correct ? 'text-green-600' : 'text-red-600'}`}>
                         {attempt.is_correct ? 'Correct' : 'Incorrect'}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCourseProgressOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setIsCourseProgressOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Knowledge graph progress by course"
+            className="w-full max-w-2xl max-h-[80vh] bg-card rounded-xl shadow-xl border overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Knowledge Graph Progress By Course</h3>
+                <p className="text-sm text-muted-foreground">Course-level mastery breakdown</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCourseProgressOpen(false)}
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                aria-label="Close course progress"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
+              {loading ? (
+                <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                  <span className="mr-2 inline-flex"><BounceLoader size={18} /></span>
+                  Loading course progress...
+                </div>
+              ) : courseProgress.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">No course data yet. Upload materials to get started.</p>
+              ) : (
+                <div className="space-y-3">
+                  {courseProgress.map((course, index) => (
+                    <div key={index} className="rounded-xl border border-cyan-100 p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <h4 className="font-medium">{course.name}</h4>
+                          <p className="text-xs text-muted-foreground">{course.total} concepts</p>
+                        </div>
+                        <p className="font-semibold">{course.progress}%</p>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2 mb-2">
+                        <div className="bg-[#03b2e6] h-2 rounded-full" style={{ width: `${course.progress}%` }} />
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-green-600">{course.mastered} mastered</span>
+                        <span className="text-red-600">{course.weak} weak</span>
+                      </div>
                     </div>
                   ))}
                 </div>
