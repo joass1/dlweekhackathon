@@ -23,6 +23,7 @@ export default function AssessmentTakePage() {
   const searchParams = useSearchParams();
   const subjectId = params.subjectId as string;
   const retryKey = searchParams.get('retry') || '';
+  const courseId = searchParams.get('courseId') || '';
 
   const [questions, setQuestions] = useState<QuizQuestionClient[]>([]);
   const [answers, setAnswers] = useState<AnswersMap>({});
@@ -76,7 +77,7 @@ export default function AssessmentTakePage() {
     return () => {
       cancelled = true;
     };
-  }, [studentId, subjectId, retryKey, getIdToken]);
+  }, [studentId, subjectId, retryKey, courseId, getIdToken]);
 
   const handleAnswer = (questionId: string, answerIndex: number) => {
     setAnswers((prev) => ({
