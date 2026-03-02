@@ -1,14 +1,12 @@
 'use client';
 
-import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useAnimations, useFBX, useGLTF } from '@react-three/drei';
+import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 
 function BossModel({ healthCurrent, healthMax }: { healthCurrent: number; healthMax: number }) {
   const gltf = useGLTF('/models/spacesuit.gltf');
-  const horseHead = useFBX('/models/horse_head.fbx') as THREE.Group;
-  const horseHeadClone = useMemo(() => horseHead.clone(true), [horseHead]);
   const { actions } = useAnimations(gltf.animations, gltf.scene);
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
@@ -17,13 +15,16 @@ function BossModel({ healthCurrent, healthMax }: { healthCurrent: number; health
 
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
-    const box = new THREE.Box3().setFromObject(fitGroupRef.current);
+    // Fit against the base spacesuit model so head-swaps do not throw off framing.
+    const box = new THREE.Box3().setFromObject(gltf.scene);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    const scale = 2.5 / maxDim;
+    // 20% bigger than the previous stable size.
+    const scale = 3.48 / maxDim;
     fitGroupRef.current.scale.setScalar(scale);
-    fitGroupRef.current.position.set(-center.x * scale, -center.y * scale - 1.65, -1.2);
+    // Move the whole boss upward by ~20%.
+    fitGroupRef.current.position.set(-center.x * scale, -center.y * scale - 1.04, -0.8);
   }, [gltf]);
 
   useEffect(() => {
@@ -92,16 +93,12 @@ function BossModel({ healthCurrent, healthMax }: { healthCurrent: number; health
     <group ref={motionGroupRef}>
       <group ref={fitGroupRef}>
         <primitive object={gltf.scene} />
-        <group position={[0, 1.55, 0.08]} rotation={[0, Math.PI, 0]} scale={[0.012, 0.012, 0.012]}>
-          <primitive object={horseHeadClone} />
-        </group>
       </group>
     </group>
   );
 }
 
 useGLTF.preload('/models/spacesuit.gltf');
-useFBX.preload('/models/horse_head.fbx');
 
 export default function BossBattleScene3D({
   healthCurrent,
@@ -111,8 +108,8 @@ export default function BossBattleScene3D({
   healthMax: number;
 }) {
   return (
-    <div className="h-44 w-full rounded-xl overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 border border-red-300/30">
-      <Canvas dpr={[1, 1.5]} gl={{ alpha: true }} camera={{ position: [0, 0.6, 5.2], fov: 35 }}>
+    <div className="h-72 w-full rounded-xl overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 border border-red-300/30">
+      <Canvas dpr={[1, 1.5]} gl={{ alpha: true }} camera={{ position: [0, 0.35, 4.6], fov: 33 }}>
         <ambientLight intensity={0.9} />
         <directionalLight position={[4, 5, 4]} intensity={1.25} />
         <directionalLight position={[-4, 2, -2]} intensity={0.55} color="#ff6b6b" />

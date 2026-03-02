@@ -386,41 +386,43 @@ export default function PeerSessionPage() {
         </div>
       </div>
 
-      <Card className="overflow-hidden">
-        <CardContent className="p-4 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-red-700/80 font-semibold">Boss Battle</p>
-              <p className="text-sm font-medium">
-                {session.boss_name || 'Knowledge Warden'} {session.boss_defeated ? 'Defeated' : 'Engaged'}
-              </p>
-            </div>
-            <p className="text-sm font-semibold">
-              {Math.round(bossCurrent)} / {Math.round(bossMax)} HP
-            </p>
-          </div>
-          <div className="h-3 w-full rounded-full bg-red-100 border border-red-200 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-500 ${session.boss_defeated ? 'bg-emerald-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`}
-              style={{ width: `${bossPct}%` }}
-            />
-          </div>
-          <BossBattleScene3D healthCurrent={bossCurrent} healthMax={bossMax} />
-        </CardContent>
-      </Card>
-
-      {/* Two-column layout: Video | Question */}
+      {/* Two-column layout: (Boss + Video) | Question */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Video panel */}
-        <Card className="overflow-hidden">
-          <CardContent className="p-3">
-            <WebRTCVideo
-              sessionId={session.session_id}
-              studentId={studentId}
-              members={session.members}
-            />
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <Card className="overflow-hidden">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-red-700/80 font-semibold">Boss Battle</p>
+                  <p className="text-sm font-medium">
+                    {session.boss_name || 'Knowledge Warden'} {session.boss_defeated ? 'Defeated' : 'Engaged'}
+                  </p>
+                </div>
+                <p className="text-sm font-semibold">
+                  {Math.round(bossCurrent)} / {Math.round(bossMax)} HP
+                </p>
+              </div>
+              <div className="h-3 w-full rounded-full bg-red-100 border border-red-200 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 ${session.boss_defeated ? 'bg-emerald-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`}
+                  style={{ width: `${bossPct}%` }}
+                />
+              </div>
+              <BossBattleScene3D healthCurrent={bossCurrent} healthMax={bossMax} />
+            </CardContent>
+          </Card>
+
+          {/* Video panel */}
+          <Card className="overflow-hidden">
+            <CardContent className="p-3">
+              <WebRTCVideo
+                sessionId={session.session_id}
+                studentId={studentId}
+                members={session.members}
+              />
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Question panel */}
         <div className="space-y-4">
