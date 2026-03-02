@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, Loader2, Target, Maximize2, Minimize2 } from 'lucide-react';
+import { BookOpen, AlertTriangle, Loader2, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { useStudentId } from '@/hooks/useStudentId';
@@ -49,6 +49,9 @@ export default function Page() {
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [selectedCourse, setSelectedCourse] = useState('all');
   const [isKGExpanded, setIsKGExpanded] = useState(false);
+  const [isNeedsAttentionOpen, setIsNeedsAttentionOpen] = useState(false);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [showMapLabels, setShowMapLabels] = useState(false);
   const studentId = useStudentId();
   const { user } = useAuth();
   const { setIsCollapsed } = useSidebar();
@@ -132,105 +135,175 @@ export default function Page() {
   const weakCount = kgStats?.weak ?? nodes.filter(n => n.status === 'weak').length;
   const learningCount = kgStats?.learning ?? nodes.filter(n => n.status === 'learning').length;
 
-  const weakConcepts = nodes.filter(n => n.status === 'weak' || n.status === 'learning')
-    .sort((a, b) => a.mastery - b.mastery)
-    .slice(0, 5);
+  const attentionConcepts = useMemo(
+    () => nodes
+      .filter(n => n.status === 'weak' || n.status === 'learning')
+      .sort((a, b) => a.mastery - b.mastery),
+    [nodes]
+  );
 
-  const priorityConcepts = weakConcepts.map(n => ({
-    name: n.title,
-    mastery: n.mastery,
-    status: n.status as 'weak' | 'learning',
-    decayDays: n.decayTimestamp
-      ? Math.max(0, Math.round((new Date(n.decayTimestamp).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-      : 99,
-  }));
-
+  const attentionTotal = weakCount + learningCount;
+  const nextFocusConcept = attentionConcepts[0];
   const totalAttempts = progress?.total_attempts ?? 0;
   const accuracy = progress?.accuracy ?? 0;
+  const recentAttempts = progress?.recent_attempts ?? [];
 
   const faded = 'opacity-0 pointer-events-none';
   const visible = 'opacity-100';
 
+  useEffect(() => {
+    if (!isNeedsAttentionOpen && !isActivityOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsNeedsAttentionOpen(false);
+        setIsActivityOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isNeedsAttentionOpen, isActivityOpen]);
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Welcome Section */}
-      <div className={`mb-8 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
-        <h1 className="text-3xl font-bold">Welcome back, {displayName}</h1>
-        <p className="text-muted-foreground mt-1">Here&apos;s your learning overview</p>
+    <div className="p-6 max-w-7xl mx-auto relative">
+      <div className={`space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
+        <section>
+          <h1 className="text-3xl font-bold">Welcome back, {displayName}</h1>
+          <p className="text-muted-foreground mt-1">Here&apos;s your learning overview</p>
+        </section>
+
+        <Card className="border-[#03b2e6]/30 bg-gradient-to-r from-[#03b2e6]/10 via-card to-card">
+          <div className="p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#0289b9] flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5" /> Next Best Action
+              </p>
+              {loading ? (
+                <div className="flex items-center text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Preparing your focus queue...
+                </div>
+              ) : attentionTotal === 0 ? (
+                <p className="text-lg font-semibold">You&apos;re on track. Keep momentum with a study mission.</p>
+              ) : (
+                <p className="text-lg font-semibold">
+                  Review {nextFocusConcept?.title ?? `${attentionTotal} concepts`} first, then clear the remaining focus queue.
+                </p>
+              )}
+              {!loading && attentionTotal > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {weakCount} weak and {learningCount} learning concepts currently need attention.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setIsNeedsAttentionOpen(true)}
+                className="px-4 py-2 text-sm rounded-full border hover:bg-accent transition-colors"
+              >
+                View Attention List
+              </button>
+              <Link
+                href="/study-mission"
+                className="px-4 py-2 text-sm rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] transition-colors inline-flex items-center gap-1.5"
+              >
+                Start Study Mission
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+        </Card>
+
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
+          <Card className="p-5 h-full min-h-[140px]">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
+                {loading ? (
+                  <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
+                ) : (
+                  <>
+                    <p className="text-3xl font-bold mt-2">{masteryRate}%</p>
+                    <p className="text-sm text-muted-foreground mt-1">{mastered} of {total} concepts mastered</p>
+                  </>
+                )}
+              </div>
+              <div className="p-2.5 rounded-xl bg-green-50">
+                <BookOpen className="h-5 w-5 text-green-500" />
+              </div>
+            </div>
+          </Card>
+
+          <button
+            type="button"
+            onClick={() => setIsNeedsAttentionOpen(true)}
+            className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Open needs attention details"
+          >
+            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Needs Attention</p>
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold mt-2 text-yellow-600">{attentionTotal}</p>
+                      <p className="text-sm text-muted-foreground mt-1">{weakCount} weak &middot; {learningCount} learning</p>
+                    </>
+                  )}
+                </div>
+                <div className="p-2.5 rounded-xl bg-yellow-50">
+                  <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                </div>
+              </div>
+            </Card>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsActivityOpen(true)}
+            className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Open activity history"
+          >
+            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Activity</p>
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold mt-2">{totalAttempts}</p>
+                      <p className="text-sm text-muted-foreground mt-1">{Math.round(accuracy * 100)}% accuracy</p>
+                    </>
+                  )}
+                </div>
+                <div className="p-2.5 rounded-xl bg-blue-50">
+                  <Target className="h-5 w-5 text-blue-500" />
+                </div>
+              </div>
+            </Card>
+          </button>
+        </section>
       </div>
 
-      {/* Stats Row — 3 key metrics */}
-      <div className={`grid grid-cols-1 md:grid-cols-3 gap-5 mb-8 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
-        <Card className="p-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
-              ) : (
-                <>
-                  <p className="text-3xl font-bold mt-2">{masteryRate}%</p>
-                  <p className="text-sm text-muted-foreground mt-1">{mastered} of {total} concepts mastered</p>
-                </>
-              )}
-            </div>
-            <div className="p-2.5 rounded-xl bg-green-50">
-              <BookOpen className="h-5 w-5 text-green-500" />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Needs Attention</p>
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
-              ) : (
-                <>
-                  <p className="text-3xl font-bold mt-2 text-yellow-600">{weakCount + learningCount}</p>
-                  <p className="text-sm text-muted-foreground mt-1">{weakCount} weak &middot; {learningCount} learning</p>
-                </>
-              )}
-            </div>
-            <div className="p-2.5 rounded-xl bg-yellow-50">
-              <AlertTriangle className="h-5 w-5 text-yellow-500" />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Activity</p>
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
-              ) : (
-                <>
-                  <p className="text-3xl font-bold mt-2">{totalAttempts}</p>
-                  <p className="text-sm text-muted-foreground mt-1">{Math.round(accuracy * 100)}% accuracy</p>
-                </>
-              )}
-            </div>
-            <div className="p-2.5 rounded-xl bg-blue-50">
-              <Target className="h-5 w-5 text-blue-500" />
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* Knowledge Map — expands to fixed viewport card */}
+      <div className="grid grid-cols-1 gap-6 mt-8">
         <div
-          className={`group lg:col-span-3 transition-all duration-300 ${
+          className={`group transition-all duration-300 ${
             isKGExpanded ? 'fixed inset-8 z-40' : ''
           }`}
         >
           <Card className="overflow-hidden h-full flex flex-col">
-            <div className="p-4 border-b flex justify-between items-center">
-              <h3 className="font-semibold">Knowledge Map</h3>
-              <div className="flex items-center gap-3">
+            <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Knowledge Map</h3>
+                <p className="text-xs text-muted-foreground mt-1">Use labels toggle for a cleaner map when many topics are present.</p>
+              </div>
+              <div className="flex items-center gap-2">
                 <select
                   value={selectedCourse}
                   onChange={e => setSelectedCourse(e.target.value)}
@@ -241,8 +314,15 @@ export default function Page() {
                   ))}
                 </select>
                 <button
+                  type="button"
+                  onClick={() => setShowMapLabels(prev => !prev)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border hover:bg-accent transition-colors"
+                >
+                  {showMapLabels ? 'Hide Labels' : 'Show Labels'}
+                </button>
+                <button
                   onClick={toggleKG}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 rounded hover:bg-accent text-muted-foreground"
+                  className="p-1 rounded hover:bg-accent text-muted-foreground"
                   title={isKGExpanded ? 'Collapse' : 'Expand'}
                   aria-label={isKGExpanded ? 'Collapse knowledge map' : 'Expand knowledge map'}
                 >
@@ -253,7 +333,7 @@ export default function Page() {
                 </button>
               </div>
             </div>
-            <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[380px]'}`}>
+            <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[680px]'}`}>
               {loading ? (
                 <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
                   <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading knowledge graph...
@@ -270,90 +350,141 @@ export default function Page() {
                     category: n.category ?? 'General',
                   }))}
                   links={filteredLinks}
+                  showLabels={showMapLabels}
                 />
               )}
             </div>
           </Card>
         </div>
 
-        {/* Right Column — fades out when KG is expanded */}
-        <div className={`lg:col-span-2 space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
-          {/* Priority Concepts */}
-          <Card>
-            <div className="p-4 border-b">
-              <h3 className="font-semibold">Priority Concepts</h3>
-              <p className="text-xs text-muted-foreground">Ranked by gap severity</p>
+      </div>
+
+      {isNeedsAttentionOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setIsNeedsAttentionOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Needs attention details"
+            className="w-full max-w-2xl max-h-[80vh] bg-card rounded-xl shadow-xl border overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Needs Attention</h3>
+                <p className="text-sm text-muted-foreground">Concepts that are weak or still learning</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNeedsAttentionOpen(false)}
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                aria-label="Close needs attention details"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <div className="p-4 space-y-3">
+
+            <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
-                <div className="text-center py-4"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>
-              ) : priorityConcepts.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">No concepts to review. Upload materials to get started!</p>
+                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  Loading concepts...
+                </div>
+              ) : attentionConcepts.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No concepts currently need attention.</p>
               ) : (
-                priorityConcepts.map((concept, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                      concept.status === 'weak' ? 'bg-red-500' : 'bg-yellow-500'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{concept.name}</p>
-                      <div className="w-full bg-muted rounded-full h-1.5 mt-1">
-                        <div className={`h-1.5 rounded-full ${
-                          concept.mastery >= 70 ? 'bg-green-500' : concept.mastery >= 40 ? 'bg-yellow-500' : 'bg-red-500'
-                        }`} style={{ width: `${concept.mastery}%` }} />
+                <div className="space-y-3">
+                  {attentionConcepts.map((concept) => (
+                    <div key={concept.id} className="border rounded-lg p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="font-medium">{concept.title}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          concept.status === 'weak' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                        }`}>
+                          {concept.status === 'weak' ? 'Weak' : 'Learning'}
+                        </span>
+                      </div>
+                      <div className="mt-2">
+                        <div className="w-full bg-muted rounded-full h-1.5">
+                          <div
+                            className={`h-1.5 rounded-full ${
+                              concept.mastery >= 70 ? 'bg-green-500' : concept.mastery >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${concept.mastery}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">Mastery: {concept.mastery}%</p>
                       </div>
                     </div>
-                    <span className="text-xs text-muted-foreground flex-shrink-0">{concept.mastery}%</span>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
-          </Card>
-
-          {/* Recent Activity */}
-          {progress && progress.recent_attempts.length > 0 && (
-            <Card>
-              <div className="p-4 border-b">
-                <h3 className="font-semibold">Recent Activity</h3>
-              </div>
-              <div className="p-4 space-y-2">
-                {progress.recent_attempts.slice(-5).reverse().map((attempt, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm">
-                    <span className={`w-2 h-2 rounded-full ${attempt.is_correct ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="flex-1 truncate">{attempt.concept || 'Assessment'}</span>
-                    {attempt.mistake_type && attempt.mistake_type !== 'normal' && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                        attempt.mistake_type === 'careless' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'
-                      }`}>{attempt.mistake_type}</span>
-                    )}
-                    <span className={`text-xs ${attempt.is_correct ? 'text-green-600' : 'text-red-600'}`}>
-                      {attempt.is_correct ? 'Correct' : 'Incorrect'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {/* Quick Actions */}
-          <Card>
-            <div className="p-4 border-b">
-              <h3 className="font-semibold">Quick Actions</h3>
-            </div>
-            <div className="p-4 space-y-2">
-              <Link href="/study-mission" className="block w-full p-3 bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] text-center text-sm font-medium transition-colors">
-                Start Study Mission
-              </Link>
-              <Link href="/upload" className="block w-full p-3 border border-[#03b2e6] text-[#03b2e6] rounded-full hover:bg-[#03b2e6]/5 text-center text-sm font-medium transition-colors">
-                Upload Course Materials
-              </Link>
-              <Link href="/assessment" className="block w-full p-3 border rounded-full hover:bg-accent text-center text-sm font-medium transition-colors">
-                Take an Assessment
-              </Link>
-            </div>
-          </Card>
+          </div>
         </div>
-      </div>
+      )}
+
+      {isActivityOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setIsActivityOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Recent activity history"
+            className="w-full max-w-2xl max-h-[80vh] bg-card rounded-xl shadow-xl border overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Recent Activity</h3>
+                <p className="text-sm text-muted-foreground">Your latest assessment outcomes</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsActivityOpen(false)}
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                aria-label="Close activity history"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
+              {loading ? (
+                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  Loading activity...
+                </div>
+              ) : recentAttempts.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No activity yet. Take an assessment to generate history.</p>
+              ) : (
+                <div className="space-y-2">
+                  {recentAttempts.slice(-12).reverse().map((attempt, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm border rounded-lg p-3">
+                      <span className={`w-2 h-2 rounded-full ${attempt.is_correct ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className="flex-1 truncate">{attempt.concept || 'Assessment'}</span>
+                      {attempt.mistake_type && attempt.mistake_type !== 'normal' && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                          attempt.mistake_type === 'careless' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'
+                        }`}>
+                          {attempt.mistake_type}
+                        </span>
+                      )}
+                      <span className={`text-xs ${attempt.is_correct ? 'text-green-600' : 'text-red-600'}`}>
+                        {attempt.is_correct ? 'Correct' : 'Incorrect'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

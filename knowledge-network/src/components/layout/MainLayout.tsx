@@ -30,7 +30,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden overscroll-none">
       {/* Sidebar container — clips and animates width to slide in/out */}
       <div
         className={`flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${
@@ -51,7 +51,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
       </button>
 
-      <main className="flex-1 overflow-auto min-w-0">
+      <main className="flex-1 min-w-0 h-full overflow-y-auto overscroll-contain">
         {children}
       </main>
     </div>
