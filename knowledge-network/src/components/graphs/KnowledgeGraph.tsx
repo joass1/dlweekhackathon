@@ -161,12 +161,14 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     // Tooltip
     const tooltip = d3.select('body').append('div')
       .style('position', 'absolute')
-      .style('background', 'white')
-      .style('border', '1px solid #e5e7eb')
+      .style('background', 'rgba(15, 23, 42, 0.85)')
+      .style('backdrop-filter', 'blur(4px)')
+      .style('border', '1px solid rgba(255,255,255,0.15)')
       .style('border-radius', '8px')
       .style('padding', '8px 12px')
       .style('font-size', '12px')
-      .style('box-shadow', '0 4px 6px rgba(0,0,0,0.1)')
+      .style('color', 'rgba(255,255,255,0.9)')
+      .style('box-shadow', '0 4px 12px rgba(0,0,0,0.3)')
       .style('pointer-events', 'none')
       .style('opacity', 0)
       .style('z-index', '1000');
@@ -261,24 +263,24 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
 
       {selectedNode && (
         <div
-          className="absolute inset-0 z-20 bg-black/30 flex items-center justify-center p-4"
+          className="absolute inset-0 z-20 bg-black/40 flex items-center justify-center p-4"
           onClick={() => setSelectedNode(null)}
         >
           <div
-            className="w-full max-w-md rounded-xl bg-white border border-gray-200 shadow-xl p-5"
+            className="w-full max-w-md rounded-xl bg-slate-900/80 backdrop-blur-sm border border-white/20 shadow-xl p-5 text-white"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-wide text-gray-500">Selected Topic</p>
-                <h3 className="text-lg font-semibold text-gray-900">{selectedNode.title}</h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-xs uppercase tracking-wide text-white/50">Selected Topic</p>
+                <h3 className="text-lg font-semibold text-white">{selectedNode.title}</h3>
+                <p className="text-sm text-white/60 mt-1">
                   Mastery {selectedNode.mastery}% • {selectedNode.status.replace('_', ' ')}
                 </p>
               </div>
               <button
                 type="button"
-                className="text-gray-400 hover:text-gray-600"
+                className="text-white/40 hover:text-white/80 transition-colors"
                 onClick={() => setSelectedNode(null)}
                 aria-label="Close"
               >
@@ -289,7 +291,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
             <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
-                className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
+                className="rounded-lg border border-violet-400/30 bg-violet-500/20 px-3 py-2 text-sm font-medium text-violet-300 hover:bg-violet-500/30 transition-colors"
                 onClick={() => {
                   const params = new URLSearchParams({
                     topic: selectedNode.title,
@@ -303,7 +305,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+                className="rounded-lg border border-emerald-400/30 bg-emerald-500/20 px-3 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-500/30 transition-colors"
                 onClick={() => {
                   const params = new URLSearchParams({
                     topic: selectedNode.title,
@@ -317,7 +319,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                className="rounded-lg border border-sky-400/30 bg-sky-500/20 px-3 py-2 text-sm font-medium text-sky-300 hover:bg-sky-500/30 transition-colors"
                 onClick={() => {
                   const params = new URLSearchParams({
                     topic: selectedNode.title,
