@@ -4,12 +4,14 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Users, MessageSquare, ClipboardCheck, LineChart, Upload, Rocket, Home, LogOut } from 'lucide-react';
+import { Users, MessageSquare, ClipboardCheck, LineChart, Upload, Rocket, Home, LogOut, PanelLeftClose } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSidebar } from '@/contexts/SidebarContext';
 
 export const Sidebar = () => {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
+  const { toggle } = useSidebar();
 
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'Student';
   const initials = displayName
@@ -33,7 +35,7 @@ export const Sidebar = () => {
     <div className="w-64 h-screen bg-slate-100 p-6 flex flex-col">
       {/* Brand */}
       <div className="mb-8">
-        <div className="mb-4">
+        <div className="mb-4 flex items-start justify-between">
           <Image
             src="/logo-images/logo.png"
             alt="Mentora"
@@ -42,6 +44,13 @@ export const Sidebar = () => {
             className="h-16 w-auto"
             priority
           />
+          <button
+            onClick={toggle}
+            className="mt-1 flex-shrink-0 p-1 rounded hover:bg-accent text-muted-foreground transition-colors"
+            aria-label="Collapse sidebar"
+          >
+            <PanelLeftClose className="w-4 h-4" />
+          </button>
         </div>
         {user?.photoURL ? (
           <img
