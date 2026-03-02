@@ -102,40 +102,6 @@ export default function AssessmentSelectionPage() {
             runs.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
           }
         }
-
-        // Final fallback: recover from browser session cache.
-        if (!runs.length && typeof window !== 'undefined') {
-          const fromSession: AssessmentHistoryRun[] = [];
-          for (let i = 0; i < window.sessionStorage.length; i += 1) {
-            const key = window.sessionStorage.key(i);
-            if (!key || !key.startsWith('assessment_result_')) continue;
-            try {
-              const raw = window.sessionStorage.getItem(key);
-              if (!raw) continue;
-              const parsed = JSON.parse(raw);
-              const concept = String(parsed?.subjectId || key.replace('assessment_result_', '') || 'unknown');
-              const score = Number(parsed?.evaluation?.score || 0);
-              const perQ = Array.isArray(parsed?.evaluation?.per_question) ? parsed.evaluation.per_question : [];
-              const correct = perQ.filter((p: any) => !!p?.is_correct).length;
-              fromSession.push({
-                run_id: `session-${concept}-${i}`,
-                student_id: studentId,
-                concept,
-                submitted_at: new Date().toISOString(),
-                score,
-                correct_count: correct,
-                total_questions: perQ.length,
-                blind_spot_found_count: Number(parsed?.classification?.blind_spot_found_count || 0),
-                blind_spot_resolved_count: Number(parsed?.classification?.blind_spot_resolved_count || 0),
-                questions: [],
-              });
-            } catch {
-              // Ignore malformed cache entries.
-            }
-          }
-          runs = fromSession;
-        }
-
         if (!cancelled) {
           setPastRuns(runs);
         }
