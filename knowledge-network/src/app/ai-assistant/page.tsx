@@ -14,6 +14,7 @@ interface Message {
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
+  context?: ContextItem[];  // assistant messages only: sources cited in this response
 }
 
 interface ContextItem {
@@ -216,13 +217,16 @@ export default function AIAssistantPage() {
       }
 
       const { answer, context } = await response.json();
-      setActiveNotes(context ?? []);
+      const freshContext: ContextItem[] = context ?? [];
+      // Each response resets the sources panel to its own 1-based citations
+      setActiveNotes(freshContext);
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         content: answer,
         role: 'assistant',
         timestamp: new Date(),
+        context: freshContext,  // store per-message so citation clicks can restore the right sources
       };
       setMessages(prev => [...prev, assistantMessage]);
 
@@ -277,7 +281,14 @@ export default function AIAssistantPage() {
           <SocraticBackground3D
             speechText={selectedAssistantSpeech}
             isSpeaking={isLoading || Boolean(selectedAssistantSpeech)}
-            onCitationClick={(n) => setHighlightedSourceIndex(n)}
+            onCitationClick={(n, sectionIdx) => {
+              // sectionIdx 0 = initial prompt (no sources); sectionIdx i≥1 = assistantMessages[i-1]
+              if (sectionIdx > 0) {
+                const msg = assistantMessages[sectionIdx - 1];
+                if (msg?.context) setActiveNotes(msg.context);
+              }
+              setHighlightedSourceIndex(n);
+            }}
           />
 
           <div className="relative z-10 p-4 border-b border-slate-300/50 bg-[#e0f4fb]/78 backdrop-blur-sm">
