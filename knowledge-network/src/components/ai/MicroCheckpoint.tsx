@@ -57,16 +57,16 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
     ['', 'Very unsure', 'Unsure', 'Neutral', 'Confident', 'Very confident'][v] ?? '';
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 w-[380px] rounded-xl border border-white/30 bg-slate-900/92 shadow-2xl backdrop-blur-md animate-slide-up">
+    <div className="fixed bottom-6 right-6 z-50 w-[380px] rounded-xl border border-slate-200 bg-white shadow-lg animate-slide-up">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white">?</span>
-          <span className="text-xs font-semibold uppercase tracking-widest text-sky-300">Quick Check</span>
+          <span className="text-xs font-semibold uppercase tracking-widest text-sky-600">Quick Check</span>
         </div>
         <button
           onClick={onSkip}
-          className="text-white/40 hover:text-white/80 transition-colors text-lg leading-none"
+          className="text-slate-400 hover:text-slate-700 transition-colors text-lg leading-none"
           aria-label="Skip checkpoint"
         >
           ×
@@ -77,12 +77,12 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
         {phase === 'question' ? (
           <>
             {/* Concept chip */}
-            <span className="inline-block rounded-full bg-sky-900/60 px-2.5 py-0.5 text-[11px] font-medium text-sky-300">
+            <span className="inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-medium text-sky-700">
               {checkpoint.concept_tested}
             </span>
 
             {/* Question */}
-            <p className="text-sm font-medium text-white leading-snug">{checkpoint.question}</p>
+            <p className="text-sm font-medium text-slate-800 leading-snug">{checkpoint.question}</p>
 
             {/* Options */}
             <div className="space-y-1.5">
@@ -92,8 +92,8 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
                   onClick={() => setSelected(opt)}
                   className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition-all ${
                     selected === opt
-                      ? 'border-sky-400 bg-sky-900/60 text-white'
-                      : 'border-white/10 bg-white/5 text-white/80 hover:border-white/30 hover:bg-white/10'
+                      ? 'border-sky-400 bg-sky-50 text-sky-900'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50'
                   }`}
                 >
                   {opt}
@@ -104,8 +104,8 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
             {/* Confidence slider */}
             <div className="pt-1">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] text-white/50">Confidence</span>
-                <span className="text-[11px] text-sky-300 font-medium">{confidenceLabel(confidence)}</span>
+                <span className="text-[11px] text-slate-500">Confidence</span>
+                <span className="text-[11px] text-sky-600 font-medium">{confidenceLabel(confidence)}</span>
               </div>
               <input
                 type="range"
@@ -113,7 +113,7 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
                 max={5}
                 value={confidence}
                 onChange={(e) => setConfidence(Number(e.target.value))}
-                className="w-full accent-sky-400"
+                className="w-full accent-sky-500"
               />
             </div>
 
@@ -121,7 +121,7 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
             <div className="flex gap-2 pt-1">
               <button
                 onClick={onSkip}
-                className="flex-1 rounded-lg border border-white/10 bg-white/5 py-2 text-sm text-white/60 hover:bg-white/10 transition-colors"
+                className="flex-1 rounded-lg border border-slate-200 bg-white py-2 text-sm text-slate-500 hover:bg-slate-50 transition-colors"
               >
                 Skip
               </button>
@@ -137,17 +137,17 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
         ) : (
           /* Result phase */
           <div className="space-y-3 py-1">
-            <div className={`flex items-center gap-2 ${isCorrect ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <div className={`flex items-center gap-2 ${isCorrect ? 'text-emerald-600' : 'text-rose-600'}`}>
               <span className="text-xl">{isCorrect ? '✓' : '✗'}</span>
               <span className="font-semibold text-sm">{isCorrect ? 'Correct!' : 'Not quite.'}</span>
             </div>
             {!isCorrect && (
-              <p className="text-xs text-white/60">
-                Correct answer: <span className="text-white/90 font-medium">{checkpoint.correct_answer}</span>
+              <p className="text-xs text-slate-500">
+                Correct answer: <span className="text-slate-800 font-medium">{checkpoint.correct_answer}</span>
               </p>
             )}
-            <p className="text-xs text-white/60 leading-relaxed">{checkpoint.explanation}</p>
-            <p className="text-[11px] text-white/30">Closing in {countdown}s…</p>
+            <p className="text-xs text-slate-500 leading-relaxed">{checkpoint.explanation}</p>
+            <p className="text-[11px] text-slate-400">Closing in {countdown}s…</p>
           </div>
         )}
       </div>

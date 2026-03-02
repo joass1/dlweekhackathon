@@ -12,7 +12,8 @@ type CharacterModelProps = {
 /** Expand [N] citations in a single text segment. */
 function inlineCitations(
   text: string,
-  onCitationClick?: (n: number) => void
+  sectionIndex: number,
+  onCitationClick?: (n: number, sectionIndex: number) => void
 ): React.ReactNode[] {
   if (!/\[\d+\]/.test(text)) return [text];
   const parts = text.split(/(\[\d+\])/);
@@ -24,7 +25,7 @@ function inlineCitations(
         <sup
           key={i}
           className="cursor-pointer inline-flex items-center justify-center w-4 h-4 text-[0.6em] font-bold text-white bg-[#03b2e6] hover:bg-[#0291be] rounded-full ml-0.5 mr-0.5 transition-colors"
-          onClick={() => onCitationClick?.(n)}
+          onClick={() => onCitationClick?.(n, sectionIndex)}
           title={`Jump to source ${n}`}
         >
           {n}
@@ -83,19 +84,21 @@ function deduplicateSpeechCitations(content: string): string {
   return result.join('');
 }
 
-/** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers. */
+/** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers.
+ *  Section index `i` is passed through to onCitationClick so callers know which
+ *  message's [N] was clicked (section 0 = initial prompt, 1 = first assistant reply, …). */
 function expandSpeechCitations(
   text: string,
-  onCitationClick?: (n: number) => void
+  onCitationClick?: (n: number, sectionIndex: number) => void
 ): React.ReactNode {
   const sections = text.split(/\n?%%SEP%%\n?/);
   if (sections.length <= 1) {
-    return inlineCitations(deduplicateSpeechCitations(text), onCitationClick);
+    return inlineCitations(deduplicateSpeechCitations(text), 0, onCitationClick);
   }
   return sections.map((section, i) => (
     <React.Fragment key={i}>
-      {i > 0 && <hr className="my-2 border-white/20" />}
-      <span>{inlineCitations(deduplicateSpeechCitations(section), onCitationClick)}</span>
+      {i > 0 && <hr className="my-2 border-slate-300" />}
+      <span>{inlineCitations(deduplicateSpeechCitations(section), i, onCitationClick)}</span>
     </React.Fragment>
   ));
 }
@@ -196,7 +199,7 @@ export default function SocraticBackground3D({
 }: {
   speechText?: string;
   isSpeaking?: boolean;
-  onCitationClick?: (n: number) => void;
+  onCitationClick?: (n: number, sectionIndex: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
