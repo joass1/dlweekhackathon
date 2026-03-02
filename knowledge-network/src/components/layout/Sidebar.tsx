@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Users, MessageSquare, ClipboardCheck, LineChart, Upload, Map, Rocket, Home, LogOut } from 'lucide-react';
+import { Users, MessageSquare, ClipboardCheck, LineChart, Upload, Rocket, Home, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 export const Sidebar = () => {
@@ -21,7 +21,6 @@ export const Sidebar = () => {
 
   const navigationItems = [
     { name: 'Dashboard', path: '/', icon: Home },
-    { name: 'Knowledge Map', path: '/knowledge-map', icon: Map },
     { name: 'Upload Materials', path: '/upload', icon: Upload },
     { name: 'Assessment', path: '/assessment', icon: ClipboardCheck },
     { name: 'Study Missions', path: '/study-mission', icon: Rocket },

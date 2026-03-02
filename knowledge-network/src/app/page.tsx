@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, ArrowRight, Loader2, Target } from 'lucide-react';
+import { BookOpen, AlertTriangle, Loader2, Target, Maximize2, Minimize2 } from 'lucide-react';
 import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { useStudentId } from '@/hooks/useStudentId';
@@ -47,6 +47,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [selectedCourse, setSelectedCourse] = useState('all');
+  const [isKGExpanded, setIsKGExpanded] = useState(false);
   const studentId = useStudentId();
   const { user } = useAuth();
   const { apiFetchWithAuth } = useAuthedApi();
@@ -139,16 +140,19 @@ export default function Page() {
   const totalAttempts = progress?.total_attempts ?? 0;
   const accuracy = progress?.accuracy ?? 0;
 
+  const faded = 'opacity-0 pointer-events-none';
+  const visible = 'opacity-100';
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Welcome Section */}
-      <div className="mb-8">
+      <div className={`mb-8 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
         <h1 className="text-3xl font-bold">Welcome back, {displayName}</h1>
         <p className="text-muted-foreground mt-1">Here&apos;s your learning overview</p>
       </div>
 
       {/* Stats Row — 3 key metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+      <div className={`grid grid-cols-1 md:grid-cols-3 gap-5 mb-8 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
         <Card className="p-6">
           <div className="flex justify-between items-start">
             <div>
@@ -209,49 +213,63 @@ export default function Page() {
 
       {/* Main Content */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* Knowledge Map */}
-        <Card className="lg:col-span-3 overflow-hidden">
-          <div className="p-4 border-b flex justify-between items-center">
-            <h3 className="font-semibold">Knowledge Map</h3>
-            <div className="flex items-center gap-3">
-              <select
-                value={selectedCourse}
-                onChange={e => setSelectedCourse(e.target.value)}
-                className="text-sm p-1.5 border rounded-lg bg-card"
-              >
-                {courses.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <Link href="/knowledge-map" className="text-sm text-[#03b2e6] hover:text-[#029ad0] flex items-center gap-1 whitespace-nowrap">
-                Full Map <ArrowRight className="w-3 h-3" />
-              </Link>
-            </div>
-          </div>
-          <div className="h-[380px]">
-            {loading ? (
-              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading knowledge graph...
+        {/* Knowledge Map — expands to fixed viewport card */}
+        <div
+          className={`group lg:col-span-3 transition-all duration-300 ${
+            isKGExpanded ? 'fixed inset-8 z-40' : ''
+          }`}
+        >
+          <Card className="overflow-hidden h-full flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">Knowledge Map</h3>
+              <div className="flex items-center gap-3">
+                <select
+                  value={selectedCourse}
+                  onChange={e => setSelectedCourse(e.target.value)}
+                  className="text-sm p-1.5 border rounded-lg bg-card"
+                >
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setIsKGExpanded(v => !v)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 rounded hover:bg-accent text-muted-foreground"
+                  title={isKGExpanded ? 'Collapse' : 'Expand'}
+                  aria-label={isKGExpanded ? 'Collapse knowledge map' : 'Expand knowledge map'}
+                >
+                  {isKGExpanded
+                    ? <Minimize2 className="w-4 h-4" />
+                    : <Maximize2 className="w-4 h-4" />
+                  }
+                </button>
               </div>
-            ) : (
-              <KnowledgeGraph
-                nodes={filteredNodes.map(n => ({
-                  id: n.id,
-                  title: n.title,
-                  mastery: n.mastery,
-                  status: n.status,
-                  lastReviewed: '',
-                  decayRate: 0,
-                  category: n.category ?? 'General',
-                }))}
-                links={filteredLinks}
-              />
-            )}
-          </div>
-        </Card>
+            </div>
+            <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[380px]'}`}>
+              {loading ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading knowledge graph...
+                </div>
+              ) : (
+                <KnowledgeGraph
+                  nodes={filteredNodes.map(n => ({
+                    id: n.id,
+                    title: n.title,
+                    mastery: n.mastery,
+                    status: n.status,
+                    lastReviewed: '',
+                    decayRate: 0,
+                    category: n.category ?? 'General',
+                  }))}
+                  links={filteredLinks}
+                />
+              )}
+            </div>
+          </Card>
+        </div>
 
-        {/* Right Column */}
-        <div className="lg:col-span-2 space-y-6">
+        {/* Right Column — fades out when KG is expanded */}
+        <div className={`lg:col-span-2 space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
           {/* Priority Concepts */}
           <Card>
             <div className="p-4 border-b">
