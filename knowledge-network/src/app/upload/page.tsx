@@ -75,7 +75,7 @@ export default function UploadPage() {
         if (quizConcept) {
           setIsStartingAssessment(true);
           setTimeout(() => {
-            router.push(`/assessment/${quizConcept}/take${selectedCourse ? `?courseId=${selectedCourse}` : ''}`);
+            router.push(`/assessment/${quizConcept}/take`);
           }, 500);
         }
       }
