@@ -54,6 +54,7 @@ export default function Page() {
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isCourseProgressOpen, setIsCourseProgressOpen] = useState(false);
   const [showMapLabels, setShowMapLabels] = useState(false);
+  const [actionCourse, setActionCourse] = useState('all');
   const studentId = useStudentId();
   const { user } = useAuth();
   const { setIsCollapsed } = useSidebar();
@@ -145,7 +146,26 @@ export default function Page() {
   );
 
   const attentionTotal = weakCount + learningCount;
-  const nextFocusConcept = attentionConcepts[0];
+
+  // Course-filtered attention for the Next Best Action panel
+  const actionFilteredConcepts = useMemo(() => {
+    if (actionCourse === 'all') return attentionConcepts;
+    const selected = courses.find(c => c.id === actionCourse);
+    if (!selected) return attentionConcepts;
+    const normalize = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const courseNameNorm = normalize(selected.name).replace(/\b\d+\b/g, '').trim();
+    return attentionConcepts.filter(n => {
+      if (n.courseId) return n.courseId === actionCourse;
+      const categoryNorm = normalize(n.category ?? '');
+      if (!categoryNorm || !courseNameNorm) return false;
+      return categoryNorm === courseNameNorm || categoryNorm.includes(courseNameNorm) || courseNameNorm.includes(categoryNorm);
+    });
+  }, [attentionConcepts, actionCourse, courses]);
+
+  const actionWeakCount = actionFilteredConcepts.filter(n => n.status === 'weak').length;
+  const actionLearningCount = actionFilteredConcepts.filter(n => n.status === 'learning').length;
+  const actionAttentionTotal = actionWeakCount + actionLearningCount;
+  const nextFocusConcept = actionFilteredConcepts[0];
   const totalAttempts = progress?.total_attempts ?? 0;
   const accuracy = progress?.accuracy ?? 0;
   const accuracyPct = Math.round(accuracy * 100);
@@ -206,8 +226,7 @@ export default function Page() {
 
   return (
     <div
-      className="min-h-full bg-cover bg-center bg-no-repeat bg-fixed"
-      style={{ backgroundImage: "url('/backgrounds/dashboardback2.png')" }}
+      className="min-h-full"
     >
       <div className="p-6 max-w-7xl mx-auto overflow-x-hidden">
       <div className={`space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
@@ -217,45 +236,62 @@ export default function Page() {
         </section>
 
         <Card className="border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg text-white">
-          <div className="p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="space-y-1">
+          <div className="p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#4cc9f0] flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5" /> Next Best Action
               </p>
-              {loading ? (
-                <div className="flex items-center text-sm text-white/60">
-                  <span className="mr-2 inline-flex"><BounceLoader size={16} /></span>
-                  Preparing your focus queue...
-                </div>
-              ) : attentionTotal === 0 ? (
-                <p className="text-lg font-semibold">You&apos;re on track. Keep momentum with a study mission.</p>
-              ) : (
-                <p className="text-lg font-semibold">
-                  Review {nextFocusConcept?.title ?? `${attentionTotal} concepts`} first, then clear the remaining focus queue.
-                </p>
-              )}
-              {!loading && attentionTotal > 0 && (
-                <p className="text-sm text-white/60">
-                  {weakCount} weak and {learningCount} learning concepts currently need attention.
-                </p>
-              )}
+              <select
+                value={actionCourse}
+                onChange={e => setActionCourse(e.target.value)}
+                className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white w-auto"
+              >
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setIsNeedsAttentionOpen(true)}
-                className="px-4 py-2 text-sm rounded-full border border-white/30 bg-white/10 hover:bg-white/20 transition-colors text-white"
-              >
-                View Attention List
-              </button>
-              <Link
-                href="/study-mission"
-                className="px-4 py-2 text-sm rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] transition-colors inline-flex items-center gap-1.5"
-              >
-                Start Study Mission
-                <ArrowRight className="w-4 h-4" />
-              </Link>
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="space-y-1">
+                {loading ? (
+                  <div className="flex items-center text-sm text-white/60">
+                    <span className="mr-2 inline-flex"><BounceLoader size={16} /></span>
+                    Preparing your focus queue...
+                  </div>
+                ) : actionAttentionTotal === 0 ? (
+                  <p className="text-lg font-semibold">You&apos;re on track{actionCourse !== 'all' ? ` for ${courses.find(c => c.id === actionCourse)?.name}` : ''}. Keep momentum with a study mission.</p>
+                ) : (
+                  <>
+                    <p className="text-lg font-semibold">
+                      Review <span className="text-[#4cc9f0]">{nextFocusConcept?.title}</span> first{actionAttentionTotal > 1 ? `, then clear ${actionAttentionTotal - 1} more` : ''}.
+                    </p>
+                    <p className="text-sm text-white/60">
+                      {nextFocusConcept && (
+                        <span>Mastery: {nextFocusConcept.mastery}% ({nextFocusConcept.status.replace('_', ' ')}) &middot; </span>
+                      )}
+                      {actionWeakCount} weak and {actionLearningCount} learning concepts need attention{actionCourse !== 'all' ? ` in ${courses.find(c => c.id === actionCourse)?.name}` : ''}.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsNeedsAttentionOpen(true)}
+                  className="px-4 py-2 text-sm rounded-full border border-white/30 bg-white/10 hover:bg-white/20 transition-colors text-white"
+                >
+                  View Attention List
+                </button>
+                <Link
+                  href="/study-mission"
+                  className="px-4 py-2 text-sm rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] transition-colors inline-flex items-center gap-1.5"
+                >
+                  Start Study Mission
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
             </div>
           </div>
         </Card>

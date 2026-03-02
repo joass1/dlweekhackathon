@@ -38,7 +38,10 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden overscroll-none">
+    <div
+      className="flex h-dvh overflow-hidden overscroll-none bg-cover bg-center bg-no-repeat bg-fixed"
+      style={{ backgroundImage: "url('/backgrounds/dashboardback2.png')" }}
+    >
       {/* Sidebar container — clips and animates width to slide in/out */}
       <div
         className={`flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${
@@ -51,12 +54,12 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
       {/* Persistent re-open tab — slides in from the left when sidebar is collapsed */}
       <button
         onClick={toggle}
-        className={`fixed left-0 top-6 z-[60] flex items-center justify-center w-6 h-8 bg-card border border-l-0 border-border rounded-r-lg shadow-md hover:bg-accent transition-transform duration-300 ease-in-out ${
+        className={`fixed left-0 top-6 z-[60] flex items-center justify-center w-6 h-8 bg-slate-900/80 backdrop-blur-sm border border-l-0 border-white/15 rounded-r-lg shadow-md hover:bg-slate-800/90 transition-transform duration-300 ease-in-out ${
           isCollapsed ? 'translate-x-0' : '-translate-x-full'
         }`}
         aria-label="Open sidebar"
       >
-        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+        <ChevronRight className="w-3.5 h-3.5 text-white/60" />
       </button>
 
       <main className="flex-1 min-w-0 h-full overflow-y-auto overscroll-contain">

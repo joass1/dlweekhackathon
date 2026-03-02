@@ -31,44 +31,51 @@ export const Sidebar = () => {
   ];
 
   return (
-    <div className="w-64 h-full bg-slate-100 p-6 flex flex-col overflow-y-auto overscroll-contain">
+    <div className="w-64 h-full bg-slate-900/70 backdrop-blur-md border-r border-white/10 p-5 flex flex-col overflow-y-auto overscroll-contain">
       {/* Brand */}
-      <div className="mb-8">
+      <div className="mb-6">
         <div className="mb-4 flex items-start justify-between">
           <Image
             src="/logo-images/logo.png"
             alt="Mentora"
             width={280}
             height={88}
-            className="h-16 w-auto"
+            className="h-14 w-auto brightness-0 invert"
             priority
           />
           <button
             onClick={toggle}
-            className="mt-1 flex-shrink-0 p-1 rounded hover:bg-accent text-muted-foreground transition-colors"
+            className="mt-1 flex-shrink-0 p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white/80 transition-colors"
             aria-label="Collapse sidebar"
           >
             <PanelLeftClose className="w-4 h-4" />
           </button>
         </div>
-        {user?.photoURL ? (
-          <img
-            src={user.photoURL}
-            alt=""
-            className="w-12 h-12 rounded-full object-cover"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <div className="w-12 h-12 bg-[#03b2e6] rounded-full flex items-center justify-center text-white text-lg">
-            {initials}
+
+        {/* User profile */}
+        <div className="flex items-center gap-3 mt-2 p-3 rounded-xl bg-white/5 border border-white/10">
+          {user?.photoURL ? (
+            <img
+              src={user.photoURL}
+              alt=""
+              className="w-10 h-10 rounded-full object-cover ring-2 ring-white/20"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-10 h-10 bg-[#03b2e6] rounded-full flex items-center justify-center text-white text-sm font-semibold ring-2 ring-white/20">
+              {initials}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white truncate">{displayName}</p>
+            <p className="text-xs text-white/40 truncate">{user?.email}</p>
           </div>
-        )}
-        <h2 className="text-base font-semibold mt-2">{displayName}</h2>
-        <p className="text-sm text-muted-foreground truncate">{user?.email}</p>
+        </div>
       </div>
 
       {/* Navigation */}
-      <nav className="space-y-2 flex-1">
+      <nav className="space-y-1 flex-1">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30 mb-2 px-3">Navigation</p>
         {navigationItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.path || (item.path !== '/' && pathname.startsWith(item.path));
@@ -76,11 +83,13 @@ export const Sidebar = () => {
             <Link
               key={item.path}
               href={item.path}
-              className={`w-full p-3 text-left rounded-lg flex items-center space-x-3 ${
-                isActive ? 'bg-[#e0f4fb] text-[#03b2e6]' : 'hover:bg-accent'
+              className={`w-full px-3 py-2.5 text-left rounded-xl flex items-center gap-3 text-sm transition-colors ${
+                isActive
+                  ? 'bg-[#03b2e6]/20 text-[#4cc9f0] font-medium border border-[#03b2e6]/30'
+                  : 'text-white/70 hover:bg-white/8 hover:text-white'
               }`}
             >
-              <Icon size={20} />
+              <Icon size={18} className={isActive ? 'text-[#4cc9f0]' : 'text-white/50'} />
               <span>{item.name}</span>
             </Link>
           );
@@ -88,13 +97,15 @@ export const Sidebar = () => {
       </nav>
 
       {/* Sign out */}
-      <button
-        onClick={signOut}
-        className="mt-2 p-3 text-left rounded-lg flex items-center space-x-3 hover:bg-red-50 text-red-600 transition-colors"
-      >
-        <LogOut size={20} />
-        <span>Sign Out</span>
-      </button>
+      <div className="pt-4 border-t border-white/10">
+        <button
+          onClick={signOut}
+          className="w-full px-3 py-2.5 text-left rounded-xl flex items-center gap-3 text-sm text-red-400/80 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+        >
+          <LogOut size={18} />
+          <span>Sign Out</span>
+        </button>
+      </div>
     </div>
   );
 };
