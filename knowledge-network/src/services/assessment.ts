@@ -206,10 +206,11 @@ export async function getAssessmentDetails(_assessmentId: string): Promise<Asses
 }
 
 export async function generateAssessment(_courseId: string, _conceptsTested: string[]): Promise<Assessment> {
+  const generatedId = `assessment-${Date.now()}`;
   return {
-    id: 'generated',
-    courseId: 'course',
-    title: 'Generated Assessment',
+    id: generatedId,
+    courseId: _courseId,
+    title: 'Assessment',
     score: 0,
     completedAt: new Date(),
     conceptGaps: [],

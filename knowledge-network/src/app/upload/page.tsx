@@ -22,7 +22,7 @@ export default function UploadPage() {
   const [isStartingAssessment, setIsStartingAssessment] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
-  const [selectedCourse, setSelectedCourse] = useState('physics-101');
+  const [selectedCourse, setSelectedCourse] = useState('');
   const [newCourseName, setNewCourseName] = useState('');
 
   const getApiBase = () => {

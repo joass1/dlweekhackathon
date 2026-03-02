@@ -3,7 +3,6 @@
 
 import React from 'react';
 import GroupDetailView from '@/components/groups/GroupDetailView';
-import { notFound } from 'next/navigation';
 import { use } from 'react';
 
 import { HubMetrics } from '@/components/groups/HubMetrics';
@@ -15,12 +14,7 @@ interface PageProps {
 }
 
 export default function GroupDetailPage({ params }: PageProps) {
-  const validGroups = ['data-structures', 'physics-101', 'biology-intro'];
   const resolvedParams = use(params);
-  
-  if (!validGroups.includes(resolvedParams.groupId)) {
-    notFound();
-  }
 
   return (
     <div className="p-6 space-y-6">
