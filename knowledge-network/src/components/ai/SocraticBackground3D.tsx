@@ -94,7 +94,7 @@ function expandSpeechCitations(
   }
   return sections.map((section, i) => (
     <React.Fragment key={i}>
-      {i > 0 && <hr className="my-2 border-slate-300" />}
+      {i > 0 && <hr className="my-2 border-white/20" />}
       <span>{inlineCitations(deduplicateSpeechCitations(section), onCitationClick)}</span>
     </React.Fragment>
   ));
@@ -255,9 +255,9 @@ export default function SocraticBackground3D({
           className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
           style={{ top: 'calc(14% + 8px)' }}
         >
-          <div className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm">
+          <div className="relative w-[545px] rounded-lg border border-white/20 bg-slate-900/60 px-3.5 py-3 text-[14px] leading-snug text-white shadow-xl backdrop-blur-md">
             {/* Tail triangle — points down toward the character's head */}
-            <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
+            <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/20 bg-slate-900/60" />
             <div
               ref={scrollRef}
               className="overflow-y-auto whitespace-pre-wrap pr-1"
