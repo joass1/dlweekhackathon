@@ -125,7 +125,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
     <div className="flex flex-col h-full text-slate-100">
       <div className="flex-grow p-4 overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold text-white">My Courses</h2>
+          <h2 className="text-lg font-semibold text-white drop-shadow-sm">My Courses</h2>
           <button
             onClick={() => setIsUploadModalOpen(true)}
             className="flex items-center px-3 py-1 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600"
@@ -149,7 +149,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             {subjects.map((subject) => (
               <div key={subject.id} className="mb-4">
                 <button
-                  className="flex items-center w-full p-2 rounded border border-white/15 bg-white/10 hover:bg-white/15 transition-colors"
+                  className="flex items-center w-full p-2 rounded border border-white/25 bg-slate-800/55 hover:bg-slate-700/65 transition-colors shadow-sm"
                   onClick={() => toggleSubject(subject.id)}
                 >
                   {expandedSubjects.has(subject.id) ? (
@@ -158,13 +158,16 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                     <ChevronRight className="w-4 h-4 mr-2 flex-shrink-0" />
                   )}
                   <Folder className="w-5 h-5 mr-2 text-blue-500 flex-shrink-0" />
-                  <span className="font-medium truncate text-slate-100">{subject.name}</span>
+                  <span className="font-semibold truncate text-white">{subject.name}</span>
                 </button>
 
                 {expandedSubjects.has(subject.id) && (
                   <div className="ml-6 space-y-1 mt-1">
                     {subject.notes.map((note) => (
-                      <div key={note.id} className="group flex items-center">
+                      <div
+                        key={note.id}
+                        className="group flex items-center rounded-md border border-white/20 bg-slate-900/45"
+                      >
                         <button
                           draggable
                           onDragStart={(e) => {
@@ -176,16 +179,16 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                             }));
                             e.dataTransfer.effectAllowed = 'copy';
                           }}
-                          className="flex items-center flex-1 min-w-0 p-2 hover:bg-white/10 rounded text-sm cursor-grab text-slate-200"
+                          className="flex items-center flex-1 min-w-0 p-2 hover:bg-slate-700/65 rounded-md text-sm cursor-grab text-white"
                           onClick={() => onNoteSelect(note.id)}
                         >
-                          <GripVertical className="w-3 h-3 mr-1 text-muted-foreground flex-shrink-0" />
-                          <FileText className="w-4 h-4 mr-2 flex-shrink-0" />
-                          <span className="truncate">{note.title}</span>
+                          <GripVertical className="w-3 h-3 mr-1 text-slate-300 flex-shrink-0" />
+                          <FileText className="w-4 h-4 mr-2 flex-shrink-0 text-white/90" />
+                          <span className="truncate font-medium">{note.title}</span>
                         </button>
                         <button
                           onClick={(e) => handleDeleteTopic(note.id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-500 transition-opacity flex-shrink-0"
+                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-red-300 transition-opacity flex-shrink-0"
                           title="Delete topic"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
