@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter, useParams, useSearchParams } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import {
   classifyMistake,
   evaluateAnswer,
@@ -20,10 +20,7 @@ type ConfidenceMap = Record<string, number>;
 export default function AssessmentTakePage() {
   const router = useRouter();
   const params = useParams();
-  const searchParams = useSearchParams();
   const subjectId = params.subjectId as string;
-  const retryKey = searchParams.get('retry') || '';
-  const courseId = searchParams.get('courseId') || '';
 
   const [questions, setQuestions] = useState<QuizQuestionClient[]>([]);
   const [answers, setAnswers] = useState<AnswersMap>({});
@@ -44,7 +41,7 @@ export default function AssessmentTakePage() {
       setIsEmptyAssessment(false);
       try {
         const token = await getIdToken();
-        const generated = await generateQuiz(studentId, subjectId, 5, token, courseId);
+        const generated = await generateQuiz(studentId, subjectId, 5, token);
         if (!cancelled) {
           setQuestions(generated);
           setIsEmptyAssessment(generated.length === 0);
@@ -100,6 +97,31 @@ export default function AssessmentTakePage() {
       confidence_1_to_5: confidenceRatings[q.question_id] || 3,
     }));
 
+  const runNextCheckpoint = async (queueArg?: CheckpointQueueItem[]) => {
+    const queue = queueArg ?? pendingCheckpoints;
+    if (!queue.length) {
+      return false;
+    }
+    const [next, ...rest] = queue;
+    setPendingCheckpoints(rest);
+    try {
+      const token = await getIdToken();
+      const cp = await getMicroCheckpoint(
+        studentId,
+        next.concept || subjectId,
+        next.missing_concept || undefined,
+        token
+      );
+      setCheckpoint(cp);
+      setCheckpointAnswer(null);
+      setCheckpointConfidence(3);
+      return true;
+    } catch (error) {
+      console.error('Error loading micro-checkpoint:', error);
+      return false;
+    }
+  };
+
   const handleSubmit = async () => {
     if (Object.keys(answers).length < questions.length) {
       alert('Please answer all questions.');
@@ -109,8 +131,8 @@ export default function AssessmentTakePage() {
     try {
       const token = await getIdToken();
       const answerPayload = getAnswerPayload();
-      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token, courseId);
-      const classification = await classifyMistake(studentId, subjectId, answerPayload, token, courseId);
+      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token);
+      const classification = await classifyMistake(studentId, subjectId, answerPayload, token);
       setClassificationResult(classification);
 
       // Update KG mastery + BKT for each answered question
@@ -152,7 +174,10 @@ export default function AssessmentTakePage() {
         classification,
       });
 
-      router.push(`/assessment/${subjectId}/matching`);
+      const checkpointStarted = await runNextCheckpoint(conceptualQueue);
+      if (!checkpointStarted) {
+        router.push(`/assessment/${subjectId}/matching`);
+      }
     } catch (error) {
       console.error('Error submitting assessment:', error);
       alert('Failed to submit assessment. Please try again.');
@@ -164,7 +189,7 @@ export default function AssessmentTakePage() {
   const handleOverride = async (questionId: string) => {
     try {
       const token = await getIdToken();
-      await overrideClassification(studentId, questionId, token, courseId);
+      await overrideClassification(studentId, questionId, token);
       if (classificationResult) {
         setClassificationResult({
           ...classificationResult,
@@ -179,6 +204,42 @@ export default function AssessmentTakePage() {
     } catch (error) {
       console.error('Override failed:', error);
       alert('Could not override classification.');
+    }
+  };
+
+  const submitCheckpoint = async () => {
+    if (!checkpoint || checkpointAnswer === null) {
+      alert('Select a checkpoint answer first.');
+      return;
+    }
+    try {
+      const token = await getIdToken();
+      const selectedAnswer = checkpoint.options[checkpointAnswer];
+      const result = await submitMicroCheckpoint(
+        studentId,
+        checkpoint.question_id,
+        selectedAnswer,
+        checkpointConfidence,
+        token
+      );
+      const currentRaw = window.sessionStorage.getItem(`assessment_result_${subjectId}`);
+      const current = currentRaw ? JSON.parse(currentRaw) : {};
+      saveRunToSession({
+        ...current,
+        checkpoint: {
+          question_id: checkpoint.question_id,
+          is_correct: result.is_correct,
+          next_action: result.next_action,
+        },
+      });
+      setCheckpoint(null);
+      const hasMoreCheckpoints = await runNextCheckpoint();
+      if (!hasMoreCheckpoints) {
+        router.push(`/assessment/${subjectId}/matching`);
+      }
+    } catch (error) {
+      console.error('Checkpoint submit failed:', error);
+      alert('Could not submit checkpoint.');
     }
   };
 
@@ -324,6 +385,63 @@ export default function AssessmentTakePage() {
         </div>
       </div>
 
+      {checkpoint && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
+          <div className="max-w-xl w-full bg-white rounded-xl p-6">
+            <h2 className="text-xl font-semibold mb-2">Micro-checkpoint</h2>
+            <p className="text-foreground mb-4">{checkpoint.stem}</p>
+            <div className="space-y-2 mb-4">
+              {checkpoint.options.map((option, index) => (
+                <button
+                  key={index}
+                  onClick={() => setCheckpointAnswer(index)}
+                  className={`w-full text-left p-3 border rounded-lg ${
+                    checkpointAnswer === index ? 'border-[#03b2e6] bg-[#e0f4fb]' : 'border-gray-200'
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded border border-gray-300"
+                onClick={async () => {
+                  setCheckpoint(null);
+                  setCheckpointAnswer(null);
+                  setCheckpointConfidence(3);
+                  const hasMoreCheckpoints = await runNextCheckpoint();
+                  if (!hasMoreCheckpoints) {
+                    router.push(`/assessment/${subjectId}/matching`);
+                  }
+                }}
+              >
+                Skip
+              </button>
+              <button className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]" onClick={submitCheckpoint}>
+                Submit checkpoint
+              </button>
+            </div>
+            <div className="mt-4 p-4 bg-background rounded-lg border border-muted">
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Confidence for checkpoint answer
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-red-500 w-14">Guessing</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  value={checkpointConfidence}
+                  onChange={(e) => setCheckpointConfidence(parseInt(e.target.value, 10))}
+                  className="flex-1 accent-[#03b2e6]"
+                />
+                <span className="text-xs text-green-600 w-14 text-right">Certain</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

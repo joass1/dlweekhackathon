@@ -20,7 +20,6 @@ class SearchResult(BaseModel):
 class QuizGenerateRequest(BaseModel):
     student_id: str
     concept: str
-    course_id: str
     num_questions: int = Field(default=5, ge=1, le=10)
 
 
@@ -43,7 +42,6 @@ class StudentAnswer(BaseModel):
 class QuizSubmitRequest(BaseModel):
     student_id: str
     concept: str
-    course_id: str
     answers: List[StudentAnswer]
 
 
@@ -83,21 +81,18 @@ class SelfAwarenessResponse(BaseModel):
 class OverrideRequest(BaseModel):
     student_id: str
     question_id: str
-    course_id: Optional[str] = None
     override_to: Literal["careless"]
 
 
 class MicroCheckpointRequest(BaseModel):
     student_id: str
     concept: str
-    course_id: Optional[str] = None
     missing_concept: Optional[str] = None
 
 
 class MicroCheckpointSubmitRequest(BaseModel):
     student_id: str
     question_id: str
-    course_id: Optional[str] = None
     selected_answer: str
     confidence_1_to_5: int = Field(ge=1, le=5)
 

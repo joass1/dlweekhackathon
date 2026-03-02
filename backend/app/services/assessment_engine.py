@@ -96,7 +96,7 @@ class AssessmentStateStore:
             json.dump(state, f, indent=2)
         tmp.replace(self.path)
 
-    def transaction(self, student_id: str = "", course_id: str = "") -> Tuple[Dict[str, Any], callable]:
+    def transaction(self, student_id: str = "") -> Tuple[Dict[str, Any], callable]:
         with self._lock:
             state = self._read()
 
@@ -744,7 +744,7 @@ class AssessmentEngine:
             normalized_prereqs,
         )
 
-        state, commit = self.store.transaction(request.student_id, course_id=request.course_id)
+        state, commit = self.store.transaction(request.student_id)
         personalization = self._build_personalization_profile(
             state=state,
             student_id=request.student_id,
@@ -804,7 +804,7 @@ class AssessmentEngine:
         }
 
     def evaluate_answer(self, request: QuizSubmitRequest) -> EvaluateResponse:
-        state, _ = self.store.transaction(request.student_id, course_id=request.course_id)
+        state, _ = self.store.transaction(request.student_id)
         student_quiz = state.get("quizzes", {}).get(request.student_id, {})
         if not student_quiz:
             raise ValueError("No active quiz found for this student.")
@@ -929,7 +929,7 @@ class AssessmentEngine:
         )
 
     def classify_mistake(self, request: QuizSubmitRequest) -> ClassifyResponse:
-        state, commit = self.store.transaction(request.student_id, course_id=request.course_id)
+        state, commit = self.store.transaction(request.student_id)
         quizzes = state.setdefault("quizzes", {})
         history = state.setdefault("attempt_history", {})
         cls_store = state.setdefault("classification_store", {})
@@ -1206,8 +1206,8 @@ class AssessmentEngine:
             calibration_gap=round(math.sqrt(mean_brier), 4),
         )
 
-    def override_classification(self, student_id: str, question_id: str, course_id: str = "") -> Dict[str, Any]:
-        state, commit = self.store.transaction(student_id, course_id=course_id)
+    def override_classification(self, student_id: str, question_id: str) -> Dict[str, Any]:
+        state, commit = self.store.transaction(student_id)
         cls_store = state.setdefault("classification_store", {})
         blind = state.setdefault("blind_spot_counts", {})
         student_cls = cls_store.setdefault(student_id, {})
@@ -1226,7 +1226,7 @@ class AssessmentEngine:
         commit(state)
         return {"updated": True, "question_id": question_id}
 
-    def generate_micro_checkpoint(self, student_id: str, concept: str, missing_concept: Optional[str], course_id: str = "") -> MicroCheckpointResponse:
+    def generate_micro_checkpoint(self, student_id: str, concept: str, missing_concept: Optional[str]) -> MicroCheckpointResponse:
         target = missing_concept or concept
         question = QuizQuestion(
             question_id=f"checkpoint-{target}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:6]}",
@@ -1242,7 +1242,7 @@ class AssessmentEngine:
             explanation="Transfer + explanation is strongest mastery signal.",
             difficulty="easy",
         )
-        state, commit = self.store.transaction(student_id, course_id=course_id)
+        state, commit = self.store.transaction(student_id)
         quizzes = state.setdefault("quizzes", {})
         quizzes.setdefault(student_id, {})[question.question_id] = question.model_dump()
         commit(state)
@@ -1254,9 +1254,8 @@ class AssessmentEngine:
         question_id: str,
         selected_answer: str,
         confidence_1_to_5: int,
-        course_id: str = "",
     ) -> MicroCheckpointSubmitResponse:
-        state, commit = self.store.transaction(student_id, course_id=course_id)
+        state, commit = self.store.transaction(student_id)
         quizzes = state.setdefault("quizzes", {})
         history = state.setdefault("attempt_history", {})
         student_quiz = quizzes.get(student_id, {})
