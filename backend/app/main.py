@@ -608,6 +608,20 @@ async def get_assessment_history(
         raise HTTPException(status_code=500, detail=f"Failed to load assessment history: {str(exc)}") from exc
 
 
+@app.get("/api/assessment/history/{run_id}")
+async def get_assessment_run(run_id: str, student_id: str = Depends(get_student_id)):
+    try:
+        runs = assessment_engine.get_assessment_history(student_id=student_id, limit=100)
+        run = next((r for r in runs if r.get("run_id") == run_id), None)
+        if not run:
+            raise HTTPException(status_code=404, detail="Assessment run not found")
+        return run
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load assessment run: {str(exc)}") from exc
+
+
 # ── Adaptive Engine endpoints ──────────────────────────────────────────────────
 
 

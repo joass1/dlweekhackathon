@@ -64,9 +64,14 @@ class FirestoreAssessmentStore:
 
     def get_attempts(self, student_id: str) -> List[dict]:
         """Get all attempt history for a student, ordered by timestamp."""
-        col = self.db.collection("students").document(student_id) \
-            .collection("attempts").order_by("timestamp")
-        return [doc.to_dict() for doc in col.stream()]
+        try:
+            col = self.db.collection("students").document(student_id) \
+                .collection("attempts").order_by("timestamp")
+            return [doc.to_dict() for doc in col.stream()]
+        except Exception:
+            col = self.db.collection("students").document(student_id) \
+                .collection("attempts")
+            return [doc.to_dict() for doc in col.stream()]
 
     # ── Classifications ───────────────────────────────────────────────────────
 
@@ -101,9 +106,15 @@ class FirestoreAssessmentStore:
     # ── Assessment runs ─────────────────────────────────────────────────────
 
     def get_assessment_runs(self, student_id: str) -> List[dict]:
-        col = self.db.collection("students").document(student_id) \
-            .collection("assessment_runs").order_by("submitted_at")
-        return [doc.to_dict() for doc in col.stream()]
+        try:
+            col = self.db.collection("students").document(student_id) \
+                .collection("assessment_runs").order_by("submitted_at")
+            return [doc.to_dict() for doc in col.stream()]
+        except Exception:
+            # Fallback without ordering if index is missing
+            col = self.db.collection("students").document(student_id) \
+                .collection("assessment_runs")
+            return [doc.to_dict() for doc in col.stream()]
 
     def add_assessment_run(self, student_id: str, run: dict) -> None:
         self.db.collection("students").document(student_id) \
@@ -124,15 +135,19 @@ class FirestoreAssessmentStore:
             "assessment_runs": {student_id: self.get_assessment_runs(student_id)},
         }
 
+        # Snapshot list lengths NOW, before the engine mutates state in place.
+        # Without this, old_len == new len at commit time (same list object).
+        old_attempt_len = len(state["attempt_history"].get(student_id, []))
+        old_run_len = len(state["assessment_runs"].get(student_id, []))
+
         def commit(new_state: Dict[str, Any]) -> None:
             # Save quizzes
             new_quiz = new_state.get("quizzes", {}).get(student_id, {})
             if new_quiz:
                 self.save_quiz(student_id, new_quiz)
-            # Save attempt history (only new ones — compare lengths)
+            # Save attempt history (only new ones)
             new_attempts = new_state.get("attempt_history", {}).get(student_id, [])
-            old_len = len(state["attempt_history"].get(student_id, []))
-            for attempt in new_attempts[old_len:]:
+            for attempt in new_attempts[old_attempt_len:]:
                 self.add_attempt(student_id, attempt)
             # Save classifications
             new_cls = new_state.get("classification_store", {}).get(student_id, {})
@@ -142,9 +157,8 @@ class FirestoreAssessmentStore:
             new_blind = new_state.get("blind_spot_counts", {}).get(student_id)
             if new_blind:
                 self.update_blind_spots(student_id, new_blind)
-            # Save assessment runs (append-only)
+            # Save assessment runs (only new ones)
             new_runs = new_state.get("assessment_runs", {}).get(student_id, [])
-            old_run_len = len(state["assessment_runs"].get(student_id, []))
             for run in new_runs[old_run_len:]:
                 self.add_assessment_run(student_id, run)
 
