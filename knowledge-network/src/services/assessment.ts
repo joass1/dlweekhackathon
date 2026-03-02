@@ -90,12 +90,14 @@ export async function generateQuiz(
   studentId: string,
   concept: string,
   numQuestions = 5,
-  token?: string | null
+  token?: string | null,
+  uploadTicket?: string | null
 ): Promise<QuizQuestionClient[]> {
   const payload = {
     student_id: studentId,
     concept,
     num_questions: numQuestions,
+    upload_ticket: uploadTicket || undefined,
   };
   const response = await jsonFetch<{ questions: QuizQuestionClient[] }>(
     '/api/assessment/generate-quiz',

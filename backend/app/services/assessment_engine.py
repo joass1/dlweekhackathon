@@ -120,6 +120,10 @@ class AssessmentEngine:
         self.enable_legacy_global_kg_sync = os.getenv("ENABLE_LEGACY_GLOBAL_KG_SYNC", "false").lower() == "true"
         self.kg_timeout_s = float(os.getenv("KG_API_TIMEOUT_SECONDS", "2.0"))
         self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "35.0"))
+        self.skip_llm_classification_for_long_quiz = os.getenv(
+            "SKIP_LLM_CLASSIFICATION_FOR_LONG_QUIZ", "true"
+        ).lower() == "true"
+        self.long_quiz_threshold = int(os.getenv("LONG_QUIZ_THRESHOLD", "10"))
         self.client = (
             OpenAI(api_key=self.openai_key, timeout=self.llm_timeout_s)
             if self.openai_key and self.enable_llm_generation
@@ -722,6 +726,89 @@ class AssessmentEngine:
             for i, q in enumerate(collected[:num_questions])
         ]
 
+    def _llm_generate_questions_multi_concept(
+        self,
+        concepts: List[str],
+        num_questions: int,
+    ) -> List[QuizQuestion]:
+        self._last_quiz_generation_error = None
+        if not self.client:
+            self._last_quiz_generation_error = "OpenAI client is unavailable."
+            return []
+        concept_list = [str(c).strip() for c in concepts if str(c).strip()]
+        if not concept_list:
+            return []
+        allowed = set(concept_list)
+        chosen = concept_list[: min(len(concept_list), num_questions)]
+        concept_csv = ", ".join(chosen)
+        system_prompt = (
+            "You generate fast, valid MCQ quizzes. "
+            "Return ONLY valid JSON with key 'questions'. "
+            "Each question must include: concept, stem, options(4), correct_answer, explanation, difficulty. "
+            "concept must be one of the provided concepts."
+        )
+        user_prompt = (
+            f"Generate exactly {num_questions} questions across these concepts: {concept_csv}. "
+            "Distribute questions across concepts as evenly as possible. "
+            "Output JSON: {\"questions\": [{\"concept\":\"...\",\"stem\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],"
+            "\"correct_answer\":\"...\",\"explanation\":\"...\",\"difficulty\":\"easy|medium|hard\"}]}"
+        )
+        try:
+            completion = self.client.chat.completions.create(
+                model="gpt-5.2",
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            content = None
+            if hasattr(completion, "output_text") and completion.output_text:
+                content = completion.output_text
+            elif hasattr(completion, "choices") and completion.choices:
+                msg = completion.choices[0].message
+                content = msg.content if msg else None
+            parsed = _extract_json_object(content or "{}")
+            raw_questions = parsed.get("questions", [])
+            validated: List[QuizQuestion] = []
+            idx = 1
+            for item in raw_questions:
+                stem = str(item.get("stem", "")).strip()
+                options = item.get("options", [])
+                correct_answer = str(item.get("correct_answer", "")).strip()
+                difficulty = str(item.get("difficulty", "medium")).strip().lower()
+                explanation = str(item.get("explanation", "")).strip()
+                concept = str(item.get("concept", "")).strip()
+                if concept not in allowed:
+                    continue
+                if difficulty not in {"easy", "medium", "hard"}:
+                    difficulty = "medium"
+                if not stem or not isinstance(options, list) or len(options) != 4:
+                    continue
+                options_clean = [str(opt).strip() for opt in options]
+                if len(set(options_clean)) != 4:
+                    continue
+                if correct_answer not in options_clean:
+                    continue
+                validated.append(
+                    QuizQuestion(
+                        question_id=f"all-concepts-q{idx}",
+                        concept=concept,
+                        stem=stem,
+                        options=options_clean,
+                        correct_answer=correct_answer,
+                        explanation=explanation or None,
+                        difficulty=difficulty,  # type: ignore[arg-type]
+                    )
+                )
+                idx += 1
+                if len(validated) >= num_questions:
+                    break
+            return validated[:num_questions]
+        except Exception as exc:
+            self._last_quiz_generation_error = f"OpenAI multi-concept generation failed: {exc}"
+            return []
+
     def _difficulty_for_mastery(self, mastery: Optional[float]) -> str:
         if mastery is None:
             return "medium"
@@ -773,50 +860,35 @@ class AssessmentEngine:
 
         if is_comprehensive:
             state, commit = self.store.transaction(request.student_id)
-            per_concept_counts = self._generate_per_concept_question_counts(
-                requested_concepts,
+            per_concept_counts = self._generate_per_concept_question_counts(requested_concepts, request.num_questions)
+            questions: List[QuizQuestion] = self._llm_generate_questions_multi_concept(
+                list(per_concept_counts.keys()),
                 request.num_questions,
             )
-            questions: List[QuizQuestion] = []
-            generation_sources: List[str] = []
-
-            for concept_id, count in per_concept_counts.items():
-                kg_context = self._fetch_kg_context(concept_id)
-                normalized_prereqs = self._normalize_prerequisites(kg_context.get("prerequisites", []))
-                user_graph_context = self._fetch_user_graph_context(
-                    request.student_id,
-                    concept_id,
-                    normalized_prereqs,
-                )
-                personalization = self._build_personalization_profile(
-                    state=state,
-                    student_id=request.student_id,
-                    concept=concept_id,
-                    user_graph_context=user_graph_context,
-                )
-
-                local_questions = self._llm_generate_questions(
-                    concept_id,
-                    count,
-                    kg_context,
-                    personalization,
-                )
-                source = "llm"
-                if not local_questions:
-                    if not self.allow_rule_based_quiz_fallback:
-                        raise ValueError(
-                            "LLM quiz generation failed or is unavailable. "
-                            "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
-                            f"Details: {self._last_quiz_generation_error or 'unknown'}"
-                        )
-                    local_questions = self._fallback_generate_questions(
-                        concept_id,
-                        count,
-                        personalization,
+            generation_source = "llm"
+            if not questions:
+                if not self.allow_rule_based_quiz_fallback:
+                    raise ValueError(
+                        "LLM quiz generation failed or is unavailable. "
+                        "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
+                        f"Details: {self._last_quiz_generation_error or 'unknown'}"
                     )
-                    source = "fallback"
-                generation_sources.append(source)
-                questions.extend(local_questions)
+                for concept_id, count in per_concept_counts.items():
+                    bank = self._subject_bank(concept_id)
+                    for i in range(count):
+                        item = bank[i % len(bank)]
+                        questions.append(
+                            QuizQuestion(
+                                question_id=f"all-concepts-q{len(questions) + 1}",
+                                concept=concept_id,
+                                stem=item["stem"],
+                                options=item["options"],
+                                correct_answer=item["correct_answer"],
+                                explanation=item.get("explanation"),
+                                difficulty=item.get("difficulty", "medium"),
+                            )
+                        )
+                generation_source = "fallback"
 
             questions = self._assign_unique_question_ids("all-concepts", questions[: request.num_questions])
             quizzes = state.setdefault("quizzes", {})
@@ -834,7 +906,7 @@ class AssessmentEngine:
                     }
                     for q in questions
                 ],
-                "generation_source": "mixed" if len(set(generation_sources)) > 1 else (generation_sources[0] if generation_sources else "llm"),
+                "generation_source": generation_source,
                 "kg_context": {
                     "concept": "all-concepts",
                     "prerequisites": [],
@@ -1015,11 +1087,13 @@ class AssessmentEngine:
         question: Dict[str, Any],
         selected_answer: str,
         confidence_1_to_5: int,
+        allow_llm: bool = True,
     ) -> MistakeClassification:
         tested_concept = str(question.get("concept") or concept)
-        llm_result = self._llm_classify_ambiguous(tested_concept, question, selected_answer, confidence_1_to_5)
-        if llm_result:
-            return llm_result
+        if allow_llm:
+            llm_result = self._llm_classify_ambiguous(tested_concept, question, selected_answer, confidence_1_to_5)
+            if llm_result:
+                return llm_result
 
         # Deterministic fallback when LLM classification is unavailable.
         if confidence_1_to_5 >= 4:
@@ -1126,6 +1200,10 @@ class AssessmentEngine:
                 question=question,
                 selected_answer=answer.selected_answer,
                 confidence_1_to_5=answer.confidence_1_to_5,
+                allow_llm=not (
+                    self.skip_llm_classification_for_long_quiz
+                    and len(request.answers) >= self.long_quiz_threshold
+                ),
             )
             previous = student_cls.get(answer.question_id)
             if not previous and classification.mistake_type == "conceptual":

@@ -3,6 +3,7 @@ import pathlib
 from datetime import datetime, timezone
 from datetime import timedelta
 from typing import Dict, List, Optional
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -145,7 +146,115 @@ _openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 tutor_service = TutorService(db, _openai_client)
 peer_session_service = PeerSessionService(db, _openai_client)
 _comprehensive_quiz_unlocks: Dict[str, datetime] = {}
+_comprehensive_quiz_tickets: Dict[str, str] = {}
 COMPREHENSIVE_QUIZ_UNLOCK_MINUTES = 15
+
+
+def _set_comprehensive_unlock(student_id: str, expires_at: datetime) -> None:
+    _comprehensive_quiz_unlocks[student_id] = expires_at
+    if db is None:
+        return
+    try:
+        db.collection("students").document(student_id).set(
+            {
+                "comprehensive_quiz_unlock_until": expires_at.isoformat(),
+            },
+            merge=True,
+        )
+    except Exception:
+        pass
+
+
+def _get_comprehensive_unlock(student_id: str) -> Optional[datetime]:
+    in_memory = _comprehensive_quiz_unlocks.get(student_id)
+    if in_memory is not None:
+        return in_memory
+    if db is None:
+        return None
+    try:
+        doc = db.collection("students").document(student_id).get()
+        if not doc.exists:
+            return None
+        raw = (doc.to_dict() or {}).get("comprehensive_quiz_unlock_until")
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        _comprehensive_quiz_unlocks[student_id] = dt
+        return dt
+    except Exception:
+        return None
+
+
+def _consume_comprehensive_unlock(student_id: str) -> None:
+    _comprehensive_quiz_unlocks.pop(student_id, None)
+    if db is None:
+        return
+    try:
+        db.collection("students").document(student_id).set(
+            {
+                "comprehensive_quiz_unlock_until": None,
+            },
+            merge=True,
+        )
+    except Exception:
+        pass
+
+
+def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime) -> None:
+    _comprehensive_quiz_tickets[student_id] = ticket
+    if db is None:
+        return
+    try:
+        db.collection("students").document(student_id).set(
+            {
+                "comprehensive_quiz_ticket": ticket,
+                "comprehensive_quiz_ticket_expires_at": expires_at.isoformat(),
+            },
+            merge=True,
+        )
+    except Exception:
+        pass
+
+
+def _validate_and_consume_comprehensive_ticket(student_id: str, ticket: str) -> bool:
+    if not ticket:
+        return False
+    in_memory = _comprehensive_quiz_tickets.get(student_id)
+    if in_memory and in_memory == ticket:
+        _comprehensive_quiz_tickets.pop(student_id, None)
+        return True
+    if db is None:
+        return False
+    try:
+        doc_ref = db.collection("students").document(student_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return False
+        data = doc.to_dict() or {}
+        stored = str(data.get("comprehensive_quiz_ticket") or "")
+        if stored != ticket:
+            return False
+        raw_exp = data.get("comprehensive_quiz_ticket_expires_at")
+        if not isinstance(raw_exp, str) or not raw_exp.strip():
+            return False
+        exp = datetime.fromisoformat(raw_exp.replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            return False
+        doc_ref.set(
+            {
+                "comprehensive_quiz_ticket": None,
+                "comprehensive_quiz_ticket_expires_at": None,
+            },
+            merge=True,
+        )
+        _comprehensive_quiz_tickets.pop(student_id, None)
+        return True
+    except Exception:
+        return False
 
 
 def _courses_collection(student_id: str):
@@ -353,6 +462,7 @@ async def upload_files(
             text_chunks = process_file(str(file_path))
             if not text_chunks:
                 uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "success"})
+                successful_uploads += 1
                 continue
 
             full_text = " ".join(text_chunks)
@@ -432,15 +542,19 @@ async def upload_files(
                 file_path.unlink()
 
     if successful_uploads > 0:
-        _comprehensive_quiz_unlocks[student_id] = datetime.now(timezone.utc) + timedelta(
-            minutes=COMPREHENSIVE_QUIZ_UNLOCK_MINUTES
-        )
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=COMPREHENSIVE_QUIZ_UNLOCK_MINUTES)
+        ticket = uuid4().hex
+        _set_comprehensive_unlock(student_id, expires_at)
+        _set_comprehensive_ticket(student_id, ticket, expires_at)
+    else:
+        ticket = None
 
     return {
         "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
         "files": uploaded_files,
         "kg_concepts_added": kg_concepts_added,
         "suggested_quiz_concept": suggested_quiz_concept,
+        "comprehensive_quiz_ticket": ticket,
     }
 
 
@@ -473,9 +587,11 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
         requested = (request.concept or "").strip().lower()
         all_aliases = {"all", "all-concepts", "all_concepts", "__all__", "comprehensive"}
         if requested in all_aliases:
-            unlock_until = _comprehensive_quiz_unlocks.get(student_id)
+            ticket_ok = _validate_and_consume_comprehensive_ticket(student_id, str(request.upload_ticket or ""))
+            unlock_until = _get_comprehensive_unlock(student_id)
             now = datetime.now(timezone.utc)
-            if unlock_until is None or unlock_until < now:
+            unlock_ok = unlock_until is not None and unlock_until >= now
+            if not ticket_ok and not unlock_ok:
                 raise HTTPException(
                     status_code=403,
                     detail="Comprehensive quiz can only be generated right after a successful material upload.",
@@ -497,7 +613,7 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
             request.concepts = concept_ids
             request.num_questions = 20
             # One-time unlock; next comprehensive run requires a fresh upload.
-            _comprehensive_quiz_unlocks.pop(student_id, None)
+            _consume_comprehensive_unlock(student_id)
         else:
             concept_id = _resolve_user_concept_id(request.concept, nodes)
             if not concept_id:
@@ -507,6 +623,8 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
                 )
             request.concept = concept_id
         return assessment_engine.generate_quiz(request)
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

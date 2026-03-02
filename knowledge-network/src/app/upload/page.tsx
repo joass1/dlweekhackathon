@@ -51,6 +51,7 @@ export default function UploadPage() {
     try {
       const result = await apiFetchWithAuth<{
         files?: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }[];
+        comprehensive_quiz_ticket?: string;
       }>('/upload', {
         method: 'POST',
         body: formData,
@@ -68,8 +69,16 @@ export default function UploadPage() {
       const hasSuccess = normalized.some(file => file.status === 'success');
       if (hasSuccess) {
         setIsStartingAssessment(true);
+        const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
+        if (ticket && typeof window !== 'undefined') {
+          window.sessionStorage.setItem('comprehensive_quiz_ticket', ticket);
+        }
         setTimeout(() => {
-          router.push('/assessment/all-concepts/take');
+          router.push(
+            ticket
+              ? `/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`
+              : '/assessment/all-concepts/take'
+          );
         }, 500);
       }
     } catch (error) {
