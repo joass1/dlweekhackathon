@@ -98,10 +98,57 @@ Return a JSON array (no markdown, no extra text):
                 questions = parsed.get("questions", [])
             else:
                 questions = parsed
-            return questions if isinstance(questions, list) else []
+            return self._normalize_questions(questions, member_profiles, topic)
         except Exception as e:
             print(f"[PeerSessionService] AI question generation failed: {e}")
             return self._fallback_questions(member_profiles, topic)
+
+    def _normalize_questions(
+        self,
+        questions: Any,
+        member_profiles: List[Dict[str, Any]],
+        topic: str,
+    ) -> List[Dict[str, Any]]:
+        """Sanitize AI output and guarantee at least one valid question."""
+        if not isinstance(questions, list) or not questions:
+            return self._fallback_questions(member_profiles, topic)
+
+        by_id = {str(m.get("student_id")): m for m in member_profiles if m.get("student_id")}
+        normalized: List[Dict[str, Any]] = []
+        for i, q in enumerate(questions):
+            if not isinstance(q, dict):
+                continue
+            target_member = str(q.get("target_member") or "")
+            if target_member not in by_id and member_profiles:
+                target_member = str(member_profiles[min(i, len(member_profiles) - 1)].get("student_id", ""))
+            member_name = by_id.get(target_member, {}).get("name", target_member or "Member")
+            q_type = str(q.get("type") or "open").lower()
+            if q_type not in {"open", "code", "math", "mcq"}:
+                q_type = "open"
+            options = q.get("options")
+            if q_type != "mcq" or not isinstance(options, list):
+                options = None
+
+            stem = str(q.get("stem") or "").strip()
+            correct_answer = str(q.get("correct_answer") or "").strip()
+            if not stem or not correct_answer or not target_member:
+                continue
+
+            normalized.append({
+                "question_id": str(q.get("question_id") or f"q_{len(normalized)}"),
+                "target_member": target_member,
+                "target_member_name": str(q.get("target_member_name") or member_name),
+                "weak_concept": str(q.get("weak_concept") or topic),
+                "type": q_type,
+                "stem": stem,
+                "options": options,
+                "correct_answer": correct_answer,
+                "explanation": str(q.get("explanation") or f"This question checks understanding of {topic}."),
+            })
+
+        if not normalized:
+            return self._fallback_questions(member_profiles, topic)
+        return normalized
 
     def _fallback_questions(
         self, member_profiles: List[Dict[str, Any]], topic: str
@@ -192,6 +239,8 @@ Return JSON (no markdown):
 
         # Generate round-robin questions
         questions = self._generate_round_robin_questions(member_profiles, topic)
+        if not questions:
+            questions = self._fallback_questions(member_profiles, topic)
 
         # Find creator's name
         creator_name = created_by
@@ -258,6 +307,12 @@ Return JSON (no markdown):
         if len(members) >= 2 and data.get("status") == "waiting":
             updates["status"] = "active"
 
+        # Self-heal sessions that were created with empty/invalid questions.
+        if not data.get("questions"):
+            member_profiles = [{"student_id": m["student_id"], "name": m.get("name", m["student_id"]), "concept_profile": {}} for m in members]
+            updates["questions"] = self._fallback_questions(member_profiles, data.get("topic", "general topic"))
+            updates["current_question_index"] = 0
+
         ref.update(updates)
         return {"status": updates.get("status", data.get("status", "waiting")), "already_joined": False}
 
@@ -266,10 +321,27 @@ Return JSON (no markdown):
         if not self.db:
             return None
 
-        doc = self.db.collection(self.collection).document(session_id).get()
+        ref = self.db.collection(self.collection).document(session_id)
+        doc = ref.get()
         if not doc.exists:
             return None
-        return doc.to_dict()
+        data = doc.to_dict() or {}
+
+        # Self-heal sessions that have no questions so frontend doesn't hang.
+        if not data.get("questions"):
+            members = data.get("members", []) or []
+            member_profiles = [
+                {"student_id": m.get("student_id"), "name": m.get("name", m.get("student_id")), "concept_profile": {}}
+                for m in members
+                if m.get("student_id")
+            ]
+            if member_profiles:
+                questions = self._fallback_questions(member_profiles, data.get("topic", "general topic"))
+                data["questions"] = questions
+                data["current_question_index"] = 0
+                ref.update({"questions": questions, "current_question_index": 0})
+
+        return data
 
     def get_active_session(self, hub_id: str) -> Optional[Dict[str, Any]]:
         """Find an active or waiting session for a hub."""
