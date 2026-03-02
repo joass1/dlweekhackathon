@@ -52,6 +52,7 @@ from app.models.tutor_schemas import (
     EmbedContentRequest, EmbedContentResponse,
     RetrieveContextRequest,
     TutorChatRequest,
+    CheckpointRequest, CheckpointSubmitRequest, CheckpointSubmitResponse,
     InterventionRequest, InterventionResponse,
     SessionData, SessionSummaryResponse,
 )
@@ -880,7 +881,30 @@ async def tutor_chat_endpoint(request: TutorChatRequest, student_id: str = Depen
     try:
         if not request.query:
             raise HTTPException(status_code=400, detail="Query is required")
-        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids, request.mode)
+        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/checkpoint")
+async def checkpoint_generate_endpoint(request: CheckpointRequest, student_id: str = Depends(get_student_id)):
+    try:
+        return tutor_service.generate_checkpoint(
+            request.topic_id, request.session_messages, request.already_tested, student_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/checkpoint/submit", response_model=CheckpointSubmitResponse)
+async def checkpoint_submit_endpoint(request: CheckpointSubmitRequest, student_id: str = Depends(get_student_id)):
+    try:
+        return tutor_service.submit_checkpoint(
+            request.session_id, request.topic_id, request.concept_tested,
+            request.question, request.options, request.student_answer,
+            request.correct_answer, request.confidence_rating, request.was_skipped,
+            student_id, request.topic_doc_id,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

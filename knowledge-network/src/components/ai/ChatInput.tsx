@@ -19,11 +19,9 @@ interface ChatInputProps {
   scopedTopics: ScopedTopic[];
   onTopicDrop: (topic: ScopedTopic) => void;
   onTopicRemove: (id: string) => void;
-  mode: 'socratic' | 'content_aware';
-  onModeToggle: () => void;
 }
 
-export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics, onTopicDrop, onTopicRemove, mode, onModeToggle }: ChatInputProps) {
+export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics, onTopicDrop, onTopicRemove }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -104,35 +102,6 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Mode toggle */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-slate-800 bg-white/70 px-2 py-1 rounded-md">
-          {mode === 'content_aware' ? '📖 Content-Aware Mode' : '🧠 Socratic Mode'}
-        </span>
-        <label
-          className="flex items-center gap-2 cursor-pointer bg-white/65 px-2 py-1 rounded-md"
-          title="Toggle on for direct answers from your sources. Toggle off for Socratic guided learning."
-        >
-          <span className="text-xs font-medium text-slate-800">Socratic</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={mode === 'content_aware'}
-            onClick={onModeToggle}
-            className={`relative w-10 h-5 rounded-full transition-colors ${
-              mode === 'content_aware' ? 'bg-blue-500' : 'bg-gray-300'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                mode === 'content_aware' ? 'translate-x-5 left-0.5' : 'left-0.5'
-              }`}
-            />
-          </button>
-          <span className="text-xs font-medium text-blue-700">Content-Aware</span>
-        </label>
-      </div>
-
       {/* Drop zone / pills — single row, horizontal scroll */}
       <div
         ref={pillsRef}

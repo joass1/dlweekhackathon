@@ -66,11 +66,86 @@ function ThinkingIndicator() {
 }
 
 /**
+ * Smart citation deduplication — collapses redundant same-source footnotes.
+ *
+ * Rules:
+ * 1. Single source: if ALL citations reference the same [N], strip them all
+ *    and place ONE [N] at the very end of the text.
+ * 2. Contiguous same-source: if consecutive sentences cite the same [N],
+ *    keep only the last citation in the run.
+ * 3. Multiple sources: keep citations only where the source changes or at
+ *    the end of a same-source group.
+ */
+function deduplicateCitations(content: string): string {
+  // Collect all citation numbers used in the text
+  const allCites = [...content.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
+  if (allCites.length === 0) return content;
+
+  const uniqueCites = new Set(allCites);
+
+  // Rule 1: single unique source → one footnote at the very end
+  if (uniqueCites.size === 1) {
+    const n = allCites[0];
+    const stripped = content.replace(/\s*\[\d+\]/g, '');
+    // Append citation to the last non-empty line
+    const trimmed = stripped.trimEnd();
+    return `${trimmed} [${n}]`;
+  }
+
+  // Rules 2 & 3: group contiguous same-source citations
+  // Split into sentences (keep the delimiter attached to the preceding sentence)
+  const sentencePattern = /([^.!?\n]+[.!?\n]+)/g;
+  const sentences: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = sentencePattern.exec(content)) !== null) {
+    sentences.push(match[1]);
+    lastIndex = match.index + match[0].length;
+  }
+  // Capture any trailing fragment that didn't end with punctuation
+  if (lastIndex < content.length) {
+    sentences.push(content.slice(lastIndex));
+  }
+  if (sentences.length === 0) return content;
+
+  // For each sentence, extract its citation(s) and strip them
+  const parsed = sentences.map(s => {
+    const cites = [...s.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
+    const stripped = s.replace(/\s*\[\d+\]/g, '');
+    // Use the last citation as the "source" for this sentence (most representative)
+    const source = cites.length > 0 ? cites[cites.length - 1] : null;
+    return { text: stripped, source, cites };
+  });
+
+  // Walk through and only emit a citation at the end of a contiguous same-source run
+  const result: string[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const curr = parsed[i];
+    const next = i + 1 < parsed.length ? parsed[i + 1] : null;
+
+    if (curr.source === null) {
+      // No citation on this sentence — emit as-is
+      result.push(curr.text);
+    } else if (next && next.source === curr.source) {
+      // Same source continues — emit sentence without citation
+      result.push(curr.text);
+    } else {
+      // Source changes or this is the last sentence — emit with citation
+      result.push(`${curr.text.trimEnd()} [${curr.source}]`);
+    }
+  }
+
+  return result.join('');
+}
+
+/**
  * Replace [N] citation markers with %%CITE:N%% so they survive markdown parsing
  * as plain text without being interpreted as link syntax.
  */
 function preprocessCitations(content: string): string {
-  return content.replace(/\[(\d+)\]/g, '%%CITE:$1%%');
+  const deduplicated = deduplicateCitations(content);
+  return deduplicated.replace(/\[(\d+)\]/g, '%%CITE:$1%%');
 }
 
 /**
