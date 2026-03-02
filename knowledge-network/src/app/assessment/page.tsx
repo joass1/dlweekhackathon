@@ -206,6 +206,10 @@ export default function AssessmentSelectionPage() {
     }
   }, [courses, searchParams, selectedCourse]);
 
+  const pageShellClass = 'relative min-h-full overflow-hidden';
+  const pageContentClass = 'relative z-10 max-w-6xl mx-auto px-4 py-8 text-white';
+  const glassCardClass = 'rounded-3xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
+
   const BounceLoader = ({ size = 28 }: { size?: number }) => (
     <Image
       src="/logo-images/favicon.png"
@@ -218,17 +222,26 @@ export default function AssessmentSelectionPage() {
   );
 
   return (
-    <div className="min-h-full py-8">
-      <div className="max-w-6xl mx-auto px-4">
+    <div className={pageShellClass}>
+      <div
+        className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+        aria-hidden
+      />
+      <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
+      <div className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-[#03b2e6]/18 blur-3xl" aria-hidden />
+      <div className="pointer-events-none absolute right-[-5rem] top-[-5rem] h-96 w-96 rounded-full bg-amber-400/12 blur-3xl" aria-hidden />
+
+      <div className={pageContentClass}>
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4 text-slate-900">Mentora Assessments</h1>
-          <p className="text-slate-700 max-w-2xl mx-auto">
+          <h1 className="text-3xl font-bold mb-4 text-white">Mentora Assessments</h1>
+          <p className="text-white/75 max-w-2xl mx-auto">
             Assessments are generated from your uploaded materials and current knowledge map.
           </p>
         </div>
 
         {loading ? (
-          <div className="rounded-xl p-10 text-center text-slate-700 border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg">
+          <div className={`${glassCardClass} p-10 text-center text-white/75`}>
             <div className="flex items-center justify-center mb-3">
               <Image src="/logo-images/favicon.png" alt="Loading" width={28} height={28} className="animate-bounce" priority />
             </div>
@@ -237,16 +250,16 @@ export default function AssessmentSelectionPage() {
         ) : null}
 
         {!loading && error ? (
-          <div className="rounded-xl p-6 text-center border border-red-300/50 bg-red-500/20 backdrop-blur-sm text-slate-900 shadow-lg">
+          <div className={`${glassCardClass} p-6 text-center border-red-300/50 bg-red-500/20`}>
             <p className="text-red-100 font-medium">Could not load assessment concepts</p>
             <p className="text-sm text-red-100/90 mt-1">{error}</p>
           </div>
         ) : null}
 
         {!loading && !error && concepts.length === 0 ? (
-          <div className="rounded-xl p-10 text-center border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg text-slate-900">
-            <h2 className="text-xl font-semibold mb-2">No concepts found yet</h2>
-            <p className="text-slate-700 mb-6">
+          <div className={`${glassCardClass} p-10 text-center`}>
+            <h2 className="text-xl font-semibold mb-2 text-white">No concepts found yet</h2>
+            <p className="text-white/75 mb-6">
               Upload course materials first. Your assessments will only appear after concepts exist in your knowledge map.
             </p>
             <Link href="/upload" className="inline-flex items-center px-5 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] transition-colors">
@@ -257,23 +270,23 @@ export default function AssessmentSelectionPage() {
 
         {!loading && !error && concepts.length > 0 && !selectedCourse ? (
           <div>
-            <h2 className="text-xl font-semibold mb-4 text-slate-900 text-white">Select A Course</h2>
+            <h2 className="text-xl font-semibold mb-4 text-white">Select A Course</h2>
             <div className="grid md:grid-cols-3 gap-6">
               {coursesWithCounts.map((course) => (
                 <button
                   key={course.id}
-                  className={`text-left rounded-xl shadow-lg overflow-hidden transition-shadow border border-black/10 bg-white/65 backdrop-blur-sm text-slate-900 ${
-                    course.topicCount > 0 ? 'hover:shadow-xl' : 'opacity-70'
+                  className={`text-left ${glassCardClass} overflow-hidden transition-all ${
+                    course.topicCount > 0 ? 'hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] hover:-translate-y-0.5' : 'opacity-70'
                   }`}
                   onClick={() => setSelectedCourse(course.id)}
                 >
                   <div className="p-6">
-                    <h3 className="text-xl font-semibold mb-2">{course.name}</h3>
-                    <p className="text-sm text-slate-700">
+                    <h3 className="text-xl font-semibold mb-2 text-white">{course.name}</h3>
+                    <p className="text-sm text-white/75">
                       {course.topicCount} topic{course.topicCount === 1 ? '' : 's'} ready
                     </p>
                   </div>
-                  <div className="bg-white/400 p-4 text-center border-t border-black/10">
+                  <div className="bg-white/5 p-4 text-center border-t border-white/15">
                     <span className="text-[#4cc9f0] font-medium">{course.topicCount > 0 ? 'View Topics' : 'No Topics Yet'}</span>
                   </div>
                 </button>
@@ -286,22 +299,22 @@ export default function AssessmentSelectionPage() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-semibold text-slate-900">{selectedCourseMeta.name}</h2>
-                <p className="text-sm text-slate-700">
+                <h2 className="text-xl font-semibold text-white">{selectedCourseMeta.name}</h2>
+                <p className="text-sm text-white/75">
                   {selectedCourseConcepts.length} topic{selectedCourseConcepts.length === 1 ? '' : 's'} available
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedCourse(null)}
-                className="px-4 py-2 rounded-full border border-black/20 text-sm text-slate-900 hover:bg-white/400"
+                className="px-4 py-2 rounded-full border border-white/30 text-sm text-white hover:bg-white/10"
               >
                 Back To Courses
               </button>
             </div>
 
             {selectedCourseConcepts.length === 0 ? (
-              <div className="rounded-xl p-8 text-center text-slate-700 border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg">
+              <div className={`${glassCardClass} p-8 text-center text-white/75`}>
                 No topics found for this course yet.
               </div>
             ) : (
@@ -309,17 +322,17 @@ export default function AssessmentSelectionPage() {
                 {selectedCourseConcepts.map((concept) => (
                   <div
                     key={concept.id}
-                    className="rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow border border-black/10 bg-white/65 backdrop-blur-sm text-slate-900"
+                    className={`${glassCardClass} overflow-hidden hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] transition-all`}
                   >
                     <div className="p-6">
-                      <h3 className="text-xl font-semibold mb-2">{concept.title}</h3>
-                      <p className="text-slate-700 mb-3">{concept.category}</p>
-                      <div className="flex items-center justify-between text-sm text-slate-600">
+                      <h3 className="text-xl font-semibold mb-2 text-white">{concept.title}</h3>
+                      <p className="text-white/75 mb-3">{concept.category}</p>
+                      <div className="flex items-center justify-between text-sm text-white/70">
                         <span>5 questions</span>
                         <span>{concept.masteryPct}% mastery</span>
                       </div>
                     </div>
-                    <div className="bg-white/400 p-4 text-center border-t border-black/10">
+                    <div className="bg-white/5 p-4 text-center border-t border-white/15">
                       <button
                         type="button"
                         className="text-[#4cc9f0] font-medium"
@@ -336,22 +349,22 @@ export default function AssessmentSelectionPage() {
         ) : null}
 
         {!loading && !error ? (
-          <div className="mt-10 border border-black/10 rounded-xl p-6 bg-white/65 backdrop-blur-sm shadow-lg text-slate-900">
-            <h2 className="text-xl font-semibold mb-4">Past Assessments</h2>
+          <div className={`mt-10 ${glassCardClass} p-6`}>
+            <h2 className="text-xl font-semibold mb-4 text-white">Past Assessments</h2>
             {pastRuns.length === 0 ? (
-              <p className="text-sm text-slate-700">No past assessments yet. Complete one to see history.</p>
+              <p className="text-sm text-white/75">No past assessments yet. Complete one to see history.</p>
             ) : (
               <div className="space-y-3">
                 {pastRuns.map((run) => (
-                  <div key={run.run_id} className="rounded-lg border border-black/10 bg-white/40 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div key={run.run_id} className="rounded-lg border border-white/15 bg-white/5 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
-                      <p className="font-medium">{String(run.concept || '').replace(/-/g, ' ')}</p>
-                      <p className="text-sm text-slate-600">
+                      <p className="font-medium text-white">{String(run.concept || '').replace(/-/g, ' ')}</p>
+                      <p className="text-sm text-white/70">
                         {new Date(run.submitted_at).toLocaleString()} • {run.correct_count}/{run.total_questions} correct
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold">{Math.round(Number(run.score || 0))}%</span>
+                      <span className="text-sm font-semibold text-white">{Math.round(Number(run.score || 0))}%</span>
                       <button
                         className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] text-sm"
                         onClick={() => router.push(`/assessment/${run.concept}/take?retry=${Date.now()}`)}

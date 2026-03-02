@@ -102,9 +102,9 @@ interface PersistedStudyMissionSession {
 }
 
 export default function StudyMissionPage() {
-  const pageShellClass = 'min-h-full';
-  const pageContentClass = 'p-6 max-w-7xl mx-auto overflow-x-hidden';
-  const surfaceCardClass = 'border border-slate-200/90 bg-white shadow-sm';
+  const pageShellClass = 'relative min-h-full overflow-hidden';
+  const pageContentClass = 'relative z-10 p-6 max-w-7xl mx-auto overflow-x-hidden text-white';
+  const surfaceCardClass = 'rounded-3xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)] text-white';
 
   const router = useRouter();
   const [missionActive, setMissionActive] = useState(false);
@@ -841,7 +841,7 @@ export default function StudyMissionPage() {
       <Card
         key={concept.concept_id}
         className={`${surfaceCardClass} p-4 transition-all ${
-          isCurrent ? 'ring-2 ring-[#03b2e6] bg-[#e0f4fb]' :
+          isCurrent ? 'ring-2 ring-[#03b2e6] bg-[#03b2e6]/18' :
           isDone ? 'opacity-65' : ''
         }`}
       >
@@ -865,13 +865,13 @@ export default function StudyMissionPage() {
               )}
             </div>
 
-            <div className="flex items-center gap-4 text-sm text-muted-foreground mb-2 flex-wrap">
+            <div className="flex items-center gap-4 text-sm text-white/75 mb-2 flex-wrap">
               <span>Mastery: {masteryPct}%</span>
               <span>~{concept.estimated_minutes} min</span>
               <span>ROI: {roiPerMinute(concept).toFixed(1)}/min</span>
             </div>
 
-            <div className="w-full bg-muted rounded-full h-1.5 mb-2 max-w-xs">
+            <div className="w-full bg-white/15 rounded-full h-1.5 mb-2 max-w-xs">
               <div
                 className={`h-1.5 rounded-full ${
                   masteryPct >= 70 ? 'bg-green-500' : masteryPct >= 40 ? 'bg-yellow-500' : 'bg-red-500'
@@ -880,7 +880,7 @@ export default function StudyMissionPage() {
               />
             </div>
 
-            <div className="flex gap-4 text-xs text-muted-foreground flex-wrap">
+            <div className="flex gap-4 text-xs text-white/65 flex-wrap">
               <span>Gap: {(concept.factors.gap_severity * 100).toFixed(0)}%</span>
               <span>Prereq depth: {concept.factors.prereq_depth}</span>
               <span>Decay risk: {(concept.factors.decay_risk * 100).toFixed(0)}%</span>
@@ -894,7 +894,7 @@ export default function StudyMissionPage() {
               disabled={isDone}
               className={`px-4 py-2 rounded-full text-sm flex-shrink-0 ${
                 isDone
-                  ? 'bg-green-100 text-green-700'
+                  ? 'bg-emerald-500/25 text-emerald-100'
                   : 'bg-[#03b2e6] text-white hover:bg-[#029ad0]'
               }`}
             >
@@ -919,43 +919,51 @@ export default function StudyMissionPage() {
   if (!missionStarted) {
     return (
       <div className={pageShellClass}>
+        <div
+          className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+          aria-hidden
+        />
+        <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
+        <div className="pointer-events-none absolute -left-24 top-20 h-72 w-72 rounded-full bg-[#03b2e6]/20 blur-3xl" aria-hidden />
+        <div className="pointer-events-none absolute right-[-5rem] top-[-4rem] h-80 w-80 rounded-full bg-amber-400/15 blur-3xl" aria-hidden />
         <div className={pageContentClass}>
           <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold flex items-center gap-2 mb-2">
+        <h1 className="text-3xl font-bold flex items-center gap-2 mb-2">
           <Rocket className="w-6 h-6 text-[#03b2e6]" />
           Study Mission
         </h1>
-        <p className="text-muted-foreground mb-8">
+        <p className="text-white/75 mb-8">
           Tell us how much time you have. Mentora will create an optimized study queue
           prioritized by knowledge gap severity, prerequisite depth, and decay risk.
         </p>
 
         <Card className={`${surfaceCardClass} p-6`}>
-          <h2 className="font-semibold mb-3">Select Course</h2>
+          <h2 className="font-semibold mb-3 text-white">Select Course</h2>
           <div className="mb-6">
             <select
               value={selectedCourse}
               onChange={(event) => setSelectedCourse(event.target.value)}
-              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm"
+              className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm focus:border-[#03b2e6] focus:outline-none"
             >
               {courses.map((course) => (
-                <option key={course.id} value={course.id}>
+                <option key={course.id} value={course.id} className="text-slate-900">
                   {course.name}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-muted-foreground mt-2">
+            <p className="text-xs text-white/70 mt-2">
               Study Mission and flashcards will be generated for this course.
             </p>
           </div>
 
-          <h2 className="font-semibold mb-4">How much time do you have?</h2>
+          <h2 className="font-semibold mb-4 text-white">How much time do you have?</h2>
           <div className="mb-6">
-            <div className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-2 py-1">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-2 py-1">
               <button
                 type="button"
                 onClick={() => setStudyMinutes((prev) => clampStudyMinutes(prev - 1))}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-gray-300 text-gray-700 hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-white/30 text-white hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
                 aria-label="Decrease study minutes"
               >
                 <Minus className="w-4 h-4" />
@@ -971,30 +979,30 @@ export default function StudyMissionPage() {
                   if (!Number.isFinite(raw)) return;
                   setStudyMinutes(clampStudyMinutes(Math.round(raw)));
                 }}
-                className="w-16 bg-transparent text-center text-sm font-semibold focus:outline-none"
+                className="w-16 bg-transparent text-center text-sm font-semibold text-white focus:outline-none"
                 aria-label="Study minutes"
               />
-              <span className="text-xs text-muted-foreground pr-1">mins</span>
+              <span className="text-xs text-white/70 pr-1">mins</span>
 
               <button
                 type="button"
                 onClick={() => setStudyMinutes((prev) => clampStudyMinutes(prev + 1))}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-gray-300 text-gray-700 hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-white/30 text-white hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
                 aria-label="Increase study minutes"
               >
                 <Plus className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">Set anywhere from 1 to 60 minutes.</p>
+            <p className="text-xs text-white/70 mt-2">Set anywhere from 1 to 60 minutes.</p>
           </div>
 
-          <h2 className="font-semibold mb-4">How many flashcards should we generate?</h2>
+          <h2 className="font-semibold mb-4 text-white">How many flashcards should we generate?</h2>
           <div className="mb-6">
-            <div className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-2 py-1">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-2 py-1">
               <button
                 type="button"
                 onClick={() => setFlashcardCount((prev) => clampFlashcardCount(prev - 1))}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-gray-300 text-gray-700 hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-white/30 text-white hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
                 aria-label="Decrease flashcard count"
               >
                 <Minus className="w-4 h-4" />
@@ -1010,21 +1018,21 @@ export default function StudyMissionPage() {
                   if (!Number.isFinite(raw)) return;
                   setFlashcardCount(clampFlashcardCount(Math.round(raw)));
                 }}
-                className="w-16 bg-transparent text-center text-sm font-semibold focus:outline-none"
+                className="w-16 bg-transparent text-center text-sm font-semibold text-white focus:outline-none"
                 aria-label="Flashcard count"
               />
-              <span className="text-xs text-muted-foreground pr-1">cards</span>
+              <span className="text-xs text-white/70 pr-1">cards</span>
 
               <button
                 type="button"
                 onClick={() => setFlashcardCount((prev) => clampFlashcardCount(prev + 1))}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-gray-300 text-gray-700 hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-white/30 text-white hover:border-[#03b2e6] hover:text-[#03b2e6] transition-colors"
                 aria-label="Increase flashcard count"
               >
                 <Plus className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">Choose between 1 and 70 flashcards.</p>
+            <p className="text-xs text-white/70 mt-2">Choose between 1 and 70 flashcards.</p>
           </div>
 
           <h3 className="text-sm font-semibold mb-2">Choose your mission strategy</h3>
@@ -1033,30 +1041,30 @@ export default function StudyMissionPage() {
               onClick={() => setPlanMode('grade_boost')}
               className={`rounded-xl border p-3 text-left transition-colors ${
                 planMode === 'grade_boost'
-                  ? 'border-[#03b2e6] bg-[#e0f4fb]'
-                  : 'border-gray-200 hover:border-[#03b2e6]/40'
+                  ? 'border-[#03b2e6] bg-[#03b2e6]/20'
+                  : 'border-white/20 bg-white/5 hover:border-[#03b2e6]/40'
               }`}
             >
               <p className="font-medium flex items-center gap-2"><TrendingUp className="w-4 h-4 text-[#03b2e6]" /> Grade Boost Path</p>
-              <p className="text-xs text-muted-foreground mt-1">Optimize for fastest score gains per minute.</p>
+              <p className="text-xs text-white/70 mt-1">Optimize for fastest score gains per minute.</p>
             </button>
             <button
               onClick={() => setPlanMode('foundation_repair')}
               className={`rounded-xl border p-3 text-left transition-colors ${
                 planMode === 'foundation_repair'
-                  ? 'border-[#03b2e6] bg-[#e0f4fb]'
-                  : 'border-gray-200 hover:border-[#03b2e6]/40'
+                  ? 'border-[#03b2e6] bg-[#03b2e6]/20'
+                  : 'border-white/20 bg-white/5 hover:border-[#03b2e6]/40'
               }`}
             >
               <p className="font-medium flex items-center gap-2"><GitBranch className="w-4 h-4 text-[#03b2e6]" /> Foundation Repair Path</p>
-              <p className="text-xs text-muted-foreground mt-1">Fix deepest prerequisite gaps first.</p>
+              <p className="text-xs text-white/70 mt-1">Fix deepest prerequisite gaps first.</p>
             </button>
           </div>
 
-          <div className="flex items-center justify-between bg-background rounded-lg px-4 py-3 mb-6">
+          <div className="flex items-center justify-between bg-white/5 border border-white/15 rounded-lg px-4 py-3 mb-6">
             <div>
               <p className="text-sm font-medium flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-[#03b2e6]" /> Confidence Trap Mode</p>
-              <p className="text-xs text-muted-foreground">Adds a quick reflection check on careless-risk concepts.</p>
+              <p className="text-xs text-white/70">Adds a quick reflection check on careless-risk concepts.</p>
             </div>
             <button
               onClick={() => setConfidenceTrapEnabled((prev) => !prev)}
@@ -1068,9 +1076,9 @@ export default function StudyMissionPage() {
             </button>
           </div>
 
-          <div className="bg-background rounded-lg p-4 mb-6">
+          <div className="bg-white/5 border border-white/15 rounded-lg p-4 mb-6">
             <h3 className="text-sm font-medium mb-2">Mission Preview</h3>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-white/80">
               {planMode === 'grade_boost'
                 ? `You selected Grade Boost for ${selectedCourseName}. In ${studyMinutes} minutes, we prioritize high ROI concepts with fast payoff and generate ${flashcardCount} flashcards.`
                 : `You selected Foundation Repair for ${selectedCourseName}. In ${studyMinutes} minutes, we prioritize root prerequisite gaps first and generate ${flashcardCount} flashcards.`}
@@ -1103,20 +1111,28 @@ export default function StudyMissionPage() {
 
   return (
     <div className={pageShellClass}>
+    <div
+      className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
+      style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+      aria-hidden
+    />
+    <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
+    <div className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-[#03b2e6]/18 blur-3xl" aria-hidden />
+    <div className="pointer-events-none absolute right-[-5rem] top-[-5rem] h-96 w-96 rounded-full bg-amber-400/12 blur-3xl" aria-hidden />
     <div className={pageContentClass}>
       <div className="flex justify-between items-start mb-6">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-3xl font-bold flex items-center gap-2">
             <Rocket className="w-6 h-6 text-[#03b2e6]" />
             Study Mission
           </h1>
-          <p className="text-muted-foreground text-sm">AI-prioritized concepts based on your knowledge graph</p>
-          <p className="text-xs text-muted-foreground mt-1">Course: <span className="font-medium text-foreground">{selectedCourseName}</span></p>
+          <p className="text-white/75 text-sm">AI-prioritized concepts based on your knowledge graph</p>
+          <p className="text-xs text-white/70 mt-1">Course: <span className="font-medium text-white">{selectedCourseName}</span></p>
           <div className="flex items-center gap-2 mt-3">
             <button
               onClick={() => setPlanMode('grade_boost')}
               className={`px-3 py-1.5 rounded-full text-xs border ${
-                planMode === 'grade_boost' ? 'bg-[#03b2e6] text-white border-[#03b2e6]' : 'border-gray-300 hover:border-[#03b2e6]'
+                planMode === 'grade_boost' ? 'bg-[#03b2e6] text-white border-[#03b2e6]' : 'border-white/30 text-white hover:border-[#03b2e6]'
               }`}
             >
               Grade Boost
@@ -1124,7 +1140,7 @@ export default function StudyMissionPage() {
             <button
               onClick={() => setPlanMode('foundation_repair')}
               className={`px-3 py-1.5 rounded-full text-xs border ${
-                planMode === 'foundation_repair' ? 'bg-[#03b2e6] text-white border-[#03b2e6]' : 'border-gray-300 hover:border-[#03b2e6]'
+                planMode === 'foundation_repair' ? 'bg-[#03b2e6] text-white border-[#03b2e6]' : 'border-white/30 text-white hover:border-[#03b2e6]'
               }`}
             >
               Foundation Repair
@@ -1133,7 +1149,7 @@ export default function StudyMissionPage() {
         </div>
 
         <Card className={`${surfaceCardClass} p-4 text-center min-w-[200px]`}>
-          <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-1">
+          <div className="flex items-center justify-center gap-1 text-xs text-white/70 mb-1">
             <Clock className="w-3 h-3" /> Time Remaining
           </div>
           <p className={`text-4xl font-mono font-bold mb-2 ${timeRemaining < 60 ? 'text-red-600' : ''}`}>
@@ -1151,11 +1167,11 @@ export default function StudyMissionPage() {
           </div>
           <button
             onClick={handleEndSessionEarly}
-            className="mt-2 w-full rounded-full border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+            className="mt-2 w-full rounded-full border border-red-300/40 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/20"
           >
             End Session &amp; Take Quiz
           </button>
-          <p className="text-[11px] text-muted-foreground mt-2">
+          <p className="text-[11px] text-white/65 mt-2">
             At timer end, you&apos;ll be redirected to assessment for this course.
           </p>
         </Card>
@@ -1163,8 +1179,8 @@ export default function StudyMissionPage() {
 
       {/* Mission Briefing */}
       {missionBriefing && (
-        <Card className={`${surfaceCardClass} p-4 mb-6 bg-[#e0f4fb] border-[#03b2e6]/30`}>
-          <p className="text-sm text-foreground">{missionBriefing}</p>
+        <Card className={`${surfaceCardClass} p-4 mb-6 bg-[#03b2e6]/15 border-[#03b2e6]/35`}>
+          <p className="text-sm text-white/90">{missionBriefing}</p>
         </Card>
       )}
 
@@ -1175,16 +1191,16 @@ export default function StudyMissionPage() {
             <h2 className="text-lg font-semibold mt-1">
               {planMode === 'grade_boost' ? 'Grade Boost Path' : 'Foundation Repair Path'}
             </h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Must-do concepts fit within your budget: <span className="font-medium text-foreground">{missionBuckets.minutesPlanned}/{studyMinutes} min</span>.
-              {' '}Expected mission impact: <span className="font-medium text-foreground">{projectedImpact}%</span>.
+            <p className="text-sm text-white/75 mt-1">
+              Must-do concepts fit within your budget: <span className="font-medium text-white">{missionBuckets.minutesPlanned}/{studyMinutes} min</span>.
+              {' '}Expected mission impact: <span className="font-medium text-white">{projectedImpact}%</span>.
             </p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-muted-foreground">Time spent</p>
+            <p className="text-xs text-white/70">Time spent</p>
             <p className="font-semibold">{formatTime(missionSpentSeconds)}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Trap mode: <span className="font-medium text-foreground">{confidenceTrapEnabled ? 'On' : 'Off'}</span>
+            <p className="text-xs text-white/70 mt-1">
+              Trap mode: <span className="font-medium text-white">{confidenceTrapEnabled ? 'On' : 'Off'}</span>
             </p>
           </div>
         </div>
@@ -1196,13 +1212,13 @@ export default function StudyMissionPage() {
             <Layers className="w-4 h-4 text-[#03b2e6]" />
             Course Flashcards
           </h3>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-white/70">
             {flashcards.length === 0 ? '0/0' : `${currentFlashcardIndex + 1}/${flashcards.length}`}
           </span>
         </div>
 
         {isLoadingFlashcards ? (
-          <div className="min-h-[180px] flex flex-col items-center justify-center text-sm text-muted-foreground">
+          <div className="min-h-[180px] flex flex-col items-center justify-center text-sm text-white/70">
             <BounceLoader size={20} />
             <p className="mt-2">AI agent is generating flashcards from your uploaded course chunks...</p>
           </div>
@@ -1277,7 +1293,7 @@ export default function StudyMissionPage() {
             </div>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-white/70">
             No flashcards yet. Start a mission to generate a deck for {selectedCourseName}.
           </p>
         )}
@@ -1289,14 +1305,14 @@ export default function StudyMissionPage() {
           Minute ROI Market
         </h3>
         {rankedConcepts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No concepts ranked yet.</p>
+          <p className="text-sm text-white/70">No concepts ranked yet.</p>
         ) : (
           <div className="space-y-2">
             {rankedConcepts.slice(0, 5).map((concept, index) => (
-              <div key={`${concept.concept_id}-roi`} className="flex items-center justify-between gap-4 text-sm border rounded-lg px-3 py-2">
+              <div key={`${concept.concept_id}-roi`} className="flex items-center justify-between gap-4 text-sm border border-white/15 bg-white/5 rounded-lg px-3 py-2">
                 <div className="min-w-0">
                   <p className="font-medium truncate">{index + 1}. {concept.title}</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-white/65">
                     {concept.estimated_minutes} min | reasons: {getReasonTags(concept).join(', ')}
                   </p>
                 </div>
@@ -1313,7 +1329,7 @@ export default function StudyMissionPage() {
           <span>{reviewedMustDo}/{missionBuckets.mustDo.length} must-do concepts reviewed</span>
           <span>{missionProgress}% complete</span>
         </div>
-        <div className="w-full bg-muted rounded-full h-2">
+        <div className="w-full bg-white/15 rounded-full h-2">
           <div className="bg-[#03b2e6] h-2 rounded-full transition-all"
             style={{ width: `${missionProgress}%` }} />
         </div>
@@ -1324,7 +1340,7 @@ export default function StudyMissionPage() {
           <h3 className="font-semibold mb-3">Do Now ({missionBuckets.mustDo.length})</h3>
           <div className="space-y-4">
             {missionBuckets.mustDo.length === 0 ? (
-              <Card className={`${surfaceCardClass} p-4 text-sm text-muted-foreground`}>No must-do concepts generated yet.</Card>
+              <Card className={`${surfaceCardClass} p-4 text-sm text-white/70`}>No must-do concepts generated yet.</Card>
             ) : (
               missionBuckets.mustDo.map((concept) => renderConceptCard(concept, 'must'))
             )}
@@ -1343,9 +1359,9 @@ export default function StudyMissionPage() {
 
       {/* Session complete */}
       {missionBuckets.mustDo.length > 0 && reviewedMustDo === missionBuckets.mustDo.length && (
-        <Card className={`${surfaceCardClass} mt-6 p-6 bg-[#e0f4fb] border-[#03b2e6]/30 text-center`}>
+        <Card className={`${surfaceCardClass} mt-6 p-6 bg-[#03b2e6]/15 border-[#03b2e6]/35 text-center`}>
           <CheckCircle className="w-12 h-12 text-[#03b2e6] mx-auto mb-3" />
-          <h2 className="text-xl font-bold text-foreground mb-2">Mission Complete!</h2>
+          <h2 className="text-xl font-bold text-white mb-2">Mission Complete!</h2>
           <p className="text-[#03b2e6] mb-4">
             You completed all must-do concepts in {Math.ceil(missionSpentSeconds / 60)} minutes.
           </p>
@@ -1353,7 +1369,7 @@ export default function StudyMissionPage() {
             <Link href="/knowledge-map" className="px-4 py-2 bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] text-sm">
               View Knowledge Map
             </Link>
-            <Link href="/assessment" className="px-4 py-2 border border-[#03b2e6] text-[#03b2e6] rounded-full hover:bg-[#e0f4fb] text-sm">
+            <Link href="/assessment" className="px-4 py-2 border border-[#03b2e6] text-[#7adfff] rounded-full hover:bg-[#03b2e6]/15 text-sm">
               Take Assessment
             </Link>
           </div>
