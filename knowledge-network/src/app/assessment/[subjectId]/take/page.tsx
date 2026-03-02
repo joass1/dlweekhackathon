@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import {
   classifyMistake,
   evaluateAnswer,
@@ -22,7 +22,9 @@ type CheckpointQueueItem = { concept: string; missing_concept?: string | null };
 export default function AssessmentTakePage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const subjectId = params.subjectId as string;
+  const courseId = searchParams.get('courseId') || '';
 
   const [questions, setQuestions] = useState<QuizQuestionClient[]>([]);
   const [answers, setAnswers] = useState<AnswersMap>({});
@@ -47,7 +49,7 @@ export default function AssessmentTakePage() {
       setIsEmptyAssessment(false);
       try {
         const token = await getIdToken();
-        const generated = await generateQuiz(studentId, subjectId, 5, token);
+        const generated = await generateQuiz(studentId, subjectId, 5, token, courseId);
         if (!cancelled) {
           setQuestions(generated);
           setIsEmptyAssessment(generated.length === 0);
@@ -116,7 +118,8 @@ export default function AssessmentTakePage() {
         studentId,
         next.concept || subjectId,
         next.missing_concept || undefined,
-        token
+        token,
+        courseId
       );
       setCheckpoint(cp);
       setCheckpointAnswer(null);
@@ -142,8 +145,8 @@ export default function AssessmentTakePage() {
     try {
       const token = await getIdToken();
       const answerPayload = getAnswerPayload();
-      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token);
-      const classification = await classifyMistake(studentId, subjectId, answerPayload, token);
+      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token, courseId);
+      const classification = await classifyMistake(studentId, subjectId, answerPayload, token, courseId);
       setClassificationResult(classification);
       const conceptualQueue: CheckpointQueueItem[] = classification.classifications
         .filter((c) => c.mistake_type === 'conceptual')
@@ -164,7 +167,7 @@ export default function AssessmentTakePage() {
 
       const checkpointStarted = await runNextCheckpoint(conceptualQueue);
       if (!checkpointStarted) {
-        router.push(`/assessment/${subjectId}/matching`);
+        router.push(`/assessment/${subjectId}/matching${courseId ? `?courseId=${courseId}` : ''}`);
       }
     } catch (error) {
       console.error('Error submitting assessment:', error);
@@ -177,7 +180,7 @@ export default function AssessmentTakePage() {
   const handleOverride = async (questionId: string) => {
     try {
       const token = await getIdToken();
-      await overrideClassification(studentId, questionId, token);
+      await overrideClassification(studentId, questionId, token, courseId);
       if (classificationResult) {
         setClassificationResult({
           ...classificationResult,
@@ -208,7 +211,8 @@ export default function AssessmentTakePage() {
         checkpoint.question_id,
         selectedAnswer,
         checkpointConfidence,
-        token
+        token,
+        courseId
       );
       const currentRaw = window.sessionStorage.getItem(`assessment_result_${subjectId}`);
       const current = currentRaw ? JSON.parse(currentRaw) : {};
@@ -223,7 +227,7 @@ export default function AssessmentTakePage() {
       setCheckpoint(null);
       const hasMoreCheckpoints = await runNextCheckpoint();
       if (!hasMoreCheckpoints) {
-        router.push(`/assessment/${subjectId}/matching`);
+        router.push(`/assessment/${subjectId}/matching${courseId ? `?courseId=${courseId}` : ''}`);
       }
     } catch (error) {
       console.error('Checkpoint submit failed:', error);
@@ -396,7 +400,7 @@ export default function AssessmentTakePage() {
                   setCheckpointConfidence(3);
                   const hasMoreCheckpoints = await runNextCheckpoint();
                   if (!hasMoreCheckpoints) {
-                    router.push(`/assessment/${subjectId}/matching`);
+                    router.push(`/assessment/${subjectId}/matching${courseId ? `?courseId=${courseId}` : ''}`);
                   }
                 }}
               >

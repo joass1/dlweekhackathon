@@ -20,14 +20,18 @@ class VectorSearch:
         hits = sum(1 for token in q_tokens if token in text_l)
         return hits / len(q_tokens)
 
-    def search_discussions(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Dict]:
+    def search_discussions(self, query: str, limit: int = 5, user_id: Optional[str] = None, course_id: Optional[str] = None) -> List[Dict]:
         if self.db is None:
             raise RuntimeError("Firestore is not initialized")
 
         max_scan = int(os.getenv("FIREBASE_MAX_CHUNKS_SCAN", "300"))
-        query_ref = self.db.collection(self.collection_name)
-        if user_id:
-            query_ref = query_ref.where("userId", "==", user_id)
+        if user_id and course_id:
+            query_ref = self.db.collection("students").document(user_id) \
+                .collection("courses").document(course_id).collection("chunks")
+        else:
+            query_ref = self.db.collection(self.collection_name)
+            if user_id:
+                query_ref = query_ref.where("userId", "==", user_id)
         docs = query_ref.limit(max_scan).stream()
 
         scored: List[Dict] = []

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 
 interface ConceptDetails {
@@ -16,7 +16,9 @@ interface ConceptDetails {
 export default function AssessmentIntroPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const subjectId = params.subjectId as string;
+  const courseId = searchParams.get('courseId') || '';
   const { apiFetchWithAuth } = useAuthedApi();
   const [subject, setSubject] = useState<ConceptDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,7 +30,7 @@ export default function AssessmentIntroPage() {
       setLoading(true);
       setError(null);
       try {
-        const data = await apiFetchWithAuth<ConceptDetails>(`/api/kg/concepts/${encodeURIComponent(subjectId)}`);
+        const data = await apiFetchWithAuth<ConceptDetails>(`/api/kg/concepts/${encodeURIComponent(subjectId)}${courseId ? `?course_id=${courseId}` : ''}`);
         if (!cancelled) {
           setSubject(data);
         }
@@ -113,7 +115,7 @@ export default function AssessmentIntroPage() {
 
           <div className="text-center">
             <button
-              onClick={() => router.push(`/assessment/${subjectId}/take`)}
+              onClick={() => router.push(`/assessment/${subjectId}/take${courseId ? `?courseId=${courseId}` : ''}`)}
               className="bg-[#03b2e6] text-white px-8 py-3 rounded-full hover:bg-[#029ad0]"
             >
               Start Assessment

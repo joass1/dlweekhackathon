@@ -64,11 +64,13 @@ export async function generateQuiz(
   studentId: string,
   concept: string,
   numQuestions = 5,
-  token?: string | null
+  token?: string | null,
+  courseId?: string
 ): Promise<QuizQuestionClient[]> {
   const payload = {
     student_id: studentId,
     concept,
+    course_id: courseId || '',
     num_questions: numQuestions,
   };
   const response = await jsonFetch<{ questions: QuizQuestionClient[] }>(
@@ -86,13 +88,15 @@ export async function evaluateAnswer(
   studentId: string,
   concept: string,
   answers: QuizAnswerClient[],
-  token?: string | null
+  token?: string | null,
+  courseId?: string
 ): Promise<EvaluateResult> {
   return jsonFetch<EvaluateResult>('/api/assessment/evaluate', {
     method: 'POST',
     body: JSON.stringify({
       student_id: studentId,
       concept,
+      course_id: courseId || '',
       answers,
     }),
   }, token);
@@ -102,13 +106,15 @@ export async function classifyMistake(
   studentId: string,
   concept: string,
   answers: QuizAnswerClient[],
-  token?: string | null
+  token?: string | null,
+  courseId?: string
 ): Promise<ClassifyResult> {
   return jsonFetch<ClassifyResult>('/api/assessment/classify', {
     method: 'POST',
     body: JSON.stringify({
       student_id: studentId,
       concept,
+      course_id: courseId || '',
       answers,
     }),
   }, token);
@@ -127,7 +133,8 @@ export async function getMicroCheckpoint(
   studentId: string,
   concept: string,
   missingConcept?: string,
-  token?: string | null
+  token?: string | null,
+  courseId?: string
 ): Promise<MicroCheckpointQuestion> {
   const response = await jsonFetch<{ question: MicroCheckpointQuestion }>(
     '/api/assessment/micro-checkpoint',
@@ -136,6 +143,7 @@ export async function getMicroCheckpoint(
       body: JSON.stringify({
         student_id: studentId,
         concept,
+        course_id: courseId || null,
         missing_concept: missingConcept || null,
       }),
     },
@@ -149,13 +157,15 @@ export async function submitMicroCheckpoint(
   questionId: string,
   selectedAnswer: string,
   confidence = 3,
-  token?: string | null
+  token?: string | null,
+  courseId?: string
 ): Promise<{ question_id: string; is_correct: boolean; next_action: 'resolved' | 'needs_intervention' }> {
   return jsonFetch('/api/assessment/micro-checkpoint/submit', {
     method: 'POST',
     body: JSON.stringify({
       student_id: studentId,
       question_id: questionId,
+      course_id: courseId || null,
       selected_answer: selectedAnswer,
       confidence_1_to_5: confidence,
     }),
@@ -165,13 +175,15 @@ export async function submitMicroCheckpoint(
 export async function overrideClassification(
   studentId: string,
   questionId: string,
-  token?: string | null
+  token?: string | null,
+  courseId?: string
 ): Promise<{ updated: boolean; question_id: string }> {
   return jsonFetch('/api/assessment/override', {
     method: 'POST',
     body: JSON.stringify({
       student_id: studentId,
       question_id: questionId,
+      course_id: courseId || null,
       override_to: 'careless',
     }),
   }, token);

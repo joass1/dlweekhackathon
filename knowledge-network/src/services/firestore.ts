@@ -72,36 +72,57 @@ export interface AttemptRecord {
 
 // ── Knowledge Graph ──────────────────────────────────────────────────────────
 
-const GRAPH_ID = "default";
+const DEFAULT_GRAPH_ID = "default";
 
-export async function getKnowledgeGraphNodes(): Promise<KnowledgeGraphNode[]> {
-  const col = collection(db, "knowledge_graphs", GRAPH_ID, "concepts");
+export async function getKnowledgeGraphNodes(
+  studentId: string,
+  courseId: string,
+  graphId = DEFAULT_GRAPH_ID
+): Promise<KnowledgeGraphNode[]> {
+  const col = collection(
+    db, "students", studentId, "courses", courseId, "graphs", graphId, "concepts"
+  );
   const snapshot = await getDocs(col);
   return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as KnowledgeGraphNode);
 }
 
-export async function getKnowledgeGraphEdges(): Promise<KnowledgeGraphEdge[]> {
-  const col = collection(db, "knowledge_graphs", GRAPH_ID, "edges");
+export async function getKnowledgeGraphEdges(
+  studentId: string,
+  courseId: string,
+  graphId = DEFAULT_GRAPH_ID
+): Promise<KnowledgeGraphEdge[]> {
+  const col = collection(
+    db, "students", studentId, "courses", courseId, "graphs", graphId, "edges"
+  );
   const snapshot = await getDocs(col);
   return snapshot.docs.map((d) => d.data() as KnowledgeGraphEdge);
 }
 
-export async function getFullKnowledgeGraph(): Promise<{
+export async function getFullKnowledgeGraph(
+  studentId: string,
+  courseId: string,
+  graphId = DEFAULT_GRAPH_ID
+): Promise<{
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
 }> {
   const [nodes, edges] = await Promise.all([
-    getKnowledgeGraphNodes(),
-    getKnowledgeGraphEdges(),
+    getKnowledgeGraphNodes(studentId, courseId, graphId),
+    getKnowledgeGraphEdges(studentId, courseId, graphId),
   ]);
   return { nodes, edges };
 }
 
 /** Real-time listener for knowledge graph concept changes. */
 export function onKnowledgeGraphChange(
-  callback: (nodes: KnowledgeGraphNode[]) => void
+  studentId: string,
+  courseId: string,
+  callback: (nodes: KnowledgeGraphNode[]) => void,
+  graphId = DEFAULT_GRAPH_ID
 ): Unsubscribe {
-  const col = collection(db, "knowledge_graphs", GRAPH_ID, "concepts");
+  const col = collection(
+    db, "students", studentId, "courses", courseId, "graphs", graphId, "concepts"
+  );
   return onSnapshot(col, (snapshot) => {
     const nodes = snapshot.docs.map(
       (d) => ({ id: d.id, ...d.data() }) as KnowledgeGraphNode

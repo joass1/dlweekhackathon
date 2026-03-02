@@ -199,7 +199,7 @@ export default function AssessmentSelectionPage() {
                   <button
                     key={concept.id}
                     className="text-left bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow"
-                    onClick={() => router.push(`/assessment/${concept.id}/intro`)}
+                    onClick={() => router.push(`/assessment/${concept.id}/intro?courseId=${selectedCourse}`)}
                   >
                     <div className="p-6">
                       <h3 className="text-xl font-semibold mb-2">{concept.title}</h3>
