@@ -470,7 +470,29 @@ class CourseCreateRequest(BaseModel):
 @app.get("/api/courses")
 async def get_courses(student_id: str = Depends(get_student_id)):
     if db is None:
-        return {"courses": []}
+        # Firestore unavailable: derive course list from the user's KG nodes.
+        try:
+            user_kg_engine = _get_user_kg_engine(student_id)
+            nodes = user_kg_engine.get_graph_data().get("nodes", [])
+            seen: Dict[str, str] = {}
+            for node in nodes:
+                course_id = str((node or {}).get("courseId") or "").strip()
+                if not course_id or course_id in seen:
+                    continue
+                category = str((node or {}).get("category") or "").strip()
+                name = category or course_id.replace("-", " ").replace("_", " ").title()
+                seen[course_id] = name
+
+            courses = sorted(
+                [{"id": cid, "name": cname} for cid, cname in seen.items()],
+                key=lambda x: x["name"].lower(),
+            )
+            if courses:
+                return {"courses": courses}
+        except Exception as e:
+            print(f"Warning: failed to infer courses from local KG for {student_id}: {e}")
+
+        return {"courses": DEFAULT_COURSES}
     try:
         courses_col = _courses_collection(student_id)
         if courses_col is None:
@@ -650,6 +672,7 @@ async def upload_files(
         "kg_concepts_added": kg_concepts_added,
         "suggested_quiz_concept": suggested_quiz_concept,
         "comprehensive_quiz_ticket": ticket,
+        "uploaded_concept_ids": uploaded_concept_ids,
     }
 
 
@@ -1101,7 +1124,38 @@ async def get_prerequisite_chain(concept_id: str, student_id: str = Depends(get_
 @app.get("/api/kg/graph")
 async def get_graph(student_id: str = Depends(get_student_id)):
     user_kg_engine = _get_user_kg_engine(student_id)
-    return user_kg_engine.get_graph_data()
+    graph_data = user_kg_engine.get_graph_data()
+
+    # Backward-compatibility: infer missing courseId from course names
+    # so older nodes remain visible under the correct course.
+    try:
+        if db is not None:
+            courses_col = _courses_collection(student_id)
+            course_docs = list(courses_col.stream()) if courses_col is not None else []
+            courses = [d.to_dict() or {} for d in course_docs]
+            name_to_id = {
+                "".join(ch for ch in str(c.get("name", "")).lower() if ch.isalnum()): str(c.get("id", ""))
+                for c in courses
+                if c.get("id") and c.get("name")
+            }
+
+            def _norm(text: str) -> str:
+                return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+            for node in graph_data.get("nodes", []):
+                existing = str((node or {}).get("courseId") or "").strip()
+                if existing:
+                    continue
+                category_key = _norm((node or {}).get("category", ""))
+                if not category_key:
+                    continue
+                matched_id = name_to_id.get(category_key)
+                if matched_id:
+                    node["courseId"] = matched_id
+    except Exception as exc:
+        print(f"Warning: failed to infer node courseId values for {student_id}: {exc}")
+
+    return graph_data
 
 
 @app.post("/api/kg/build_from_material")

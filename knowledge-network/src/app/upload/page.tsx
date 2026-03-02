@@ -27,6 +27,7 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isStartingAssessment, setIsStartingAssessment] = useState(false);
+  const [isCreatingCourse, setIsCreatingCourse] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [selectedCourse, setSelectedCourse] = useState('');
@@ -38,7 +39,14 @@ export default function UploadPage() {
         const data = await apiFetchWithAuth<{ courses?: CourseOption[] }>('/api/courses');
         const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
         setCourses(incoming);
-        if (incoming.length > 0) setSelectedCourse(incoming[0].id);
+        if (incoming.length > 0) {
+          setSelectedCourse((prev) => {
+            if (prev && incoming.some((c) => c.id === prev)) {
+              return prev;
+            }
+            return incoming[0].id;
+          });
+        }
       } catch {
         setCourses(DEFAULT_COURSES);
       }
@@ -58,6 +66,7 @@ export default function UploadPage() {
       const result = await apiFetchWithAuth<{
         files?: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }[];
         comprehensive_quiz_ticket?: string;
+        uploaded_concept_ids?: string[];
       }>('/upload', {
         method: 'POST',
         body: formData,
@@ -75,6 +84,13 @@ export default function UploadPage() {
       const hasSuccess = normalized.some(file => file.status === 'success');
       if (hasSuccess) {
         setIsStartingAssessment(true);
+        if (typeof window !== 'undefined' && selectedCourse) {
+          window.sessionStorage.setItem('last_uploaded_course_id', selectedCourse);
+          const uploadedConceptIds = Array.isArray(result?.uploaded_concept_ids)
+            ? result.uploaded_concept_ids.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+            : [];
+          window.sessionStorage.setItem('last_uploaded_concept_ids', JSON.stringify(uploadedConceptIds));
+        }
         const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
         if (ticket && typeof window !== 'undefined') {
           window.sessionStorage.setItem('comprehensive_quiz_ticket', ticket);
@@ -97,29 +113,45 @@ export default function UploadPage() {
     }
   };
 
-  const handleAddCourse = () => {
+  const toCourseId = (name: string) =>
+    name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'course';
+
+  const handleAddCourse = async () => {
     const name = newCourseName.trim();
     if (!name) return;
-    const create = async () => {
-      try {
-        const data = await apiFetchWithAuth<{ course: CourseOption }>('/api/courses', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ name }),
-        });
-        const created: CourseOption = data.course;
-        const deduped = courses.filter((c) => c.id !== created.id);
-        const next = [...deduped, created];
-        setCourses(next);
-        setSelectedCourse(created.id);
-        setNewCourseName('');
-      } catch {
-        // no-op UI fallback for now
-      }
-    };
-    create();
+    const optimisticId = toCourseId(name);
+    const optimisticCourse: CourseOption = { id: optimisticId, name };
+
+    // Optimistically lock selection to the new course to avoid race where upload
+    // still uses the previously selected course before create API returns.
+    setCourses((prev) => (prev.some((c) => c.id === optimisticId) ? prev : [...prev, optimisticCourse]));
+    setSelectedCourse(optimisticId);
+    setNewCourseName('');
+    setIsCreatingCourse(true);
+
+    try {
+      const data = await apiFetchWithAuth<{ course: CourseOption }>('/api/courses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name }),
+      });
+      const created: CourseOption = data.course;
+      setCourses((prev) => {
+        const deduped = prev.filter((c) => c.id !== optimisticId && c.id !== created.id);
+        return [...deduped, created];
+      });
+      setSelectedCourse(created.id);
+    } catch {
+      // Keep optimistic course locally so user can still upload against it.
+    } finally {
+      setIsCreatingCourse(false);
+    }
   };
 
   return (
@@ -164,7 +196,12 @@ export default function UploadPage() {
         }`}
         onDragOver={(e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
-        onDrop={(e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); handleUpload(e.dataTransfer.files); }}
+        onDrop={(e: React.DragEvent) => {
+          e.preventDefault();
+          setIsDragging(false);
+          if (isCreatingCourse) return;
+          handleUpload(e.dataTransfer.files);
+        }}
       >
         <Upload className="w-12 h-12 mx-auto text-white/40 mb-4" />
         <p className="text-lg font-medium mb-2 text-white">
@@ -177,10 +214,15 @@ export default function UploadPage() {
         <p className="text-sm text-white/50 mb-4">PDF, TXT, MD supported</p>
         <input type="file" className="hidden" id="upload-input" multiple
           accept=".pdf,.txt,.md"
+          disabled={isCreatingCourse}
           onChange={e => e.target.files && handleUpload(e.target.files)} />
         <label htmlFor="upload-input"
-          className="inline-block px-6 py-2 bg-[#03b2e6] text-white rounded-full cursor-pointer hover:bg-[#029ad0] font-medium transition-colors">
-          Browse Files
+          className={`inline-block px-6 py-2 rounded-full font-medium transition-colors ${
+            isCreatingCourse
+              ? 'bg-slate-500/70 text-white/80 cursor-not-allowed'
+              : 'bg-[#03b2e6] text-white cursor-pointer hover:bg-[#029ad0]'
+          }`}>
+          {isCreatingCourse ? 'Saving Course...' : 'Browse Files'}
         </label>
       </Card>
 

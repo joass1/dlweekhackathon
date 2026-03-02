@@ -27,6 +27,8 @@ export default function AssessmentSelectionPage() {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
+  const [lastUploadedCourseId, setLastUploadedCourseId] = useState<string | null>(null);
+  const [lastUploadedConceptIds, setLastUploadedConceptIds] = useState<Set<string>>(new Set());
   const [pastRuns, setPastRuns] = useState<AssessmentHistoryRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,13 +83,33 @@ export default function AssessmentSelectionPage() {
     };
   }, [getIdToken]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const value = window.sessionStorage.getItem('last_uploaded_course_id');
+    setLastUploadedCourseId(value && value.trim() ? value.trim() : null);
+    try {
+      const raw = window.sessionStorage.getItem('last_uploaded_concept_ids');
+      const parsed = raw ? JSON.parse(raw) : [];
+      const ids = Array.isArray(parsed)
+        ? parsed.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : [];
+      setLastUploadedConceptIds(new Set(ids));
+    } catch {
+      setLastUploadedConceptIds(new Set());
+    }
+  }, []);
+
   const concepts = useMemo(
     () =>
       nodes.map((n) => ({
         id: String(n.id),
         title: String(n.title || n.id).trim(),
         category: String(n.category || 'General'),
-        courseId: n.courseId ? String(n.courseId) : '',
+        courseId: (() => {
+          const cid = (n as unknown as { courseId?: string; course_id?: string }).courseId
+            || (n as unknown as { courseId?: string; course_id?: string }).course_id;
+          return cid ? String(cid).trim() : '';
+        })(),
         masteryPct: (() => {
           const value = Number(n.mastery ?? 0);
           if (Number.isNaN(value)) return 0;
@@ -99,21 +121,60 @@ export default function AssessmentSelectionPage() {
   );
 
   const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const normalizeId = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   const belongsToCourse = (concept: { courseId: string; category: string }, course: CourseOption) => {
-    if (concept.courseId) return concept.courseId === course.id;
-    const categoryNorm = normalize(concept.category);
     const courseNameNorm = normalize(course.name).replace(/\b\d+\b/g, '').trim();
+    if (concept.courseId) {
+      const idMatched =
+        concept.courseId === course.id
+        || normalizeId(concept.courseId) === normalizeId(course.id)
+      if (idMatched) return true;
+
+      // Compatibility fallback: older/legacy data may store a textual course label
+      // in courseId rather than the canonical slug id.
+      const conceptCourseNorm = normalize(concept.courseId).replace(/\b\d+\b/g, '').trim();
+      if (
+        conceptCourseNorm
+        && courseNameNorm
+        && (
+          conceptCourseNorm === courseNameNorm
+          || conceptCourseNorm.includes(courseNameNorm)
+          || courseNameNorm.includes(conceptCourseNorm)
+        )
+      ) {
+        return true;
+      }
+    }
+    const categoryNorm = normalize(concept.category);
     if (!categoryNorm || !courseNameNorm) return false;
     return categoryNorm === courseNameNorm || categoryNorm.includes(courseNameNorm) || courseNameNorm.includes(categoryNorm);
   };
 
   const coursesWithCounts = useMemo(
-    () =>
-      courses.map((course) => ({
+    () => {
+      const baseCounts = courses.map((course) => ({
         ...course,
         topicCount: concepts.filter((c) => belongsToCourse(c, course)).length,
-      })),
-    [courses, concepts]
+      }));
+
+      const unmappedConcepts = concepts.filter(
+        (concept) => !courses.some((course) => belongsToCourse(concept, course))
+      );
+
+      if (!lastUploadedCourseId || unmappedConcepts.length === 0) {
+        return baseCounts;
+      }
+
+      return baseCounts.map((course) => {
+        if (course.id !== lastUploadedCourseId) return course;
+        const uploadedMatches = concepts.filter((c) => lastUploadedConceptIds.has(c.id)).length;
+        if (course.topicCount > 0 || uploadedMatches > 0) {
+          return { ...course, topicCount: Math.max(course.topicCount, uploadedMatches) };
+        }
+        return { ...course, topicCount: unmappedConcepts.length };
+      });
+    },
+    [courses, concepts, lastUploadedCourseId, lastUploadedConceptIds]
   );
 
   const selectedCourseMeta = useMemo(
@@ -123,8 +184,20 @@ export default function AssessmentSelectionPage() {
 
   const selectedCourseConcepts = useMemo(() => {
     if (!selectedCourseMeta) return [];
-    return concepts.filter((c) => belongsToCourse(c, selectedCourseMeta));
-  }, [concepts, selectedCourseMeta]);
+    const mapped = concepts.filter((c) => belongsToCourse(c, selectedCourseMeta));
+    if (mapped.length > 0) return mapped;
+
+    if (lastUploadedCourseId && selectedCourseMeta.id === lastUploadedCourseId) {
+      const uploadedConcepts = concepts.filter((c) => lastUploadedConceptIds.has(c.id));
+      if (uploadedConcepts.length > 0) return uploadedConcepts;
+
+      const unmapped = concepts.filter(
+        (concept) => !courses.some((course) => belongsToCourse(concept, course))
+      );
+      if (unmapped.length > 0) return unmapped;
+    }
+    return mapped;
+  }, [concepts, selectedCourseMeta, courses, lastUploadedCourseId, lastUploadedConceptIds]);
 
   return (
     <div className="min-h-full py-8">

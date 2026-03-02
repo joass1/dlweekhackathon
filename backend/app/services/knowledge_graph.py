@@ -474,11 +474,12 @@ Course material:
 
     def _node_dict(self, node_id: str) -> Dict[str, Any]:
         data = self._graph.nodes[node_id]
+        course_id = data.get("course_id") or data.get("courseId")
         return {
             "id": node_id,
             "title": data.get("title", node_id),
             "category": data.get("category", "General"),
-            "courseId": data.get("course_id"),
+            "courseId": course_id,
             "mastery": round(data.get("mastery_score", 0.0) * 100),
             "status": data.get("status", "not_started"),
             "carelessBadge": data.get("careless_badge", False),
