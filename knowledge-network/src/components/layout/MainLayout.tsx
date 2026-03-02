@@ -30,7 +30,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       {/* Sidebar container — clips and animates width to slide in/out */}
       <div
         className={`flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${
