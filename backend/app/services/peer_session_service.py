@@ -650,23 +650,14 @@ class PeerSessionService:
     def _compute_boss_damage(score: float, is_correct: bool, mistake_type: str) -> float:
         """
         Shared boss HP damage from one answer.
-        Correct answers hit harder; wrong answers still chip the boss.
+        Incorrect answers deal no damage.
+        Correct answers deal reduced, score-proportional damage.
         """
         s = _clamp(float(score))
-        mt = (mistake_type or "normal").strip().lower()
-        if is_correct:
-            base = 18.0
-            bonus = s * 14.0
-        elif mt == "careless":
-            base = 6.0
-            bonus = s * 6.0
-        elif mt == "conceptual":
-            base = 8.0
-            bonus = s * 7.0
-        else:
-            base = 7.0
-            bonus = s * 7.0
-        return round(max(2.0, min(38.0, base + bonus)), 2)
+        if not is_correct:
+            return 0.0
+        # Max 20 HP at perfect score, linearly scaled by AI score.
+        return round(s * 20.0, 2)
 
     def _load_student_concept_state(self, student_id: str, concept_id: str) -> ConceptState:
         default_state = ConceptState(concept_id=concept_id).normalized()
