@@ -206,7 +206,13 @@ def _apply_user_kg_update(
         }
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    loader = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
+    suffix = pathlib.Path(file_path).suffix.lower()
+    if suffix == ".pdf":
+        loader = PyPDFLoader(file_path)
+    elif suffix in {".txt", ".md"}:
+        loader = TextLoader(file_path)
+    else:
+        raise ValueError(f"Unsupported file type: {suffix or 'unknown'}. Supported types: .pdf, .txt, .md")
     docs = loader.load()
     full_text = "".join(doc.page_content for doc in docs).strip()
     if not full_text:
@@ -585,6 +591,19 @@ async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest, student
         return response
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/assessment/history")
+async def get_assessment_history(
+    concept: Optional[str] = None,
+    limit: int = 20,
+    student_id: str = Depends(get_student_id),
+):
+    try:
+        runs = assessment_engine.get_assessment_history(student_id=student_id, concept=concept, limit=limit)
+        return {"runs": runs}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load assessment history: {str(exc)}") from exc
 
 
 # ── Adaptive Engine endpoints ──────────────────────────────────────────────────

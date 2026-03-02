@@ -41,10 +41,17 @@ export async function apiFetch<T>(path: string, init?: RequestInit, token?: stri
 
   for (const base of baseUrls) {
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(init?.headers as Record<string, string> || {}),
-      };
+      const providedHeaders = new Headers(init?.headers ?? {});
+      const isFormDataBody = typeof FormData !== 'undefined' && init?.body instanceof FormData;
+      const headers: Record<string, string> = Object.fromEntries(providedHeaders.entries());
+
+      // Let the browser set multipart boundary for FormData bodies.
+      if (isFormDataBody) {
+        delete headers['Content-Type'];
+      } else if (!('Content-Type' in headers) && !('content-type' in headers)) {
+        headers['Content-Type'] = 'application/json';
+      }
+
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
