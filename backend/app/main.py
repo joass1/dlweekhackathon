@@ -1327,11 +1327,15 @@ async def create_peer_session(
         hub_id=req.hub_id,
         topic=req.topic,
         concept_id=req.concept_id,
+        course_id=req.course_id,
+        course_name=req.course_name,
         member_profiles=member_profiles,
         created_by=student_id,
     )
     if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+        detail = str(result["error"])
+        status_code = 400 if detail.lower().startswith("no uploaded material") else 500
+        raise HTTPException(status_code=status_code, detail=detail)
     return CreateSessionResponse(**result)
 
 

@@ -37,6 +37,7 @@ export interface SubmittedAnswer {
   score: number;
   ai_feedback: string;
   hint: string;
+  damage_dealt?: number | null;
   updated_mastery?: number | null;
   mastery_status?: string | null;
 }
@@ -46,6 +47,12 @@ export interface SessionState {
   hub_id: string;
   topic: string;
   selected_concept_id?: string | null;
+  course_id?: string | null;
+  course_name?: string | null;
+  boss_name?: string | null;
+  boss_health_max?: number;
+  boss_health_current?: number;
+  boss_defeated?: boolean;
   status: 'waiting' | 'active' | 'completed';
   created_by: string;
   created_at?: string;
@@ -71,6 +78,11 @@ export interface SubmitAnswerResponse {
   ai_feedback: string;
   hint: string;
   explanation: string;
+  damage_dealt?: number | null;
+  boss_health_max?: number;
+  boss_health_current?: number;
+  boss_defeated?: boolean;
+  already_submitted?: boolean;
   updated_mastery?: number | null;
   mastery_status?: string | null;
 }
@@ -88,6 +100,8 @@ export async function createSession(
   hubId: string,
   topic: string,
   conceptId: string | null,
+  courseId: string | null,
+  courseName: string | null,
   memberProfiles: MemberProfile[],
   token?: string | null,
 ): Promise<CreateSessionResponse> {
@@ -97,6 +111,8 @@ export async function createSession(
       hub_id: hubId,
       topic,
       concept_id: conceptId,
+      course_id: courseId,
+      course_name: courseName,
       member_profiles: memberProfiles,
     }),
   }, token);
@@ -158,7 +174,14 @@ export async function submitAnswer(
 export async function advanceQuestion(
   sessionId: string,
   token?: string | null,
-): Promise<{ status: string; current_question_index: number; at_last_question?: boolean }> {
+): Promise<{
+  status: string;
+  current_question_index: number;
+  at_last_question?: boolean;
+  boss_defeated?: boolean;
+  generated_new_round?: boolean;
+  round_index?: number;
+}> {
   return apiFetch(`/api/peer/session/${encodeURIComponent(sessionId)}/advance`, {
     method: 'POST',
   }, token);

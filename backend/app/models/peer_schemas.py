@@ -43,6 +43,7 @@ class SubmittedAnswer(BaseModel):
     score: float = 0.0
     ai_feedback: str = ""
     hint: str = ""
+    damage_dealt: float = 0.0
     updated_mastery: Optional[float] = None
     mastery_status: Optional[str] = None
 
@@ -51,8 +52,10 @@ class SubmittedAnswer(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     hub_id: str
-    topic: str
+    topic: str = ""
     concept_id: Optional[str] = None
+    course_id: Optional[str] = None
+    course_name: Optional[str] = None
     member_profiles: List[MemberProfile]
 
 
@@ -81,6 +84,12 @@ class SessionStateResponse(BaseModel):
     hub_id: str
     topic: str
     selected_concept_id: Optional[str] = None
+    course_id: Optional[str] = None
+    course_name: Optional[str] = None
+    boss_name: Optional[str] = None
+    boss_health_max: float = 0.0
+    boss_health_current: float = 0.0
+    boss_defeated: bool = False
     status: Literal["waiting", "active", "completed"]
     created_by: str
     created_at: Optional[datetime] = None
@@ -101,6 +110,11 @@ class SubmitAnswerResponse(BaseModel):
     ai_feedback: str
     hint: str = ""
     explanation: str = ""
+    damage_dealt: float = 0.0
+    boss_health_max: float = 0.0
+    boss_health_current: float = 0.0
+    boss_defeated: bool = False
+    already_submitted: bool = False
     updated_mastery: Optional[float] = None
     mastery_status: Optional[str] = None
 

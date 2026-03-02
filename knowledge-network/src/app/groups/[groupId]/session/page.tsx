@@ -30,6 +30,7 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { WebRTCVideo } from '@/components/groups/WebRTCVideo';
+import BossBattleScene3D from '@/components/groups/BossBattleScene3D';
 
 interface KGNodeOption {
   id: string;
@@ -225,6 +226,10 @@ export default function PeerSessionPage() {
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
+  const bossMax = Math.max(1, session?.boss_health_max ?? 100);
+  const bossCurrent = Math.max(0, Math.min(bossMax, session?.boss_health_current ?? bossMax));
+  const bossPct = Math.max(0, Math.min(100, (bossCurrent / bossMax) * 100));
+
   // ── Render ────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -251,6 +256,7 @@ export default function PeerSessionPage() {
 
   if (session.status === 'completed') {
     const totalQuestions = session.questions.length;
+    const totalAnswers = session.answers.length;
     const correctCount = session.answers.filter(a => a.is_correct).length;
     const avgScore = session.answers.length
       ? session.answers.reduce((sum, a) => sum + a.score, 0) / session.answers.length
@@ -268,8 +274,8 @@ export default function PeerSessionPage() {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-accent rounded-lg p-4 text-center">
-                <p className="text-2xl font-bold">{correctCount}/{totalQuestions}</p>
-                <p className="text-xs text-muted-foreground">Questions Correct</p>
+                <p className="text-2xl font-bold">{correctCount}/{totalAnswers || totalQuestions}</p>
+                <p className="text-xs text-muted-foreground">Answers Correct</p>
               </div>
               <div className="bg-accent rounded-lg p-4 text-center">
                 <p className="text-2xl font-bold">{Math.round(avgScore * 100)}%</p>
@@ -284,7 +290,8 @@ export default function PeerSessionPage() {
             {/* Review each question */}
             <div className="space-y-3">
               {session.questions.map((q, idx) => {
-                const ans = session.answers.find(a => a.question_id === q.question_id);
+                const answers = session.answers.filter(a => a.question_id === q.question_id);
+                const ans = answers[0];
                 return (
                   <div
                     key={q.question_id}
@@ -305,10 +312,13 @@ export default function PeerSessionPage() {
                     <p className="text-xs text-muted-foreground mt-1">
                       Targeting: {q.target_member_name}&apos;s gap in {q.weak_concept}
                     </p>
-                    {ans && (
+                    {answers.length > 0 && (
                       <div className="mt-2 text-sm">
-                        <p><span className="font-medium">Answer:</span> {ans.answer_text}</p>
-                        <p className="text-muted-foreground mt-1">{ans.ai_feedback}</p>
+                        {answers.map((a, i) => (
+                          <p key={`${a.submitted_by}-${i}`} className="mb-1">
+                            <span className="font-medium">{a.submitted_by}:</span> {a.answer_text} ({Math.round(a.score * 100)}%)
+                          </p>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -375,6 +385,29 @@ export default function PeerSessionPage() {
           )}
         </div>
       </div>
+
+      <Card className="overflow-hidden">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-red-700/80 font-semibold">Boss Battle</p>
+              <p className="text-sm font-medium">
+                {session.boss_name || 'Knowledge Warden'} {session.boss_defeated ? 'Defeated' : 'Engaged'}
+              </p>
+            </div>
+            <p className="text-sm font-semibold">
+              {Math.round(bossCurrent)} / {Math.round(bossMax)} HP
+            </p>
+          </div>
+          <div className="h-3 w-full rounded-full bg-red-100 border border-red-200 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-500 ${session.boss_defeated ? 'bg-emerald-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`}
+              style={{ width: `${bossPct}%` }}
+            />
+          </div>
+          <BossBattleScene3D healthCurrent={bossCurrent} healthMax={bossMax} />
+        </CardContent>
+      </Card>
 
       {/* Two-column layout: Video | Question */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -544,6 +577,11 @@ export default function PeerSessionPage() {
                         Updated mastery: {Math.round((feedback?.updated_mastery ?? existingAnswer?.updated_mastery ?? 0) * 100)}% ({feedback?.mastery_status || existingAnswer?.mastery_status || 'learning'})
                       </p>
                     )}
+                    {(feedback?.damage_dealt !== undefined || existingAnswer?.damage_dealt !== undefined) && (
+                      <p className="text-xs text-red-700 mt-1">
+                        Boss damage dealt: {Math.round(feedback?.damage_dealt ?? existingAnswer?.damage_dealt ?? 0)}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -557,7 +595,7 @@ export default function PeerSessionPage() {
                           <span>{m.name}{m.student_id === studentId ? ' (you)' : ''}</span>
                           {memberAnswer ? (
                             <span className={memberAnswer.is_correct ? 'text-green-700' : 'text-red-700'}>
-                              Submitted • {Math.round(memberAnswer.score * 100)}%
+                              Submitted • {Math.round(memberAnswer.score * 100)}% • -{Math.round(memberAnswer.damage_dealt ?? 0)} HP
                             </span>
                           ) : (
                             <span className="text-muted-foreground">Waiting</span>
@@ -590,24 +628,29 @@ export default function PeerSessionPage() {
                     Next Question
                   </Button>
                 )}
+                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && !session.boss_defeated && (
+                  <Button
+                    onClick={handleAdvance}
+                    disabled={advancing}
+                    className="w-full"
+                    variant="outline"
+                  >
+                    {advancing ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 mr-2" />
+                    )}
+                    Generate Next Round
+                  </Button>
+                )}
                 {advanceError && (
                   <p className="text-xs text-red-600">{advanceError}</p>
                 )}
 
-                {/* Complete session if last question answered */}
-                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && (
-                  <Button
-                    onClick={handleEndSession}
-                    disabled={ending}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    {ending ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4 mr-2" />
-                    )}
-                    Complete Session
-                  </Button>
+                {session.boss_defeated && (
+                  <p className="text-xs text-green-700">
+                    Boss defeated. Continue discussing or click End when your team is ready to finish the session.
+                  </p>
                 )}
               </CardContent>
             </Card>

@@ -41,6 +41,14 @@ def _token_overlap_score(query: str, text: str) -> float:
     return hits / len(q_tokens)
 
 
+def _humanize_key(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    normalized = raw.replace("-", " ").replace("_", " ")
+    return " ".join(part.capitalize() for part in normalized.split())
+
+
 def _parse_dt(value: Any, default: Optional[datetime] = None) -> datetime:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -57,6 +65,16 @@ def _parse_dt(value: Any, default: Optional[datetime] = None) -> datetime:
     return default or _utc_now()
 
 
+def _status_from_mastery(mastery: float) -> str:
+    if mastery >= 0.8:
+        return "mastered"
+    if mastery >= 0.5:
+        return "learning"
+    if mastery > 0:
+        return "weak"
+    return "not_started"
+
+
 class PeerSessionService:
     """Manages peer learning sessions with AI-generated collaborative tasks."""
 
@@ -67,14 +85,180 @@ class PeerSessionService:
         self.knowledge_chunks_collection = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
         self.adaptive_engine = AdaptiveEngine()
 
+    def _list_user_courses(self, user_id: str) -> List[Dict[str, str]]:
+        if not self.db or not user_id:
+            return []
+        try:
+            docs = (
+                self.db.collection("users")
+                .document(user_id)
+                .collection("courses")
+                .stream()
+            )
+            courses: List[Dict[str, str]] = []
+            for doc in docs:
+                row = doc.to_dict() or {}
+                cid = str(row.get("id") or doc.id or "").strip()
+                cname = str(row.get("name") or cid).strip()
+                if cid:
+                    courses.append({"id": cid, "name": cname})
+            courses.sort(key=lambda c: c.get("name", "").lower())
+            return courses
+        except Exception:
+            return []
+
+    def _build_member_profiles_from_session(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for raw in (data.get("member_profiles", []) or []):
+            sid = str(raw.get("student_id", "")).strip()
+            if not sid:
+                continue
+            by_id[sid] = {
+                "student_id": sid,
+                "name": str(raw.get("name", sid)),
+                "concept_profile": dict(raw.get("concept_profile", {}) or {}),
+            }
+        for m in (data.get("members", []) or []):
+            sid = str(m.get("student_id", "")).strip()
+            if not sid:
+                continue
+            if sid not in by_id:
+                by_id[sid] = {
+                    "student_id": sid,
+                    "name": str(m.get("name", sid)),
+                    "concept_profile": {},
+                }
+            elif not by_id[sid].get("name"):
+                by_id[sid]["name"] = str(m.get("name", sid))
+        return list(by_id.values())
+
+    @staticmethod
+    def _assign_question_ids(questions: List[Dict[str, Any]], start_index: int) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for idx, q in enumerate(questions):
+            row = dict(q)
+            row["question_id"] = f"q_{start_index + idx}"
+            out.append(row)
+        return out
+
+    def _resolve_session_seed(
+        self,
+        user_id: str,
+        topic: str,
+        concept_id: Optional[str],
+        course_id: Optional[str],
+        course_name: Optional[str],
+    ) -> Dict[str, Any]:
+        topic = str(topic or "").strip()
+        concept_id = str(concept_id or "").strip() or None
+        course_id = str(course_id or "").strip() or None
+        course_name = str(course_name or "").strip() or None
+
+        if not self.db or not user_id:
+            return {
+                "topic": topic or _humanize_key(concept_id or "") or "General Study",
+                "concept_id": concept_id,
+                "course_id": course_id,
+                "course_name": course_name,
+                "chunk_count": 0,
+            }
+
+        courses = self._list_user_courses(user_id)
+        by_course_name = {str(c.get("name", "")).strip().lower(): c for c in courses if c.get("name")}
+        if not course_id and course_name:
+            matched = by_course_name.get(course_name.lower())
+            if matched:
+                course_id = matched.get("id")
+
+        col = self.db.collection(self.knowledge_chunks_collection)
+        try:
+            max_scan_cfg = int(os.getenv("FIREBASE_MAX_CHUNKS_SCAN", "300"))
+        except ValueError:
+            max_scan_cfg = 300
+        max_scan = max(50, max_scan_cfg)
+        chunk_rows: List[Dict[str, Any]] = []
+        try:
+            docs = col.where("userId", "==", user_id).limit(max_scan).stream()
+            for doc in docs:
+                row = doc.to_dict() or {}
+                text = str(row.get("text", "")).strip()
+                if not text:
+                    continue
+                row["text"] = text
+                chunk_rows.append(row)
+        except Exception:
+            chunk_rows = []
+
+        if not chunk_rows:
+            return {
+                "topic": topic or _humanize_key(concept_id or "") or "General Study",
+                "concept_id": concept_id,
+                "course_id": course_id,
+                "course_name": course_name,
+                "chunk_count": 0,
+            }
+
+        course_counts: Dict[str, int] = {}
+        for row in chunk_rows:
+            cid = str(row.get("course_id") or "").strip()
+            if cid:
+                course_counts[cid] = course_counts.get(cid, 0) + 1
+
+        if not course_id and course_counts:
+            course_id = max(course_counts, key=course_counts.get)
+        if course_id and not course_name:
+            for c in courses:
+                if c.get("id") == course_id:
+                    course_name = str(c.get("name") or "").strip() or course_name
+                    break
+            if not course_name:
+                for row in chunk_rows:
+                    if str(row.get("course_id") or "").strip() == course_id:
+                        maybe_name = str(row.get("course_name") or "").strip()
+                        if maybe_name:
+                            course_name = maybe_name
+                            break
+
+        scoped_rows = chunk_rows
+        if course_id:
+            scoped_rows = [row for row in chunk_rows if str(row.get("course_id") or "").strip() == course_id]
+
+        concept_counts: Dict[str, int] = {}
+        for row in scoped_rows:
+            cid = _normalize_key(str(row.get("concept_id") or ""))
+            if cid:
+                concept_counts[cid] = concept_counts.get(cid, 0) + 1
+        if not concept_id and concept_counts:
+            concept_id = max(concept_counts, key=concept_counts.get)
+
+        if not topic:
+            if concept_id:
+                topic = _humanize_key(concept_id)
+            elif course_name:
+                topic = course_name
+            elif course_id:
+                topic = _humanize_key(course_id)
+            else:
+                topic = "General Study"
+
+        return {
+            "topic": topic,
+            "concept_id": concept_id,
+            "course_id": course_id,
+            "course_name": course_name,
+            "chunk_count": len(scoped_rows) if course_id else len(chunk_rows),
+        }
+
     def _fetch_concept_context(
         self,
         user_id: str,
         concept_id: Optional[str],
         topic: str,
         limit: int = 8,
+        course_id: Optional[str] = None,
+        course_name: Optional[str] = None,
     ) -> List[Dict[str, str]]:
-        """Retrieve context chunks from Firestore, scoped by user and concept_id."""
+        """Retrieve context chunks from Firestore, scoped by user, concept, and optional course."""
         if not self.db or not user_id:
             return []
 
@@ -89,72 +273,80 @@ class PeerSessionService:
         if topic_norm and topic_norm not in concept_candidates:
             concept_candidates.append(topic_norm)
 
+        course_id = str(course_id or "").strip() or None
+        course_name = str(course_name or "").strip().lower() or None
         rows: List[Dict[str, str]] = []
         seen: set[str] = set()
-
-        # First pass: exact concept id matches
-        for cid in concept_candidates[:6]:
-            try:
-                docs = (
-                    col.where("userId", "==", user_id)
-                    .where("concept_id", "==", cid)
-                    .limit(limit)
-                    .stream()
-                )
-                for doc in docs:
-                    row = doc.to_dict() or {}
-                    text = str(row.get("text", "")).strip()
-                    if not text:
-                        continue
-                    key = f"{cid}:{hash(text)}"
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    rows.append(
-                        {
-                            "text": text,
-                            "concept_id": str(row.get("concept_id", cid)),
-                            "source": str(row.get("source", "")),
-                        }
-                    )
-                    if len(rows) >= limit:
-                        return rows
-            except Exception:
-                continue
-
-        # Fallback: user-scoped scan, rank by topic overlap.
         try:
-            docs = col.where("userId", "==", user_id).limit(max(50, limit * 8)).stream()
-            scored: List[tuple[float, Dict[str, str]]] = []
+            max_scan_cfg = int(os.getenv("FIREBASE_MAX_CHUNKS_SCAN", "300"))
+        except ValueError:
+            max_scan_cfg = 300
+        max_scan = max(50, max_scan_cfg)
+
+        scanned_rows: List[Dict[str, Any]] = []
+        try:
+            docs = col.where("userId", "==", user_id).limit(max_scan).stream()
             for doc in docs:
                 row = doc.to_dict() or {}
                 text = str(row.get("text", "")).strip()
                 if not text:
                     continue
-                score = _token_overlap_score(topic, text)
-                if score <= 0:
+                row["text"] = text
+                if course_id and str(row.get("course_id") or "").strip() != course_id:
                     continue
-                scored.append(
-                    (
-                        score,
-                        {
-                            "text": text,
-                            "concept_id": str(row.get("concept_id", "unknown")),
-                            "source": str(row.get("source", "")),
-                        },
-                    )
-                )
-            scored.sort(key=lambda x: x[0], reverse=True)
-            for _, row in scored:
-                key = f"{row.get('concept_id')}:{hash(row.get('text', ''))}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                rows.append(row)
-                if len(rows) >= limit:
-                    break
+                if course_name:
+                    row_course_name = str(row.get("course_name") or "").strip().lower()
+                    if row_course_name and row_course_name != course_name:
+                        continue
+                scanned_rows.append(row)
         except Exception:
-            pass
+            scanned_rows = []
+
+        # First pass: exact concept-id matches.
+        for row in scanned_rows:
+            cid = _normalize_key(str(row.get("concept_id") or ""))
+            if cid not in concept_candidates:
+                continue
+            key = f"{cid}:{hash(row.get('text', ''))}"
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "text": str(row.get("text", "")),
+                    "concept_id": str(row.get("concept_id", cid)),
+                    "source": str(row.get("source", "")),
+                }
+            )
+            if len(rows) >= limit:
+                return rows
+
+        # Second pass: topic overlap ranking.
+        scored: List[tuple[float, Dict[str, str]]] = []
+        for row in scanned_rows:
+            text = str(row.get("text", ""))
+            score = _token_overlap_score(topic, text)
+            if score <= 0:
+                continue
+            scored.append(
+                (
+                    score,
+                    {
+                        "text": text,
+                        "concept_id": str(row.get("concept_id", "unknown")),
+                        "source": str(row.get("source", "")),
+                    },
+                )
+            )
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for _, row in scored:
+            key = f"{row.get('concept_id')}:{hash(row.get('text', ''))}"
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+            if len(rows) >= limit:
+                break
 
         return rows[:limit]
 
@@ -209,9 +401,18 @@ class PeerSessionService:
         topic: str,
         selected_concept_id: Optional[str],
         created_by: str,
+        course_id: Optional[str] = None,
+        course_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Generate one question per member, grounded by concept-tagged chunks."""
-        context_chunks = self._fetch_concept_context(created_by, selected_concept_id, topic, limit=8)
+        context_chunks = self._fetch_concept_context(
+            created_by,
+            selected_concept_id,
+            topic,
+            limit=8,
+            course_id=course_id,
+            course_name=course_name,
+        )
         context_text = self._format_context(context_chunks)
 
         if not self.openai:
@@ -234,6 +435,8 @@ class PeerSessionService:
         prompt = (
             "You are generating collaborative peer-learning questions.\n\n"
             f"Session topic: {topic}\n"
+            f"Course id: {course_id or 'n/a'}\n"
+            f"Course name: {course_name or 'n/a'}\n"
             f"Focus concept_id: {focus_concept}\n"
             f"Members (weakest first):\n{chr(10).join(members_desc)}\n\n"
             "Use the course context below when available. Keep questions faithful to it.\n"
@@ -443,6 +646,28 @@ class PeerSessionService:
             "mistake_type": mistake_type,
         }
 
+    @staticmethod
+    def _compute_boss_damage(score: float, is_correct: bool, mistake_type: str) -> float:
+        """
+        Shared boss HP damage from one answer.
+        Correct answers hit harder; wrong answers still chip the boss.
+        """
+        s = _clamp(float(score))
+        mt = (mistake_type or "normal").strip().lower()
+        if is_correct:
+            base = 18.0
+            bonus = s * 14.0
+        elif mt == "careless":
+            base = 6.0
+            bonus = s * 6.0
+        elif mt == "conceptual":
+            base = 8.0
+            bonus = s * 7.0
+        else:
+            base = 7.0
+            bonus = s * 7.0
+        return round(max(2.0, min(38.0, base + bonus)), 2)
+
     def _load_student_concept_state(self, student_id: str, concept_id: str) -> ConceptState:
         default_state = ConceptState(concept_id=concept_id).normalized()
         if not self.db:
@@ -539,7 +764,7 @@ class PeerSessionService:
             {
                 "title": title,
                 "mastery_score": state.mastery,
-                "status": "mastered" if state.mastery >= 0.8 else ("learning" if state.mastery >= 0.5 else "weak"),
+                "status": _status_from_mastery(state.mastery),
                 "attempt_count": state.attempts,
                 "correct_count": state.correct,
                 "careless_count": state.careless_count,
@@ -579,6 +804,8 @@ class PeerSessionService:
         hub_id: str,
         topic: str,
         concept_id: Optional[str],
+        course_id: Optional[str],
+        course_name: Optional[str],
         member_profiles: List[Dict[str, Any]],
         created_by: str,
     ) -> Dict[str, Any]:
@@ -586,16 +813,39 @@ class PeerSessionService:
         if not self.db:
             return {"error": "Database unavailable"}
 
+        seed = self._resolve_session_seed(
+            user_id=created_by,
+            topic=topic,
+            concept_id=concept_id,
+            course_id=course_id,
+            course_name=course_name,
+        )
+        resolved_topic = str(seed.get("topic") or "").strip()
+        resolved_concept_id = str(seed.get("concept_id") or "").strip() or None
+        resolved_course_id = str(seed.get("course_id") or "").strip() or None
+        resolved_course_name = str(seed.get("course_name") or "").strip() or None
+        if int(seed.get("chunk_count", 0) or 0) <= 0:
+            return {
+                "error": (
+                    "No uploaded material found in knowledge_chunks"
+                    + (f" for course '{resolved_course_name or resolved_course_id}'" if (resolved_course_id or resolved_course_name) else "")
+                    + ". Upload documents first."
+                )
+            }
+
         session_id = str(uuid4())[:12]
         normalized_profiles = self._build_member_profiles(member_profiles, created_by)
         questions = self._generate_round_robin_questions(
             member_profiles=normalized_profiles,
-            topic=topic,
-            selected_concept_id=concept_id,
+            topic=resolved_topic,
+            selected_concept_id=resolved_concept_id,
             created_by=created_by,
+            course_id=resolved_course_id,
+            course_name=resolved_course_name,
         )
         if not questions:
-            questions = self._fallback_questions(normalized_profiles, topic, concept_id, [])
+            questions = self._fallback_questions(normalized_profiles, resolved_topic, resolved_concept_id, [])
+        questions = self._assign_question_ids(questions, start_index=0)
 
         creator_name = created_by
         for m in normalized_profiles:
@@ -604,18 +854,28 @@ class PeerSessionService:
                 break
 
         now = _utc_now()
+        total_expected_answers = max(1, max(2, len(normalized_profiles)) * max(1, len(questions)))
+        boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
         session_doc = {
             "session_id": session_id,
             "hub_id": hub_id,
-            "topic": topic,
-            "selected_concept_id": concept_id,
+            "topic": resolved_topic,
+            "selected_concept_id": resolved_concept_id,
+            "course_id": resolved_course_id,
+            "course_name": resolved_course_name,
+            "boss_name": "Knowledge Warden",
+            "boss_health_max": boss_health_max,
+            "boss_health_current": boss_health_max,
+            "boss_defeated": False,
             "status": "waiting",
             "created_by": created_by,
             "created_at": now.isoformat(),
             "members": [{"student_id": created_by, "name": creator_name, "joined_at": now.isoformat()}],
+            "member_profiles": normalized_profiles,
             "expected_members": max(2, len(normalized_profiles)),
             "questions": questions,
             "current_question_index": 0,
+            "round_index": 1,
             "answers": [],
         }
 
@@ -641,21 +901,22 @@ class PeerSessionService:
         members.append({"student_id": student_id, "name": name, "joined_at": now.isoformat()})
         updates: Dict[str, Any] = {"members": members}
 
+        member_profiles = self._build_member_profiles_from_session(data)
+        if not any(p.get("student_id") == student_id for p in member_profiles):
+            member_profiles.append({"student_id": student_id, "name": name, "concept_profile": {}})
+        updates["member_profiles"] = member_profiles
+
         if len(members) >= 2 and data.get("status") == "waiting":
             updates["status"] = "active"
 
         if not data.get("questions"):
-            member_profiles = [
-                {"student_id": m.get("student_id"), "name": m.get("name", m.get("student_id")), "concept_profile": {}}
-                for m in members
-                if m.get("student_id")
-            ]
-            updates["questions"] = self._fallback_questions(
+            fresh_questions = self._fallback_questions(
                 member_profiles,
                 data.get("topic", "general topic"),
                 data.get("selected_concept_id"),
                 [],
             )
+            updates["questions"] = self._assign_question_ids(fresh_questions, start_index=0)
             updates["current_question_index"] = 0
 
         ref.update(updates)
@@ -672,23 +933,70 @@ class PeerSessionService:
             return None
         data = doc.to_dict() or {}
 
+        if "member_profiles" not in data:
+            profiles = self._build_member_profiles_from_session(data)
+            data["member_profiles"] = profiles
+            ref.update({"member_profiles": profiles})
+
         if not data.get("questions"):
-            members = data.get("members", []) or []
-            member_profiles = [
-                {"student_id": m.get("student_id"), "name": m.get("name", m.get("student_id")), "concept_profile": {}}
-                for m in members
-                if m.get("student_id")
-            ]
+            member_profiles = self._build_member_profiles_from_session(data)
             if member_profiles:
-                questions = self._fallback_questions(
-                    member_profiles,
-                    data.get("topic", "general topic"),
-                    data.get("selected_concept_id"),
-                    [],
+                questions = self._assign_question_ids(
+                    self._fallback_questions(
+                        member_profiles,
+                        data.get("topic", "general topic"),
+                        data.get("selected_concept_id"),
+                        [],
+                    ),
+                    start_index=0,
                 )
                 data["questions"] = questions
                 data["current_question_index"] = 0
                 ref.update({"questions": questions, "current_question_index": 0})
+
+        # Backfill IDs for legacy sessions that may have duplicates.
+        questions = data.get("questions", []) or []
+        expected_ids = [f"q_{idx}" for idx in range(len(questions))]
+        actual_ids = [str(q.get("question_id", "")) for q in questions]
+        if actual_ids != expected_ids and questions:
+            questions = self._assign_question_ids(questions, start_index=0)
+            data["questions"] = questions
+            current_idx = max(0, min(int(data.get("current_question_index", 0)), len(questions) - 1))
+            data["current_question_index"] = current_idx
+            ref.update({"questions": questions, "current_question_index": current_idx})
+
+        # Backfill course metadata for legacy sessions.
+        if "course_id" not in data or "course_name" not in data:
+            seed = self._resolve_session_seed(
+                user_id=str(data.get("created_by") or ""),
+                topic=str(data.get("topic") or ""),
+                concept_id=data.get("selected_concept_id"),
+                course_id=data.get("course_id"),
+                course_name=data.get("course_name"),
+            )
+            data["course_id"] = str(seed.get("course_id") or "").strip() or None
+            data["course_name"] = str(seed.get("course_name") or "").strip() or None
+            ref.update({"course_id": data["course_id"], "course_name": data["course_name"]})
+
+        # Backfill boss state for legacy sessions.
+        if "boss_health_max" not in data or "boss_health_current" not in data:
+            members = data.get("members", []) or []
+            total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
+            boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
+            boss_health_current = float(data.get("boss_health_current", boss_health_max) or boss_health_max)
+            boss_defeated = boss_health_current <= 0
+            data["boss_name"] = data.get("boss_name", "Knowledge Warden")
+            data["boss_health_max"] = boss_health_max
+            data["boss_health_current"] = min(boss_health_current, boss_health_max)
+            data["boss_defeated"] = boss_defeated
+            ref.update(
+                {
+                    "boss_name": data["boss_name"],
+                    "boss_health_max": data["boss_health_max"],
+                    "boss_health_current": data["boss_health_current"],
+                    "boss_defeated": data["boss_defeated"],
+                }
+            )
 
         return data
 
@@ -735,6 +1043,34 @@ class PeerSessionService:
         if not question:
             return {"error": "Question not found"}
 
+        answers = data.get("answers", []) or []
+        existing_answer = next(
+            (
+                a for a in answers
+                if a.get("question_id") == question_id and a.get("submitted_by") == student_id
+            ),
+            None,
+        )
+        if existing_answer:
+            return {
+                "question_id": question_id,
+                "submitted_by": student_id,
+                "concept_id": str(existing_answer.get("concept_id", "")),
+                "mistake_type": str(existing_answer.get("mistake_type", "normal")),
+                "is_correct": bool(existing_answer.get("is_correct", False)),
+                "score": float(existing_answer.get("score", 0.0)),
+                "ai_feedback": str(existing_answer.get("ai_feedback", "")),
+                "hint": str(existing_answer.get("hint", "")),
+                "explanation": question.get("explanation", ""),
+                "damage_dealt": float(existing_answer.get("damage_dealt", 0.0)),
+                "boss_health_max": float(data.get("boss_health_max", 0.0) or 0.0),
+                "boss_health_current": float(data.get("boss_health_current", 0.0) or 0.0),
+                "boss_defeated": bool(data.get("boss_defeated", False)),
+                "already_submitted": True,
+                "updated_mastery": existing_answer.get("updated_mastery"),
+                "mastery_status": existing_answer.get("mastery_status"),
+            }
+
         concept_to_update = str(
             concept_id
             or question.get("concept_id")
@@ -746,7 +1082,14 @@ class PeerSessionService:
         if not concept_to_update:
             concept_to_update = "general_topic"
 
-        eval_context = self._fetch_concept_context(student_id, concept_to_update, data.get("topic", concept_to_update), limit=5)
+        eval_context = self._fetch_concept_context(
+            student_id,
+            concept_to_update,
+            data.get("topic", concept_to_update),
+            limit=5,
+            course_id=data.get("course_id"),
+            course_name=data.get("course_name"),
+        )
         evaluation = self._evaluate_answer(question, answer_text, eval_context)
         is_correct = bool(evaluation.get("is_correct", False))
         mistake_type = str(evaluation.get("mistake_type", "normal")).strip().lower()
@@ -762,6 +1105,15 @@ class PeerSessionService:
             mistake_type=mistake_type,
         )
 
+        damage_dealt = self._compute_boss_damage(float(evaluation.get("score", 0.0)), is_correct, mistake_type)
+        boss_health_max = float(data.get("boss_health_max", 0.0) or 0.0)
+        if boss_health_max <= 0:
+            total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
+            boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
+        boss_health_current = float(data.get("boss_health_current", boss_health_max) or boss_health_max)
+        boss_health_current = round(max(0.0, boss_health_current - damage_dealt), 2)
+        boss_defeated = boss_health_current <= 0.0
+
         answer_entry = {
             "question_id": question_id,
             "submitted_by": student_id,
@@ -772,22 +1124,30 @@ class PeerSessionService:
             "score": float(evaluation.get("score", 0.0)),
             "ai_feedback": str(evaluation.get("feedback", "")),
             "hint": str(evaluation.get("hint", "")),
+            "damage_dealt": damage_dealt,
             "updated_mastery": mastery_update.get("updated_mastery"),
             "mastery_status": mastery_update.get("mastery_status"),
             "submitted_at": _utc_now().isoformat(),
         }
 
-        answers = data.get("answers", []) or []
-        # One answer per user per question; update if re-submitted.
-        replaced = False
-        for idx, ans in enumerate(answers):
-            if ans.get("question_id") == question_id and ans.get("submitted_by") == student_id:
-                answers[idx] = answer_entry
-                replaced = True
-                break
-        if not replaced:
-            answers.append(answer_entry)
-        ref.update({"answers": answers})
+        answers.append(answer_entry)
+        ref.update(
+            {
+                "answers": answers,
+                "boss_health_max": boss_health_max,
+                "boss_health_current": boss_health_current,
+                "boss_defeated": boss_defeated,
+                "last_boss_event": {
+                    "question_id": question_id,
+                    "attacker": student_id,
+                    "damage_dealt": damage_dealt,
+                    "is_correct": is_correct,
+                    "mistake_type": mistake_type,
+                    "health_after": boss_health_current,
+                    "timestamp": _utc_now().isoformat(),
+                },
+            }
+        )
 
         return {
             "question_id": question_id,
@@ -799,6 +1159,11 @@ class PeerSessionService:
             "ai_feedback": str(evaluation.get("feedback", "")),
             "hint": str(evaluation.get("hint", "")),
             "explanation": question.get("explanation", ""),
+            "damage_dealt": damage_dealt,
+            "boss_health_max": boss_health_max,
+            "boss_health_current": boss_health_current,
+            "boss_defeated": boss_defeated,
+            "already_submitted": False,
             "updated_mastery": mastery_update.get("updated_mastery"),
             "mastery_status": mastery_update.get("mastery_status"),
         }
@@ -828,17 +1193,82 @@ class PeerSessionService:
             return {"error": f"Waiting for answers from: {', '.join(missing)}", "missing_answers": missing}
 
         next_idx = current + 1
-        if next_idx >= len(questions):
-            # Do not auto-complete; session ends only via explicit End action.
+        if next_idx < len(questions):
+            ref.update({"current_question_index": next_idx, "status": "active"})
+            return {
+                "status": "active",
+                "current_question_index": next_idx,
+                "at_last_question": False,
+                "boss_defeated": bool(data.get("boss_defeated", False)),
+            }
+
+        # End of current queue. If boss still alive, generate another round.
+        if bool(data.get("boss_defeated", False)):
             ref.update({"current_question_index": current, "status": data.get("status", "active")})
             return {
                 "status": data.get("status", "active"),
                 "current_question_index": current,
                 "at_last_question": True,
+                "boss_defeated": True,
             }
 
-        ref.update({"current_question_index": next_idx, "status": "active"})
-        return {"status": "active", "current_question_index": next_idx, "at_last_question": False}
+        member_profiles = self._build_member_profiles_from_session(data)
+        if not member_profiles:
+            return {"error": "Cannot generate next round: no member profiles available"}
+
+        created_by = str(data.get("created_by") or "")
+        topic = str(data.get("topic") or "general topic")
+        selected_concept_id = data.get("selected_concept_id")
+        course_id = data.get("course_id")
+        course_name = data.get("course_name")
+
+        new_questions = self._generate_round_robin_questions(
+            member_profiles=member_profiles,
+            topic=topic,
+            selected_concept_id=selected_concept_id,
+            created_by=created_by,
+            course_id=course_id,
+            course_name=course_name,
+        )
+        if not new_questions:
+            context_chunks = self._fetch_concept_context(
+                created_by,
+                selected_concept_id,
+                topic,
+                limit=8,
+                course_id=course_id,
+                course_name=course_name,
+            )
+            new_questions = self._fallback_questions(
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks,
+            )
+        if not new_questions:
+            return {"error": "Failed to generate next round of questions"}
+
+        start_idx = len(questions)
+        appended = self._assign_question_ids(new_questions, start_index=start_idx)
+        questions.extend(appended)
+        round_index = max(1, int(data.get("round_index", 1) or 1)) + 1
+        ref.update(
+            {
+                "questions": questions,
+                "current_question_index": next_idx,
+                "status": "active",
+                "member_profiles": member_profiles,
+                "round_index": round_index,
+            }
+        )
+        return {
+            "status": "active",
+            "current_question_index": next_idx,
+            "at_last_question": False,
+            "boss_defeated": False,
+            "generated_new_round": True,
+            "round_index": round_index,
+        }
 
     def end_session(self, session_id: str) -> Dict[str, Any]:
         """End a peer session."""
@@ -868,6 +1298,8 @@ class PeerSessionService:
                         "session_id": data.get("session_id"),
                         "hub_id": data.get("hub_id"),
                         "topic": data.get("topic"),
+                        "course_id": data.get("course_id"),
+                        "course_name": data.get("course_name"),
                         "status": data.get("status"),
                         "created_by": data.get("created_by"),
                         "created_at": data.get("created_at"),
