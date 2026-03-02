@@ -98,6 +98,22 @@ class FirestoreAssessmentStore:
                 result[quiz_doc.id] = cls_doc.to_dict()
         return result
 
+    # ── Assessment runs (history) ─────────────────────────────────────
+
+    def add_assessment_run(self, student_id: str, run: dict) -> None:
+        run_id = str(run.get("run_id") or "")
+        if run_id:
+            self.db.collection("students").document(student_id) \
+                .collection("assessment_runs").document(run_id).set(run)
+        else:
+            self.db.collection("students").document(student_id) \
+                .collection("assessment_runs").add(run)
+
+    def get_assessment_runs(self, student_id: str) -> List[dict]:
+        col = self.db.collection("students").document(student_id) \
+            .collection("assessment_runs").order_by("submitted_at")
+        return [doc.to_dict() for doc in col.stream()]
+
     # ── Blind spot counts ─────────────────────────────────────────────────────
 
     def get_blind_spots(self, student_id: str) -> dict:
@@ -124,6 +140,7 @@ class FirestoreAssessmentStore:
             "attempt_history": {student_id: self.get_attempts(student_id)},
             "classification_store": {student_id: self.get_all_classifications(student_id, course_id) if course_id else {}},
             "blind_spot_counts": {student_id: self.get_blind_spots(student_id)},
+            "assessment_runs": {student_id: self.get_assessment_runs(student_id)},
         }
 
         def commit(new_state: Dict[str, Any]) -> None:
@@ -145,6 +162,11 @@ class FirestoreAssessmentStore:
             new_blind = new_state.get("blind_spot_counts", {}).get(student_id)
             if new_blind:
                 self.update_blind_spots(student_id, new_blind)
+            # Save assessment runs (append-only)
+            new_runs = new_state.get("assessment_runs", {}).get(student_id, [])
+            old_run_len = len(state["assessment_runs"].get(student_id, []))
+            for run in new_runs[old_run_len:]:
+                self.add_assessment_run(student_id, run)
 
         return state, commit
 

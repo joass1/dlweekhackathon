@@ -56,6 +56,32 @@ export interface MicroCheckpointQuestion {
   difficulty: Difficulty;
 }
 
+export interface AssessmentHistoryQuestion {
+  question_id: string;
+  concept: string;
+  stem: string;
+  selected_answer: string;
+  correct_answer: string;
+  is_correct: boolean;
+  confidence_1_to_5: number;
+  mistake_type: string;
+  missing_concept?: string | null;
+  rationale: string;
+}
+
+export interface AssessmentHistoryRun {
+  run_id: string;
+  student_id: string;
+  concept: string;
+  submitted_at: string;
+  score: number;
+  correct_count: number;
+  total_questions: number;
+  blind_spot_found_count: number;
+  blind_spot_resolved_count: number;
+  questions: AssessmentHistoryQuestion[];
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
   return apiFetch<T>(path, init, token);
 }
@@ -187,6 +213,23 @@ export async function overrideClassification(
       override_to: 'careless',
     }),
   }, token);
+}
+
+export async function getAssessmentHistory(
+  token?: string | null,
+  concept?: string,
+  limit = 20
+): Promise<AssessmentHistoryRun[]> {
+  const query = new URLSearchParams();
+  if (concept) query.set('concept', concept);
+  query.set('limit', String(limit));
+  const suffix = query.toString();
+  const response = await jsonFetch<{ runs: AssessmentHistoryRun[] }>(
+    `/api/assessment/history${suffix ? `?${suffix}` : ''}`,
+    undefined,
+    token
+  );
+  return response.runs || [];
 }
 
 // Kept for dashboard compatibility; replace with backend integration as needed.

@@ -82,6 +82,7 @@ class AssessmentStateStore:
                     "attempt_history": {},
                     "classification_store": {},
                     "blind_spot_counts": {},
+                    "assessment_runs": {},
                 }
             )
 
@@ -645,7 +646,6 @@ class AssessmentEngine:
                 try:
                     completion = self.client.chat.completions.create(
                         model="gpt-5.2",
-                        temperature=0.2,
                         response_format={"type": "json_object"},
                         messages=messages,
                     )
@@ -654,7 +654,6 @@ class AssessmentEngine:
                     self._last_quiz_generation_error = f"response_format mode failed: {format_exc}"
                     completion = self.client.chat.completions.create(
                         model="gpt-5.2",
-                        temperature=0.2,
                         messages=messages,
                     )
                 content = completion.choices[0].message.content or "{}"
@@ -856,7 +855,6 @@ class AssessmentEngine:
             try:
                 completion = self.client.chat.completions.create(
                     model="gpt-5.2",
-                    temperature=0,
                     messages=[
                         {
                             "role": "system",
@@ -936,6 +934,7 @@ class AssessmentEngine:
         history = state.setdefault("attempt_history", {})
         cls_store = state.setdefault("classification_store", {})
         blind = state.setdefault("blind_spot_counts", {})
+        runs_store = state.setdefault("assessment_runs", {})
 
         student_quiz = quizzes.get(request.student_id, {})
         if not student_quiz:
@@ -947,6 +946,8 @@ class AssessmentEngine:
 
         classifications: List[MistakeClassification] = []
         integration_actions: List[Dict[str, Any]] = []
+        review_items: List[Dict[str, Any]] = []
+        correct_count = 0
 
         for answer in request.answers:
             question = student_quiz.get(answer.question_id)
@@ -954,6 +955,7 @@ class AssessmentEngine:
                 raise ValueError(f"Unknown question_id: {answer.question_id}")
             is_correct = answer.selected_answer == question["correct_answer"]
             if is_correct:
+                correct_count += 1
                 previous = student_cls.get(answer.question_id)
                 if (
                     previous
@@ -985,6 +987,19 @@ class AssessmentEngine:
                             "kg_update": kg_sync,
                         }
                     )
+                review_items.append(
+                    {
+                        "question_id": answer.question_id,
+                        "concept": question.get("concept", request.concept),
+                        "stem": question.get("stem", ""),
+                        "selected_answer": answer.selected_answer,
+                        "correct_answer": question.get("correct_answer", ""),
+                        "is_correct": True,
+                        "confidence_1_to_5": answer.confidence_1_to_5,
+                        "mistake_type": "none",
+                        "rationale": "Correct",
+                    }
+                )
                 continue
 
             classification = self._classify_wrong_answer(
@@ -1035,6 +1050,40 @@ class AssessmentEngine:
             )
             if kg_sync:
                 integration_actions[-1]["kg_update"] = kg_sync
+            review_items.append(
+                {
+                    "question_id": answer.question_id,
+                    "concept": question.get("concept", request.concept),
+                    "stem": question.get("stem", ""),
+                    "selected_answer": answer.selected_answer,
+                    "correct_answer": question.get("correct_answer", ""),
+                    "is_correct": False,
+                    "confidence_1_to_5": answer.confidence_1_to_5,
+                    "mistake_type": classification.mistake_type,
+                    "missing_concept": classification.missing_concept,
+                    "rationale": classification.rationale,
+                }
+            )
+
+        # Persist a full assessment run for "Past Assessments" UX.
+        total = len(request.answers)
+        run_entry = {
+            "run_id": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:6]}",
+            "student_id": request.student_id,
+            "concept": request.concept,
+            "submitted_at": _now_iso(),
+            "score": round((correct_count / total) * 100, 2) if total else 0.0,
+            "correct_count": correct_count,
+            "total_questions": total,
+            "blind_spot_found_count": student_blind["found"],
+            "blind_spot_resolved_count": student_blind["resolved"],
+            "questions": review_items,
+        }
+        student_runs = runs_store.setdefault(request.student_id, [])
+        student_runs.append(run_entry)
+        # Keep bounded history size.
+        if len(student_runs) > 100:
+            del student_runs[:-100]
 
         commit(state)
         return ClassifyResponse(
@@ -1043,6 +1092,95 @@ class AssessmentEngine:
             blind_spot_resolved_count=student_blind["resolved"],
             integration_actions=integration_actions,
         )
+
+    def get_assessment_history(self, student_id: str, concept: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+        state, _ = self.store.transaction(student_id)
+        runs = state.get("assessment_runs", {}).get(student_id, [])
+        if not runs:
+            # Backward-compatible fallback: derive coarse runs from historical attempts.
+            attempts = state.get("attempt_history", {}).get(student_id, [])
+            attempts_sorted = sorted(attempts, key=lambda a: str(a.get("timestamp", "")))
+            derived: List[Dict[str, Any]] = []
+            current: Optional[Dict[str, Any]] = None
+            current_ts: Optional[datetime] = None
+
+            def _parse_ts(value: Any) -> Optional[datetime]:
+                raw = str(value or "")
+                if not raw:
+                    return None
+                try:
+                    ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                return ts
+
+            for a in attempts_sorted:
+                a_ts_raw = str(a.get("timestamp", ""))
+                a_ts = _parse_ts(a_ts_raw)
+                if a_ts is None:
+                    continue
+
+                a_concept = str(a.get("concept") or "unknown")
+                # Start a new run if concept changes or time gap exceeds 2 minutes.
+                should_split = (
+                    current is None
+                    or current.get("concept") != a_concept
+                    or current_ts is None
+                    or (a_ts - current_ts).total_seconds() > 120
+                )
+
+                if should_split:
+                    if current is not None:
+                        total_q = int(current.get("total_questions", 0))
+                        correct_q = int(current.get("correct_count", 0))
+                        current["score"] = round((correct_q / total_q) * 100, 2) if total_q else 0.0
+                        derived.append(current)
+                    current = {
+                        "run_id": f"derived-{a_ts.strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:6]}",
+                        "student_id": student_id,
+                        "concept": a_concept,
+                        "submitted_at": a_ts_raw,
+                        "score": 0.0,
+                        "correct_count": 0,
+                        "total_questions": 0,
+                        "blind_spot_found_count": 0,
+                        "blind_spot_resolved_count": 0,
+                        "questions": [],
+                    }
+
+                assert current is not None
+                current["total_questions"] += 1
+                if bool(a.get("is_correct")):
+                    current["correct_count"] += 1
+                current["questions"].append(
+                    {
+                        "question_id": str(a.get("question_id", "")),
+                        "concept": a_concept,
+                        "stem": "",
+                        "selected_answer": "",
+                        "correct_answer": "",
+                        "is_correct": bool(a.get("is_correct")),
+                        "confidence_1_to_5": int(a.get("confidence_1_to_5", 3)),
+                        "mistake_type": a.get("mistake_type") or "none",
+                        "rationale": "Recovered from historical attempt data.",
+                    }
+                )
+                current_ts = a_ts
+
+            if current is not None:
+                total_q = int(current.get("total_questions", 0))
+                correct_q = int(current.get("correct_count", 0))
+                current["score"] = round((correct_q / total_q) * 100, 2) if total_q else 0.0
+                derived.append(current)
+            runs = derived
+
+        if concept:
+            runs = [r for r in runs if str(r.get("concept", "")) == concept]
+        # Most recent first.
+        runs_sorted = sorted(runs, key=lambda r: str(r.get("submitted_at", "")), reverse=True)
+        return runs_sorted[: max(1, min(limit, 100))]
 
     def get_self_awareness_score(self, student_id: str) -> SelfAwarenessResponse:
         state, _ = self.store.transaction(student_id)

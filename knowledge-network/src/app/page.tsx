@@ -7,6 +7,7 @@ import Link from 'next/link';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { useStudentId } from '@/hooks/useStudentId';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSidebar } from '@/contexts/SidebarContext';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 
@@ -50,7 +51,14 @@ export default function Page() {
   const [isKGExpanded, setIsKGExpanded] = useState(false);
   const studentId = useStudentId();
   const { user } = useAuth();
+  const { setIsCollapsed } = useSidebar();
   const { apiFetchWithAuth } = useAuthedApi();
+
+  const toggleKG = () => {
+    const next = !isKGExpanded;
+    setIsKGExpanded(next);
+    setIsCollapsed(next);
+  };
 
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'Student';
 
@@ -233,7 +241,7 @@ export default function Page() {
                   ))}
                 </select>
                 <button
-                  onClick={() => setIsKGExpanded(v => !v)}
+                  onClick={toggleKG}
                   className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 rounded hover:bg-accent text-muted-foreground"
                   title={isKGExpanded ? 'Collapse' : 'Expand'}
                   aria-label={isKGExpanded ? 'Collapse knowledge map' : 'Expand knowledge map'}

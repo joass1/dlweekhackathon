@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npx next build)",
-      "Bash(npm install firebase)"
+      "Bash(npm install firebase)",
+      "Bash(npm install @tailwindcss/typography)"
     ]
   }
 }
