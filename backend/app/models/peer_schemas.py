@@ -90,3 +90,10 @@ class SubmitAnswerResponse(BaseModel):
     ai_feedback: str
     hint: str = ""
     explanation: str = ""
+
+
+class TwilioVideoTokenResponse(BaseModel):
+    token: str
+    room_name: str
+    identity: str
+    ttl_seconds: int

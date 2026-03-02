@@ -57,7 +57,7 @@ export default function UploadPage() {
     try {
       const result = await apiFetchWithAuth<{
         files?: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }[];
-        suggested_quiz_concept?: string;
+        comprehensive_quiz_ticket?: string;
       }>('/upload', {
         method: 'POST',
         body: formData,
@@ -74,16 +74,18 @@ export default function UploadPage() {
 
       const hasSuccess = normalized.some(file => file.status === 'success');
       if (hasSuccess) {
-        const quizConcept =
-          typeof result?.suggested_quiz_concept === 'string' && result.suggested_quiz_concept.trim()
-            ? result.suggested_quiz_concept.trim()
-            : '';
-        if (quizConcept) {
-          setIsStartingAssessment(true);
-          setTimeout(() => {
-            router.push(`/assessment/${quizConcept}/take`);
-          }, 500);
+        setIsStartingAssessment(true);
+        const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
+        if (ticket && typeof window !== 'undefined') {
+          window.sessionStorage.setItem('comprehensive_quiz_ticket', ticket);
         }
+        setTimeout(() => {
+          router.push(
+            ticket
+              ? `/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`
+              : '/assessment/all-concepts/take'
+          );
+        }, 500);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed';
@@ -169,7 +171,7 @@ export default function UploadPage() {
           {isUploading
             ? 'Uploading & processing...'
             : isStartingAssessment
-              ? 'Upload complete. Starting assessment...'
+              ? 'Upload complete. Starting comprehensive assessment...'
               : 'Drop files here or click to upload'}
         </p>
         <p className="text-sm text-white/50 mb-4">PDF, TXT, MD supported</p>

@@ -28,3 +28,4 @@ firebase-admin>=6.5.0
 
 # Backend integrations
 supabase>=2.0.0
+twilio>=9.0.0

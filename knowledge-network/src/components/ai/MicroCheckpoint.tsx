@@ -13,18 +13,26 @@ export interface CheckpointQuestion {
 
 interface MicroCheckpointProps {
   checkpoint: CheckpointQuestion;
-  onSubmit: (answer: string, confidence: number) => void;
+  onSubmit: (answer: string, confidence: number) => Promise<{ is_correct: boolean | null } | void>;
   onSkip: () => void;
+  onClose: () => void;
 }
 
 const AUTO_DISMISS_SECONDS = 8;
 
-export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpointProps) {
+function optionKey(value: string): string {
+  const m = value.trim().match(/^([A-D])(?:[.)\s]|$)/i);
+  if (m) return m[1].toUpperCase();
+  return value.trim().toLowerCase();
+}
+
+export function MicroCheckpoint({ checkpoint, onSubmit, onSkip, onClose }: MicroCheckpointProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [confidence, setConfidence] = useState(3);
   const [phase, setPhase] = useState<'question' | 'result'>('question');
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   const [countdown, setCountdown] = useState(AUTO_DISMISS_SECONDS);
+  const [submitting, setSubmitting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Auto-dismiss after result is shown
@@ -34,7 +42,7 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timerRef.current!);
-          onSkip(); // dismiss
+          onClose();
           return 0;
         }
         return prev - 1;
@@ -43,14 +51,23 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [phase, onSkip]);
+  }, [phase, onClose]);
 
-  const handleConfirm = () => {
-    if (!selected) return;
-    const correct = selected === checkpoint.correct_answer;
-    setIsCorrect(correct);
-    setPhase('result');
-    onSubmit(selected, confidence);
+  const handleConfirm = async () => {
+    if (!selected || submitting) return;
+    const localCorrect = optionKey(selected) === optionKey(checkpoint.correct_answer);
+    setSubmitting(true);
+    try {
+      const submitResult = await onSubmit(selected, confidence);
+      const serverCorrect = submitResult?.is_correct;
+      setIsCorrect(typeof serverCorrect === 'boolean' ? serverCorrect : localCorrect);
+      setPhase('result');
+    } catch {
+      setIsCorrect(localCorrect);
+      setPhase('result');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const confidenceLabel = (v: number) =>
@@ -65,9 +82,9 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
           <span className="text-xs font-semibold uppercase tracking-widest text-sky-600">Quick Check</span>
         </div>
         <button
-          onClick={onSkip}
+          onClick={phase === 'question' ? onSkip : onClose}
           className="text-slate-400 hover:text-slate-700 transition-colors text-lg leading-none"
-          aria-label="Skip checkpoint"
+          aria-label="Close checkpoint"
         >
           ×
         </button>
@@ -126,11 +143,11 @@ export function MicroCheckpoint({ checkpoint, onSubmit, onSkip }: MicroCheckpoin
                 Skip
               </button>
               <button
-                disabled={!selected}
+                disabled={!selected || submitting}
                 onClick={handleConfirm}
                 className="flex-1 rounded-lg bg-sky-500 py-2 text-sm font-semibold text-white hover:bg-sky-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                Submit
+                {submitting ? 'Checking...' : 'Submit'}
               </button>
             </div>
           </>

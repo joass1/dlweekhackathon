@@ -46,6 +46,8 @@ export default function AIAssistantPage() {
   const lastCheckpointAtRef = useRef(-8); // start so first check fires at msg 3
   const checkpointedConceptsRef = useRef<string[]>([]);
   const [activeCheckpoint, setActiveCheckpoint] = useState<CheckpointQuestion | null>(null);
+  const sourceKeyToIndexRef = useRef<Map<string, number>>(new Map());
+  const nextSourceIndexRef = useRef(1);
 
   const assistantMessages = useMemo(
     () => messages.filter((m) => m.role === 'assistant'),
@@ -90,6 +92,40 @@ export default function AIAssistantPage() {
   const handleTopicRemove = (id: string) =>
     setScopedTopics(prev => prev.filter(t => t.id !== id));
 
+  const normalizeSourceKey = (item: ContextItem) => {
+    const concept = (item.concept_id || 'unknown').trim().toLowerCase();
+    const text = item.text.trim().replace(/\s+/g, ' ').toLowerCase();
+    return `${concept}::${text}`;
+  };
+
+  const assignStableSourceIndices = (items: ContextItem[]): ContextItem[] =>
+    items.map((item) => {
+      const key = normalizeSourceKey(item);
+      const existing = sourceKeyToIndexRef.current.get(key);
+      if (existing != null) {
+        return { ...item, index: existing };
+      }
+      const idx = nextSourceIndexRef.current++;
+      sourceKeyToIndexRef.current.set(key, idx);
+      return { ...item, index: idx };
+    });
+
+  const remapAnswerCitations = (answer: string, localContext: ContextItem[], stableContext: ContextItem[]) => {
+    const localToStable = new Map<number, number>();
+    for (let i = 0; i < Math.min(localContext.length, stableContext.length); i += 1) {
+      const localIdx = localContext[i].index;
+      const stableIdx = stableContext[i].index;
+      if (typeof localIdx === 'number' && typeof stableIdx === 'number') {
+        localToStable.set(localIdx, stableIdx);
+      }
+    }
+    return answer.replace(/\[(\d+)\]/g, (_, rawN: string) => {
+      const n = Number(rawN);
+      const mapped = localToStable.get(n);
+      return `[${mapped ?? n}]`;
+    });
+  };
+
   const fetchCheckpoint = async (sessionMessages: { role: string; content: string }[]) => {
     if (!scopedTopics.length) return;
     const topicId = scopedTopics[0].conceptId;
@@ -130,10 +166,9 @@ export default function AIAssistantPage() {
 
   const handleCheckpointSubmit = async (answer: string, confidence: number) => {
     if (!activeCheckpoint) return;
-    setActiveCheckpoint(null);
     try {
       const token = await getIdToken();
-      await fetch('/api/ai/checkpoint/submit', {
+      const res = await fetch('/api/ai/checkpoint/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -152,18 +187,21 @@ export default function AIAssistantPage() {
           was_skipped: false,
         }),
       });
+      if (!res.ok) throw new Error(`Checkpoint submit failed with status ${res.status}`);
+      const data = await res.json();
+      return { is_correct: data?.is_correct ?? null };
     } catch (err) {
       console.error('Checkpoint submit error:', err);
+      return;
     }
   };
 
   const handleCheckpointSkip = async () => {
     if (!activeCheckpoint) return;
     const snap = activeCheckpoint;
-    setActiveCheckpoint(null);
     try {
       const token = await getIdToken();
-      await fetch('/api/ai/checkpoint/submit', {
+      const res = await fetch('/api/ai/checkpoint/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -182,8 +220,11 @@ export default function AIAssistantPage() {
           was_skipped: true,
         }),
       });
+      if (!res.ok) throw new Error(`Checkpoint skip failed with status ${res.status}`);
     } catch (err) {
       console.error('Checkpoint skip error:', err);
+    } finally {
+      setActiveCheckpoint(null);
     }
   };
 
@@ -217,16 +258,28 @@ export default function AIAssistantPage() {
       }
 
       const { answer, context } = await response.json();
-      const freshContext: ContextItem[] = context ?? [];
-      // Each response resets the sources panel to its own 1-based citations
-      setActiveNotes(freshContext);
+      const localContext: ContextItem[] = context ?? [];
+      const stableContext = assignStableSourceIndices(localContext);
+      const remappedAnswer = remapAnswerCitations(answer, localContext, stableContext);
+      // Preserve prior sources and stable indices across the session.
+      setActiveNotes(prev => {
+        const merged = [...prev];
+        const existing = new Set(prev.map(normalizeSourceKey));
+        for (const item of stableContext) {
+          const key = normalizeSourceKey(item);
+          if (existing.has(key)) continue;
+          existing.add(key);
+          merged.push(item);
+        }
+        return merged;
+      });
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
-        content: answer,
+        content: remappedAnswer,
         role: 'assistant',
         timestamp: new Date(),
-        context: freshContext,  // store per-message so citation clicks can restore the right sources
+        context: stableContext,  // store per-message with session-stable citation indices
       };
       setMessages(prev => [...prev, assistantMessage]);
 
@@ -281,12 +334,7 @@ export default function AIAssistantPage() {
           <SocraticBackground3D
             speechText={selectedAssistantSpeech}
             isSpeaking={isLoading || Boolean(selectedAssistantSpeech)}
-            onCitationClick={(n, sectionIdx) => {
-              // sectionIdx 0 = initial prompt (no sources); sectionIdx i≥1 = assistantMessages[i-1]
-              if (sectionIdx > 0) {
-                const msg = assistantMessages[sectionIdx - 1];
-                if (msg?.context) setActiveNotes(msg.context);
-              }
+            onCitationClick={(n, _sectionIdx) => {
               setHighlightedSourceIndex(n);
             }}
           />
@@ -338,6 +386,7 @@ export default function AIAssistantPage() {
           checkpoint={activeCheckpoint}
           onSubmit={handleCheckpointSubmit}
           onSkip={handleCheckpointSkip}
+          onClose={() => setActiveCheckpoint(null)}
         />
       )}
     </div>

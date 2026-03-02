@@ -21,7 +21,7 @@ def _utc_now() -> datetime:
 
 
 class PeerSessionService:
-    """Manages peer learning sessions with WebRTC video and AI-generated tasks."""
+    """Manages peer learning sessions with AI-generated collaborative tasks."""
 
     def __init__(self, db, openai_client: Optional[OpenAI] = None):
         self.db = db
@@ -253,9 +253,9 @@ Return JSON (no markdown):
 
         updates: Dict[str, Any] = {"members": members}
 
-        # Auto-activate if enough members joined
-        expected = data.get("expected_members", 4)
-        if len(members) >= expected and data.get("status") == "waiting":
+        # Auto-activate when at least 2 members have joined
+        # (don't wait for all expected members — allows testing with fewer people)
+        if len(members) >= 2 and data.get("status") == "waiting":
             updates["status"] = "active"
 
         ref.update(updates)

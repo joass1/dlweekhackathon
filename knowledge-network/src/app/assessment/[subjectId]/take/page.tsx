@@ -1,31 +1,46 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import Image from 'next/image';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import {
   classifyMistake,
   evaluateAnswer,
   generateQuiz,
-  getMicroCheckpoint,
-  submitMicroCheckpoint,
-  overrideClassification,
   type QuizQuestionClient,
   type ClassifyResult,
-  type MicroCheckpointQuestion,
 } from '@/services/assessment';
-import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
 import { useAuth } from '@/contexts/AuthContext';
 
 type AnswersMap = Record<string, number>;
 type ConfidenceMap = Record<string, number>;
-type CheckpointQueueItem = { concept?: string; missing_concept?: string | null };
+
+const GENERATING_QUIZ_PHRASES = [
+  'Building your next quiz...',
+  'Analyzing your knowledge map...',
+  'Choosing concepts to test...',
+  'Adjusting question difficulty to your mastery...',
+  'Crafting fresh questions...',
+  'Finalizing your quiz...',
+];
+
+const SUBMITTING_QUIZ_PHRASES = [
+  'Checking your answers...',
+  'Scoring your responses...',
+  'Classifying mistakes (careless vs conceptual)...',
+  'Updating your mastery profile...',
+  'Preparing your summary...',
+  'Almost done...',
+];
 
 export default function AssessmentTakePage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const subjectId = params.subjectId as string;
+  const retryKey = searchParams.get('retry') || '';
+  const uploadTicketFromQuery = searchParams.get('ticket') || '';
+  const isComprehensive = subjectId === 'all-concepts';
 
   const [questions, setQuestions] = useState<QuizQuestionClient[]>([]);
   const [answers, setAnswers] = useState<AnswersMap>({});
@@ -34,13 +49,28 @@ export default function AssessmentTakePage() {
   const [isLoadingQuiz, setIsLoadingQuiz] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isEmptyAssessment, setIsEmptyAssessment] = useState(false);
-  const [classificationResult, setClassificationResult] = useState<ClassifyResult | null>(null);
-  const [checkpoint, setCheckpoint] = useState<MicroCheckpointQuestion | null>(null);
-  const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
-  const [checkpointConfidence, setCheckpointConfidence] = useState(3);
-  const [pendingCheckpoints, setPendingCheckpoints] = useState<CheckpointQueueItem[]>([]);
+  const [, setClassificationResult] = useState<ClassifyResult | null>(null);
+  const [loadingPhraseIdx, setLoadingPhraseIdx] = useState(0);
+  const [submitPhraseIdx, setSubmitPhraseIdx] = useState(0);
   const studentId = useStudentId();
   const { getIdToken } = useAuth();
+  const [effectiveUploadTicket, setEffectiveUploadTicket] = useState(uploadTicketFromQuery);
+
+  useEffect(() => {
+    if (!isComprehensive) return;
+    const fromQuery = uploadTicketFromQuery.trim();
+    if (fromQuery) {
+      setEffectiveUploadTicket(fromQuery);
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('comprehensive_quiz_ticket', fromQuery);
+      }
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const fromSession = window.sessionStorage.getItem('comprehensive_quiz_ticket') || '';
+      setEffectiveUploadTicket(fromSession);
+    }
+  }, [isComprehensive, uploadTicketFromQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +80,16 @@ export default function AssessmentTakePage() {
       setIsEmptyAssessment(false);
       try {
         const token = await getIdToken();
-        const generated = await generateQuiz(studentId, subjectId, 5, token);
+        const generated = await generateQuiz(
+          studentId,
+          subjectId,
+          isComprehensive ? 20 : 5,
+          token,
+          isComprehensive ? effectiveUploadTicket : undefined
+        );
+        if (isComprehensive && typeof window !== 'undefined') {
+          window.sessionStorage.removeItem('comprehensive_quiz_ticket');
+        }
         if (!cancelled) {
           setQuestions(generated);
           setIsEmptyAssessment(generated.length === 0);
@@ -83,7 +122,25 @@ export default function AssessmentTakePage() {
     return () => {
       cancelled = true;
     };
-  }, [studentId, subjectId, getIdToken]);
+  }, [studentId, subjectId, retryKey, getIdToken, isComprehensive, effectiveUploadTicket, router]);
+
+  useEffect(() => {
+    if (!isLoadingQuiz) return;
+    setLoadingPhraseIdx(0);
+    const id = window.setInterval(() => {
+      setLoadingPhraseIdx((prev) => (prev + 1) % GENERATING_QUIZ_PHRASES.length);
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [isLoadingQuiz]);
+
+  useEffect(() => {
+    if (!isSubmitting) return;
+    setSubmitPhraseIdx(0);
+    const id = window.setInterval(() => {
+      setSubmitPhraseIdx((prev) => (prev + 1) % SUBMITTING_QUIZ_PHRASES.length);
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [isSubmitting]);
 
   const handleAnswer = (questionId: string, answerIndex: number) => {
     setAnswers((prev) => ({
@@ -106,77 +163,26 @@ export default function AssessmentTakePage() {
       confidence_1_to_5: confidenceRatings[q.question_id] || 3,
     }));
 
-  const runNextCheckpoint = async (queueArg?: CheckpointQueueItem[]) => {
-    const queue = queueArg ?? pendingCheckpoints;
-    if (!queue.length) {
-      return false;
-    }
-    const [next, ...rest] = queue;
-    setPendingCheckpoints(rest);
-    try {
-      const token = await getIdToken();
-      const cp = await getMicroCheckpoint(
-        studentId,
-        next.concept || subjectId,
-        next.missing_concept || undefined,
-        token
-      );
-      setCheckpoint(cp);
-      setCheckpointAnswer(null);
-      setCheckpointConfidence(3);
-      return true;
-    } catch (error) {
-      console.error('Error loading micro-checkpoint:', error);
-      return false;
-    }
-  };
-
   const handleSubmit = async () => {
     if (Object.keys(answers).length < questions.length) {
       alert('Please answer all questions.');
       return;
     }
+
     setIsSubmitting(true);
     try {
       const token = await getIdToken();
       const answerPayload = getAnswerPayload();
-      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token);
       const classification = await classifyMistake(studentId, subjectId, answerPayload, token);
       setClassificationResult(classification);
+      const evaluation = classification.per_question?.length
+        ? {
+            score: Number(classification.score || 0),
+            per_question: classification.per_question,
+          }
+        : await evaluateAnswer(studentId, subjectId, answerPayload, token);
+      // Backend classify endpoint already performs integration updates (KG + tracking).
 
-      const conceptualQueue: CheckpointQueueItem[] = (classification.classifications || [])
-        .filter((c) => c.mistake_type === 'conceptual')
-        .map((c) => ({ concept: subjectId, missing_concept: c.missing_concept }));
-
-      // Update KG mastery + BKT for each answered question
-      try {
-        for (const pq of evaluation.per_question) {
-          const cls = classification.classifications.find(c => c.question_id === pq.question_id);
-          const isCareless = cls?.mistake_type === 'careless';
-
-          // Update knowledge graph node mastery
-          await apiFetch('/api/kg/update_mastery', {
-            method: 'POST',
-            body: JSON.stringify({
-              concept_id: subjectId,
-              is_correct: pq.is_correct,
-              is_careless: isCareless,
-            }),
-          }, token);
-
-          // Update BKT state
-          await apiFetch('/api/adaptive/bkt/update', {
-            method: 'POST',
-            body: JSON.stringify({
-              concept: { concept_id: subjectId, mastery: 0.25 },
-              is_correct: pq.is_correct,
-              mistake_type: cls?.mistake_type === 'conceptual' ? 'conceptual' : cls?.mistake_type === 'careless' ? 'careless' : 'normal',
-            }),
-          }, token);
-        }
-      } catch (integrationErr) {
-        console.warn('Non-fatal: KG/BKT update failed:', integrationErr);
-      }
       saveRunToSession({
         studentId,
         subjectId,
@@ -187,10 +193,7 @@ export default function AssessmentTakePage() {
         classification,
       });
 
-      const checkpointStarted = await runNextCheckpoint(conceptualQueue);
-      if (!checkpointStarted) {
-        router.push(`/assessment/${subjectId}/matching`);
-      }
+      router.push(`/assessment/${subjectId}/matching`);
     } catch (error) {
       console.error('Error submitting assessment:', error);
       alert('Failed to submit assessment. Please try again.');
@@ -199,78 +202,12 @@ export default function AssessmentTakePage() {
     }
   };
 
-  const handleOverride = async (questionId: string) => {
-    try {
-      const token = await getIdToken();
-      await overrideClassification(studentId, questionId, token);
-      if (classificationResult) {
-        setClassificationResult({
-          ...classificationResult,
-          classifications: classificationResult.classifications.map((c) =>
-            c.question_id === questionId
-              ? { ...c, mistake_type: 'careless', missing_concept: null, rationale: 'User override: rushed.' }
-              : c
-          ),
-        });
-      }
-      alert('Reclassified as careless.');
-    } catch (error) {
-      console.error('Override failed:', error);
-      alert('Could not override classification.');
-    }
-  };
-
-  const submitCheckpoint = async () => {
-    if (!checkpoint || checkpointAnswer === null) {
-      alert('Select a checkpoint answer first.');
-      return;
-    }
-    try {
-      const token = await getIdToken();
-      const selectedAnswer = checkpoint.options[checkpointAnswer];
-      const result = await submitMicroCheckpoint(
-        studentId,
-        checkpoint.question_id,
-        selectedAnswer,
-        checkpointConfidence,
-        token
-      );
-      const currentRaw = window.sessionStorage.getItem(`assessment_result_${subjectId}`);
-      const current = currentRaw ? JSON.parse(currentRaw) : {};
-      saveRunToSession({
-        ...current,
-        checkpoint: {
-          question_id: checkpoint.question_id,
-          is_correct: result.is_correct,
-          next_action: result.next_action,
-        },
-      });
-      setCheckpoint(null);
-      const hasMoreCheckpoints = await runNextCheckpoint();
-      if (!hasMoreCheckpoints) {
-        router.push(`/assessment/${subjectId}/matching`);
-      }
-    } catch (error) {
-      console.error('Checkpoint submit failed:', error);
-      alert('Could not submit checkpoint.');
-    }
-  };
-
   if (isLoadingQuiz) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="flex items-center justify-center">
-            <Image
-              src="/logo-images/favicon.png"
-              alt="Loading"
-              width={48}
-              height={48}
-              className="animate-bounce"
-              priority
-            />
-          </div>
-          <p className="mt-4 text-muted-foreground">Generating quiz...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03b2e6] mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">{GENERATING_QUIZ_PHRASES[loadingPhraseIdx]}</p>
         </div>
       </div>
     );
@@ -315,7 +252,7 @@ export default function AssessmentTakePage() {
   return (
     <div className="min-h-screen bg-background py-8">
       <div className="max-w-3xl mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-2">Mentora Assessment: {subjectId.replace(/-/g, ' ')}</h1>
+        <h1 className="text-2xl font-bold mb-2">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
         <p className="text-sm text-muted-foreground mb-8">Answer each question, then rate how confident you are in your answer.</p>
 
         <div className="space-y-8">
@@ -378,20 +315,6 @@ export default function AssessmentTakePage() {
                   </div>
                 </div>
               )}
-
-              {classificationResult?.classifications
-                .filter((c) => c.question_id === question.question_id && c.mistake_type === 'conceptual')
-                .map((c) => (
-                  <div key={c.question_id} className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-sm text-amber-800">{c.rationale}</p>
-                    <button
-                      className="mt-2 text-xs px-3 py-1 rounded bg-white border border-amber-300 hover:bg-amber-100"
-                      onClick={() => handleOverride(c.question_id)}
-                    >
-                      I understand this, I just rushed
-                    </button>
-                  </div>
-                ))}
             </div>
           ))}
         </div>
@@ -402,68 +325,11 @@ export default function AssessmentTakePage() {
             disabled={isSubmitting || questions.length === 0}
             className="bg-[#03b2e6] text-white px-6 py-2 rounded-full hover:bg-[#029ad0] disabled:opacity-50"
           >
-            {isSubmitting ? 'Analyzing...' : 'Submit Assessment'}
+            {isSubmitting ? SUBMITTING_QUIZ_PHRASES[submitPhraseIdx] : 'Submit Assessment'}
           </button>
         </div>
       </div>
-
-      {checkpoint && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-          <div className="max-w-xl w-full bg-white rounded-xl p-6">
-            <h2 className="text-xl font-semibold mb-2">Micro-checkpoint</h2>
-            <p className="text-foreground mb-4">{checkpoint.stem}</p>
-            <div className="space-y-2 mb-4">
-              {checkpoint.options.map((option, index) => (
-                <button
-                  key={index}
-                  onClick={() => setCheckpointAnswer(index)}
-                  className={`w-full text-left p-3 border rounded-lg ${
-                    checkpointAnswer === index ? 'border-[#03b2e6] bg-[#e0f4fb]' : 'border-gray-200'
-                  }`}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                className="px-4 py-2 rounded border border-gray-300"
-                onClick={async () => {
-                  setCheckpoint(null);
-                  setCheckpointAnswer(null);
-                  setCheckpointConfidence(3);
-                  const hasMoreCheckpoints = await runNextCheckpoint();
-                  if (!hasMoreCheckpoints) {
-                    router.push(`/assessment/${subjectId}/matching`);
-                  }
-                }}
-              >
-                Skip
-              </button>
-              <button className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]" onClick={submitCheckpoint}>
-                Submit checkpoint
-              </button>
-            </div>
-            <div className="mt-4 p-4 bg-background rounded-lg border border-muted">
-              <label className="block text-sm font-medium text-foreground mb-2">
-                Confidence for checkpoint answer
-              </label>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-red-500 w-14">Guessing</span>
-                <input
-                  type="range"
-                  min="1"
-                  max="5"
-                  value={checkpointConfidence}
-                  onChange={(e) => setCheckpointConfidence(parseInt(e.target.value, 10))}
-                  className="flex-1 accent-[#03b2e6]"
-                />
-                <span className="text-xs text-green-600 w-14 text-right">Certain</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
+

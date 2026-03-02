@@ -20,7 +20,10 @@ class SearchResult(BaseModel):
 class QuizGenerateRequest(BaseModel):
     student_id: str
     concept: str
-    num_questions: int = Field(default=5, ge=1, le=10)
+    num_questions: int = Field(default=5, ge=1, le=20)
+    concepts: Optional[List[str]] = None
+    upload_ticket: Optional[str] = None
+    material_context: Optional[str] = None
 
 
 class QuizQuestion(BaseModel):
@@ -69,6 +72,8 @@ class ClassifyResponse(BaseModel):
     blind_spot_found_count: int
     blind_spot_resolved_count: int
     integration_actions: List[dict] = []
+    score: Optional[float] = None
+    per_question: List[EvaluatedAnswer] = []
 
 
 class SelfAwarenessResponse(BaseModel):
