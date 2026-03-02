@@ -218,6 +218,7 @@ export default function SocraticBackground3D({
   onCitationClick?: (n: number, sectionIndex: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const prevSpeechTextRef = useRef('');
 
   // Attach a non-passive native wheel listener so we can stopPropagation
   // and guarantee the scroll container scrolls on every browser/OS.
@@ -241,6 +242,23 @@ export default function SocraticBackground3D({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [speechText]); // re-attach when content changes
+
+  // Auto-scroll to the newest generated content whenever the assistant reply updates.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    if (!speechText || speechText === prevSpeechTextRef.current) return;
+    prevSpeechTextRef.current = speechText;
+
+    requestAnimationFrame(() => {
+      try {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } catch {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+  }, [speechText]);
 
   return (
     <BackgroundErrorBoundary>

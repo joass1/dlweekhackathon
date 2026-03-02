@@ -1,5 +1,10 @@
 import os
 import pathlib
+import json
+import hmac
+import hashlib
+import base64
+import time
 from datetime import datetime, timezone
 from datetime import timedelta
 from typing import Dict, List, Optional
@@ -321,6 +326,45 @@ def _clean_env(name: str) -> str:
 
 def _normalize_lookup(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _b64url_json(data: dict) -> str:
+    raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_bytes(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _create_twilio_video_jwt_without_sdk(
+    account_sid: str,
+    api_key_sid: str,
+    api_key_secret: str,
+    identity: str,
+    room_name: str,
+    ttl_seconds: int,
+) -> str:
+    now = int(time.time())
+    header = {"typ": "JWT", "alg": "HS256", "cty": "twilio-fpa;v=1"}
+    payload = {
+        "jti": f"{api_key_sid}-{now}",
+        "iss": api_key_sid,
+        "sub": account_sid,
+        "exp": now + ttl_seconds,
+        "nbf": now,
+        "grants": {
+            "identity": identity,
+            "video": {"room": room_name},
+        },
+    }
+    signing_input = f"{_b64url_json(header)}.{_b64url_json(payload)}"
+    signature = hmac.new(
+        api_key_secret.encode("utf-8"),
+        signing_input.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{signing_input}.{_b64url_bytes(signature)}"
 
 
 def _resolve_user_concept_id(raw_concept: str, nodes: List[dict]) -> Optional[str]:
@@ -1471,13 +1515,12 @@ async def create_peer_video_token(
     ttl_seconds = max(300, min(ttl_seconds, 24 * 60 * 60))
     room_name = f"peer-session-{session_id}"
 
+    # Prefer Twilio SDK when available, but fall back to local JWT signing
+    # so development can proceed even when pip/network access is unavailable.
     try:
         from twilio.jwt.access_token import AccessToken
         from twilio.jwt.access_token.grants import VideoGrant
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Twilio SDK unavailable: {e}")
 
-    try:
         token = AccessToken(
             account_sid=account_sid,
             signing_key_sid=api_key,
@@ -1489,8 +1532,18 @@ async def create_peer_video_token(
         jwt_value = token.to_jwt()
         if isinstance(jwt_value, bytes):
             jwt_value = jwt_value.decode("utf-8")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate Twilio token: {e}")
+    except Exception:
+        try:
+            jwt_value = _create_twilio_video_jwt_without_sdk(
+                account_sid=account_sid,
+                api_key_sid=api_key,
+                api_key_secret=api_secret,
+                identity=student_id,
+                room_name=room_name,
+                ttl_seconds=ttl_seconds,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to generate Twilio token: {e}")
 
     return TwilioVideoTokenResponse(
         token=jwt_value,
@@ -1498,5 +1551,3 @@ async def create_peer_video_token(
         identity=student_id,
         ttl_seconds=ttl_seconds,
     )
-
-
