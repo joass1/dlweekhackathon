@@ -4,8 +4,9 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useStudentId } from '@/hooks/useStudentId';
-import { Loader2, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { useSearchParams } from 'next/navigation';
 
@@ -88,7 +89,14 @@ export default function GroupsPage() {
   if (loading) {
     return (
       <div className="p-6 flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-6 h-6 animate-spin text-[#03b2e6] mr-2" />
+        <Image
+          src="/logo-images/favicon.png"
+          alt="Loading"
+          width={28}
+          height={28}
+          className="animate-bounce mr-2"
+          priority
+        />
         <span className="text-muted-foreground">Matching peer learning hubs...</span>
       </div>
     );
