@@ -122,10 +122,10 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full text-slate-100">
       <div className="flex-grow p-4 overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold">My Courses</h2>
+          <h2 className="text-lg font-semibold text-white">My Courses</h2>
           <button
             onClick={() => setIsUploadModalOpen(true)}
             className="flex items-center px-3 py-1 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600"
@@ -140,7 +140,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             <div className="w-5 h-5 border-2 border-[#03b2e6] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : subjects.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground text-sm">
+          <div className="text-center py-8 text-slate-300 text-sm">
             <p>No courses yet.</p>
             <p className="mt-1">Upload materials to get started.</p>
           </div>
@@ -149,7 +149,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             {subjects.map((subject) => (
               <div key={subject.id} className="mb-4">
                 <button
-                  className="flex items-center w-full p-2 bg-accent hover:bg-accent rounded"
+                  className="flex items-center w-full p-2 rounded border border-white/15 bg-white/10 hover:bg-white/15 transition-colors"
                   onClick={() => toggleSubject(subject.id)}
                 >
                   {expandedSubjects.has(subject.id) ? (
@@ -158,7 +158,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                     <ChevronRight className="w-4 h-4 mr-2 flex-shrink-0" />
                   )}
                   <Folder className="w-5 h-5 mr-2 text-blue-500 flex-shrink-0" />
-                  <span className="font-medium truncate">{subject.name}</span>
+                  <span className="font-medium truncate text-slate-100">{subject.name}</span>
                 </button>
 
                 {expandedSubjects.has(subject.id) && (
@@ -176,7 +176,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                             }));
                             e.dataTransfer.effectAllowed = 'copy';
                           }}
-                          className="flex items-center flex-1 min-w-0 p-2 hover:bg-accent rounded text-sm cursor-grab"
+                          className="flex items-center flex-1 min-w-0 p-2 hover:bg-white/10 rounded text-sm cursor-grab text-slate-200"
                           onClick={() => onNoteSelect(note.id)}
                         >
                           <GripVertical className="w-3 h-3 mr-1 text-muted-foreground flex-shrink-0" />

@@ -18,6 +18,7 @@ interface Message {
 interface ChatWindowProps {
   messages: Message[];
   isLoading: boolean;
+  showAssistantMessages?: boolean;
 }
 
 const THINKING_PHRASES = [
@@ -70,16 +71,24 @@ function ThinkingIndicator() {
   );
 }
 
-export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
+export function ChatWindow({
+  messages,
+  isLoading,
+  showAssistantMessages = true,
+}: ChatWindowProps) {
+  const visibleMessages = showAssistantMessages
+    ? messages
+    : messages.filter((message) => message.role !== 'assistant');
+
   return (
     <div className="p-4 space-y-4">
-      {messages.map((message) => (
+      {visibleMessages.map((message) => (
         <div
           key={message.id}
           className={`p-4 rounded-lg ${
             message.role === 'assistant'
               ? 'bg-[#e0f4fb]/50 ml-4'
-              : 'bg-accent mr-4'
+              : 'bg-white/85 border border-white/70 ml-auto max-w-[85%] shadow-sm backdrop-blur-sm'
           }`}
         >
           <div className="text-foreground prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-strong:text-foreground">
@@ -92,7 +101,7 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
           )}
         </div>
       ))}
-      {isLoading && <ThinkingIndicator />}
+      {isLoading && showAssistantMessages && <ThinkingIndicator />}
     </div>
   );
 }

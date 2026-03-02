@@ -1,0 +1,89 @@
+# Rush
+
+This is a Unity Project for GameDevelopment.  
+The Game is basically a 3D Jump & Run Plattformer. The Goal of this game is to reach the endof each level.
+This repo is the public release.
+
+## About the Project
+The project was done for a LVA "Game Development" WS2022 JKU Linz. 
+Project time ~3months. Within that time I had to learn Unity, C# and realize the own idea into a game. 
+I had to cut out features I planned to meet the deadline, also Unity is quite unforgiving at first for beginners. 
+I think my next projects will be much more polished.
+
+The trailer preview of *"Rush - The Game"* can be found: 
+
+ - [YouTube -  Trailer Rush v1](https://www.youtube.com/watch?v=r4lnEHMvj3A&ab_channel=NorthernCoder)
+
+## Features
+
+- 3D Jump & Run
+- Timer 
+- Highscore Table
+- Various traps and obstacles through the level to overcome
+
+## Authors
+
+The project was entirely created  by a single Person.
+- [@CyberNord](https://github.com/CyberNord) 
+
+Responsibilities 
+ - Level design & World building
+ - Scripting & Coding
+ - Animation
+ - UI & Game Menus 
+ - Controls
+ - Traps
+ - Testing
+
+## Installation
+
+### Rush
+To play the Game unpack the file "Rush_bin.zip" found in [releases](https://github.com/CyberNord/GameDev_Rush/releases/tag/release_rush_prototype) and run the file Rush.exe.
+
+It is assumed to run the game in Full HD (1920x1080) resolution. Other resolutions are not tested and may cause the UI to be postponed. 
+It was tested on Win10 but should run on other operating systems as well. 
+The minimum PC requirements were not tested. 
+
+### Unity Project
+The Project is written in Unity editor version 2021.3.11f1.
+
+## Controlls
+
+* W-A-S-D Keys to move the character forwards, sidewards or backwards
+* Space Bar to jump 
+* Moving the Mouse left or right will rotate the character
+* Mouseweel up or down to zoom in or out
+* Q-E Keys can also be used to turn the character
+* Pressing and holding right Mousebutton will unlock the Camera for free rotation. The Camera will snap back behind the character if RMB is released.
+* Holding Shift Key to reduce movement speed of the Character
+
+## Impressions
+<img width="570" height="329" alt="Unbenannt" src="https://github.com/user-attachments/assets/298ea539-dde1-4dd2-bb6a-3653f9686270" />
+<img width="593" height="361" alt="image" src="https://github.com/user-attachments/assets/8b1d0fb2-a06c-4ddb-8125-7c79dacbda3b" />
+<img width="510" height="602" alt="image" src="https://github.com/user-attachments/assets/1ce9b0aa-1d55-41d5-9ca5-31bf51be6c88" />
+
+
+
+## Assets
+
+List of all assets used in the game. 
+
+Objects
+ - [POLYGON Dungeons - Low Poly 3D Art](https://assetstore.unity.com/packages/3d/environments/dungeons/polygon-dungeons-low-poly-3d-art-by-synty-102677)
+ - [Low Poly Dungeons Lite](https://assetstore.unity.com/packages/3d/environments/dungeons/low-poly-dungeons-lite-177937)
+ - [Low Poly Toon Battle Arena / Tower Defense Pack](https://assetstore.unity.com/packages/3d/environments/dungeons/dungeon-low-poly-toon-battle-arena-tower-defense-pack-109791)
+ - [Low-Poly Simple Nature Pack](https://assetstore.unity.com/packages/3d/environments/landscapes/low-poly-simple-nature-pack-162153)
+
+Animations
+ - [Basic Motions](https://assetstore.unity.com/packages/3d/animations/basic-motions-157744)
+ - [Zombie Animation Pack Free](https://assetstore.unity.com/packages/3d/animations/zombie-animation-pack-free-150219)
+
+Textures 
+- [Stylized Lava Texture](https://assetstore.unity.com/packages/2d/textures-materials/nature/stylized-lava-texture-153161)
+- [FREE Fantasy Terrain Textures](https://assetstore.unity.com/packages/2d/textures-materials/free-fantasy-terrain-textures-233640)
+- [Terrain Textures Pack Free ](https://assetstore.unity.com/packages/2d/textures-materials/nature/terrain-textures-pack-free-139542)
+
+Sound
+- [Middle Age - Medieval Action Sound FX Pack](https://assetstore.unity.com/packages/audio/sound-fx/middle-age-medieval-action-sound-fx-pack-54030)
+- [Ultimate Sound FX Bundle](https://assetstore.unity.com/packages/audio/sound-fx/ultimate-sound-fx-bundle-151756)
+- [RPG Essentials sound Effects](https://assetstore.unity.com/packages/audio/sound-fx/rpg-essentials-sound-effects-free-227708)

@@ -97,14 +97,14 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
     <div className="flex flex-col gap-2">
       {/* Mode toggle */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs font-medium text-slate-800 bg-white/70 px-2 py-1 rounded-md">
           {mode === 'content_aware' ? '📖 Content-Aware Mode' : '🧠 Socratic Mode'}
         </span>
         <label
-          className="flex items-center gap-2 cursor-pointer"
+          className="flex items-center gap-2 cursor-pointer bg-white/65 px-2 py-1 rounded-md"
           title="Toggle on for direct answers from your sources. Toggle off for Socratic guided learning."
         >
-          <span className="text-xs text-muted-foreground">Socratic</span>
+          <span className="text-xs font-medium text-slate-800">Socratic</span>
           <button
             type="button"
             role="switch"
@@ -120,7 +120,7 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
               }`}
             />
           </button>
-          <span className="text-xs text-blue-600">Content-Aware</span>
+          <span className="text-xs font-medium text-blue-700">Content-Aware</span>
         </label>
       </div>
 

@@ -29,17 +29,17 @@ function createUniqueKey(text: string, index: number): string {
 
 export function NotesContext({ activeNotes, onNoteClick }: NotesContextProps) {
   return (
-    <div className="p-4">
-      <h2 className="text-lg font-semibold mb-4">Related Context</h2>
+    <div className="p-4 text-slate-100">
+      <h2 className="text-lg font-semibold mb-4 text-white">Related Context</h2>
       <div className="space-y-4">
         {activeNotes.map((note, index) => (
           <div
             key={createUniqueKey(note.text, index)}
-            className="p-3 bg-accent rounded-lg hover:bg-accent cursor-pointer"
+            className="p-3 rounded-lg border border-white/15 bg-white/10 hover:bg-white/15 cursor-pointer transition-colors"
             onClick={() => onNoteClick(note)}
           >
-            <p className="text-sm text-muted-foreground">{note.text}</p>
-            <p className="text-xs text-muted-foreground mt-1">Relevance: {Math.round(note.score * 100)}%</p>
+            <p className="text-sm text-slate-200">{note.text}</p>
+            <p className="text-xs text-slate-300 mt-1">Relevance: {Math.round(note.score * 100)}%</p>
           </div>
         ))}
       </div>
