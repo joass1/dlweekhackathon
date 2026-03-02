@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -35,17 +35,67 @@ function inlineCitations(
   });
 }
 
+/**
+ * Deduplicate citation markers in a single section of text.
+ * - Single unique source → one footnote at the very end.
+ * - Contiguous same-source runs → keep only the last citation in the run.
+ */
+function deduplicateSpeechCitations(content: string): string {
+  const allCites = [...content.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
+  if (allCites.length === 0) return content;
+
+  const uniqueCites = new Set(allCites);
+  if (uniqueCites.size === 1) {
+    const n = allCites[0];
+    return `${content.replace(/\s*\[\d+\]/g, '').trimEnd()} [${n}]`;
+  }
+
+  const sentencePattern = /([^.!?\n]+[.!?\n]+)/g;
+  const sentences: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = sentencePattern.exec(content)) !== null) {
+    sentences.push(match[1]);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < content.length) sentences.push(content.slice(lastIndex));
+  if (sentences.length === 0) return content;
+
+  const parsed = sentences.map(s => {
+    const cites = [...s.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
+    const stripped = s.replace(/\s*\[\d+\]/g, '');
+    const source = cites.length > 0 ? cites[cites.length - 1] : null;
+    return { text: stripped, source };
+  });
+
+  const result: string[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const curr = parsed[i];
+    const next = i + 1 < parsed.length ? parsed[i + 1] : null;
+    if (curr.source === null) {
+      result.push(curr.text);
+    } else if (next && next.source === curr.source) {
+      result.push(curr.text);
+    } else {
+      result.push(`${curr.text.trimEnd()} [${curr.source}]`);
+    }
+  }
+  return result.join('');
+}
+
 /** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers. */
 function expandSpeechCitations(
   text: string,
   onCitationClick?: (n: number) => void
 ): React.ReactNode {
   const sections = text.split(/\n?%%SEP%%\n?/);
-  if (sections.length <= 1) return inlineCitations(text, onCitationClick);
+  if (sections.length <= 1) {
+    return inlineCitations(deduplicateSpeechCitations(text), onCitationClick);
+  }
   return sections.map((section, i) => (
     <React.Fragment key={i}>
       {i > 0 && <hr className="my-2 border-slate-300" />}
-      <span>{inlineCitations(section, onCitationClick)}</span>
+      <span>{inlineCitations(deduplicateSpeechCitations(section), onCitationClick)}</span>
     </React.Fragment>
   ));
 }
@@ -150,13 +200,6 @@ export default function SocraticBackground3D({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const bubbleMaxHeight = useMemo(() => {
-    const words = speechText.trim() ? speechText.trim().split(/\s+/).length : 0;
-    const base = 240;
-    const growth = Math.min(1, words / 120) * 0.2;
-    return Math.round(base * (1 + growth));
-  }, [speechText]);
-
   // Attach a non-passive native wheel listener so we can stopPropagation
   // and guarantee the scroll container scrolls on every browser/OS.
   useEffect(() => {
@@ -201,19 +244,29 @@ export default function SocraticBackground3D({
         </Canvas>
       </div>
 
-      {/* Speech bubble — plain HTML, z-20 to sit above all z-10 siblings in parent */}
+      {/* Speech bubble — top-anchored just below the header bar, grows DOWNWARD.
+           top: calc(14% + 8px) clears the header (≈14% tall) with an 8px gap.
+           The tail triangle points down toward the character's head.
+           Scroll content is capped so the bubble never covers the character:
+             maxHeight = 60vh(character head) − 14vh(top) − 8px(gap) − 24px(padding) − 12px(safety)
+                       = calc(46vh − 44px) */}
       {speechText ? (
-        <div className="absolute left-1/2 top-[18%] -translate-x-1/2 z-20 pointer-events-auto">
+        <div
+          className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
+          style={{ top: 'calc(14% + 8px)' }}
+        >
           <div className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm">
+            {/* Tail triangle — points down toward the character's head */}
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
             <div
               ref={scrollRef}
               className="overflow-y-auto whitespace-pre-wrap pr-1"
               style={{
-                maxHeight: `${bubbleMaxHeight}px`,
+                minHeight: '100px',
+                maxHeight: 'calc(46vh - 44px)',
                 overscrollBehavior: 'contain',
-                WebkitOverflowScrolling: 'touch',  /* iOS Safari smooth scroll */
-                touchAction: 'pan-y',               /* touch devices: allow vertical pan */
+                WebkitOverflowScrolling: 'touch',
+                touchAction: 'pan-y',
               }}
             >
               {expandSpeechCitations(speechText, onCitationClick)}

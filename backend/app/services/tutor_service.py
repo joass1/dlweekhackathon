@@ -178,87 +178,81 @@ class TutorService:
         return scored[:limit]
 
     # ── Deliverable 3 ─────────────────────────────────────────────────────────
-    def _build_content_aware_prompt(self) -> str:
-        return (
-            "You are Mentora, a precise and reliable Study Companion.\n\n"
+    def _build_unified_prompt(self, has_context: bool, knowledge_state=None) -> str:
+        if has_context:
+            prompt = (
+                "You are Mentora, a precise and knowledgeable Study Companion.\n\n"
 
-            "PRIMARY OBJECTIVE:\n"
-            "Provide clear, complete, and accurate answers grounded in the retrieved course context.\n\n"
+                "PRIMARY OBJECTIVE:\n"
+                "Give a source-grounded answer, then close with a single Socratic question.\n\n"
 
-            "RULES:\n"
-            "1. Answer the question directly and fully.\n"
-            "2. Ground your answer in the retrieved course context wherever possible.\n"
-            "3. When a sentence draws from a numbered source chunk, append [N] at the end of that "
-            "sentence, where N is the source number shown in the context "
-            "(e.g. 'Attention uses scaled dot-product scoring [1].').\n"
-            "4. If the retrieved context partially covers the topic, use it as your foundation "
-            "and supplement with your general knowledge to give a complete answer.\n"
-            "5. Only say the topic is absent if the retrieved context has NO relevance whatsoever "
-            "to the question — do not give up just because the context is incomplete.\n"
-            "6. Keep responses under 220 words.\n"
-            "7. Do NOT include a 'Referenced Concepts' or 'Sources' section at the end — "
-            "sources are shown separately in the UI.\n\n"
+                "RULES:\n"
+                "1. Answer the question directly and fully, grounding your explanation in the retrieved course context.\n"
+                "2. When a sentence draws from a numbered source chunk, append [N] at the end "
+                "(e.g. 'Attention uses scaled dot-product scoring [1].').\n"
+                "3. If the context only partially covers the topic, use it as your foundation "
+                "and supplement with general knowledge.\n"
+                "4. Keep the explanation under 200 words.\n"
+                "5. Do NOT include a 'Referenced Concepts' or 'Sources' section at the end.\n"
+                "6. After the explanation, add one blank line, then write **Think about this:** "
+                "followed by ONE focused Socratic question that pushes the student to reason deeper "
+                "about a key concept from your answer.\n\n"
 
-            "STYLE GUIDELINES:\n"
-            "- Be structured and concise.\n"
-            "- Define key terms before using them.\n"
-            "- Use bullet points when listing multiple components.\n"
-            "- Avoid filler language.\n\n"
+                "STYLE: Structured, concise. Define key terms. Use bullet points for lists. Avoid filler.\n"
+            )
+            if knowledge_state is not None:
+                weak_nodes = sorted(
+                    [n for n in knowledge_state.nodes if n.status in ("weak", "not_started")],
+                    key=lambda n: n.mastery
+                )[:3]
+                high_gaps = [g for g in knowledge_state.gaps if g.priority == "high"][:3]
+                extra = ""
+                if weak_nodes:
+                    extra += f"\nStudent's weakest concepts: {', '.join(n.title for n in weak_nodes)}."
+                if high_gaps:
+                    extra += f"\nIdentified gaps: {', '.join(g.concept for g in high_gaps)}."
+                if extra:
+                    extra += "\nTailor your Socratic question to target these gaps where relevant."
+                prompt += extra
+            return prompt
+        else:
+            prompt = (
+                "You are Mentora, a warm and knowledgeable Socratic Tutor.\n\n"
 
-            "RESPONSE FORMAT:\n"
-            "Write the answer directly with inline [N] citation markers after sentences that draw "
-            "from source N. Example: 'The model computes scaled dot-product attention [1] using "
-            "Q, K, V matrices [2].'\n"
-        )
+                "PRIMARY OBJECTIVE:\n"
+                "Guide the student to discover understanding through questioning — "
+                "do NOT give direct answers.\n\n"
 
-    def _build_socratic_prompt(self, knowledge_state) -> str:
-        base = (
-            "You are Mentora, a warm and knowledgeable Socratic Tutor.\n\n"
+                "RULES:\n"
+                "1. Do NOT directly answer the question.\n"
+                "2. Respond with a hint, analogy, or scaffolded prompt that guides toward the answer.\n"
+                "3. End with one focused question that helps the student think through the concept step-by-step.\n"
+                "4. If the student seems confused, break the concept into a smaller sub-question.\n"
+                "5. If the student gives a correct partial answer, affirm it and push deeper.\n"
+                "6. Keep responses under 150 words.\n\n"
 
-            "MISSION:\n"
-            "Help the student genuinely understand concepts by combining clear explanations "
-            "with guided questioning. Your job is to TEACH, not just interrogate.\n\n"
+                "STYLE:\n"
+                "Warm, encouraging, intellectually stimulating. "
+                "Use 'What do you think...' or 'What would happen if...' framing.\n"
+            )
+            if knowledge_state is not None:
+                weak_nodes = sorted(
+                    [n for n in knowledge_state.nodes if n.status in ("weak", "not_started")],
+                    key=lambda n: n.mastery
+                )[:3]
+                high_gaps = [g for g in knowledge_state.gaps if g.priority == "high"][:3]
+                extra = ""
+                if weak_nodes:
+                    extra += f"\nStudent's weakest concepts: {', '.join(n.title for n in weak_nodes)}."
+                if high_gaps:
+                    extra += f"\nIdentified gaps: {', '.join(g.concept for g in high_gaps)}."
+                if extra:
+                    extra += "\nWeave these gaps into your questions where relevant."
+                prompt += extra
+            return prompt
 
-            "HOW TO RESPOND:\n"
-            "1. First, give a concise, clear explanation that directly addresses the student's question or statement.\n"
-            "2. Use the provided course context to ground your explanation with accurate details.\n"
-            "3. Then, end with ONE thoughtful follow-up question to deepen their understanding or check comprehension.\n"
-            "4. If the student is clearly confused or wrong, gently correct the misconception first, then guide.\n"
-            "5. If the student gives a correct answer, affirm it, add depth, and push further.\n"
-            "6. Keep responses under 200 words.\n\n"
-
-            "STYLE:\n"
-            "- Be structured: explain first, then question.\n"
-            "- Define key terms before using them.\n"
-            "- Use analogies or examples when helpful.\n"
-            "- Reference specific concepts from the course context.\n"
-            "- Never respond with ONLY a question — always teach something first.\n\n"
-
-            "TONE:\n"
-            "Calm, encouraging, precise, and intellectually respectful.\n"
-        )
-        if knowledge_state is None:
-            return base
-
-        weak_nodes = sorted(
-            [n for n in knowledge_state.nodes if n.status in ("weak", "not_started")],
-            key=lambda n: n.mastery
-        )[:3]
-        high_gaps = [g for g in knowledge_state.gaps if g.priority == "high"][:3]
-
-        extra = ""
-        if weak_nodes:
-            extra += f"\nStudent's weakest concepts: {', '.join(n.title for n in weak_nodes)}."
-        if high_gaps:
-            extra += f"\nIdentified gaps: {', '.join(g.concept for g in high_gaps)}."
-        if extra:
-            extra += "\nWeave these gaps into your explanations and follow-up questions where relevant."
-        return base + extra
-
-    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None, mode: str = "socratic") -> dict:
-        # Content-aware mode benefits from more chunks for richer coverage
-        retrieval_limit = 8 if mode == "content_aware" else 5
-        context_chunks = self.retrieve_context(message, limit=retrieval_limit, user_id=user_id, concept_ids=concept_ids)
+    def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None) -> dict:
+        context_chunks = self.retrieve_context(message, limit=8, user_id=user_id, concept_ids=concept_ids)
 
         # Assign 1-based citation indices so the LLM can reference them as [1], [2], ...
         for i, chunk in enumerate(context_chunks):
@@ -273,10 +267,7 @@ class TutorService:
         else:
             context_text = "(No course materials retrieved — answer from general knowledge.)"
 
-        if mode == "content_aware":
-            system_prompt = self._build_content_aware_prompt()
-        else:
-            system_prompt = self._build_socratic_prompt(knowledge_state)
+        system_prompt = self._build_unified_prompt(bool(context_chunks), knowledge_state)
 
         response = self.openai.chat.completions.create(
             model="gpt-5.2",
@@ -289,8 +280,117 @@ class TutorService:
         return {
             "answer": response.choices[0].message.content,
             "context": context_chunks,
-            "mode": mode,
         }
+
+    # ── Deliverable 3b: Micro-checkpoint generation & submission ──────────────
+    def generate_checkpoint(
+        self,
+        topic_id: str,
+        session_messages: list,
+        already_tested: list = None,
+        user_id: str = None,
+    ) -> dict:
+        """Generate a multiple-choice micro-checkpoint question from conversation context."""
+        context_chunks = self.retrieve_context(
+            topic_id, limit=4, user_id=user_id, concept_ids=[topic_id]
+        )
+        context_text = "\n".join(c["text"][:300] for c in context_chunks[:3]) if context_chunks else ""
+
+        recent_msgs = session_messages[-8:]
+        conv_text = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in recent_msgs)
+        already_str = ", ".join(already_tested) if already_tested else "none"
+
+        prompt = (
+            f"Based on this tutoring conversation about '{topic_id}', generate ONE quick "
+            f"multiple-choice question to test core understanding.\n\n"
+            f"Conversation:\n{conv_text}\n\n"
+            f"Source material:\n{context_text}\n\n"
+            f"Already tested this session: {already_str}\n\n"
+            "Requirements:\n"
+            "- Test conceptual understanding, not memorization\n"
+            "- 4 options, formatted as 'A. ...', 'B. ...', 'C. ...', 'D. ...'\n"
+            "- Concise — this is a quick check, not an exam\n"
+            "- Avoid concepts already tested this session\n\n"
+            'Return ONLY valid JSON (no markdown):\n'
+            '{"concept_tested": "...", "question": "...", "type": "multiple_choice", '
+            '"options": ["A. ...", "B. ...", "C. ...", "D. ..."], '
+            '"correct_answer": "A", "explanation": "one sentence why A is correct", '
+            '"difficulty": "easy"}'
+        )
+
+        response = self.openai.chat.completions.create(
+            model="gpt-5.2",
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=350,
+        )
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown code fences if the LLM wraps the JSON
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:])
+        if raw.endswith("```"):
+            raw = raw[:-3].strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {
+                "concept_tested": topic_id,
+                "question": f"Which best describes a core idea of '{topic_id}'?",
+                "type": "multiple_choice",
+                "options": ["A. Option A", "B. Option B", "C. Option C", "D. Option D"],
+                "correct_answer": "A",
+                "explanation": "This is based on the core concept discussed.",
+                "difficulty": "medium",
+            }
+
+    def submit_checkpoint(
+        self,
+        session_id: str,
+        topic_id: str,
+        concept_tested: str,
+        question: str,
+        options: list,
+        student_answer: str,
+        correct_answer: str,
+        confidence_rating: int,
+        was_skipped: bool,
+        user_id: str = None,
+        topic_doc_id: str = None,
+    ) -> dict:
+        """Record checkpoint result in Firestore and return mastery delta."""
+        is_correct = (student_answer == correct_answer) if not was_skipped else None
+
+        if was_skipped:
+            mastery_delta = 0.0
+        elif is_correct and confidence_rating >= 4:
+            mastery_delta = 0.10    # correct + high confidence
+        elif is_correct:
+            mastery_delta = 0.05    # correct + shaky confidence
+        elif not is_correct and confidence_rating >= 4:
+            mastery_delta = -0.15   # wrong + high confidence → blind spot
+        else:
+            mastery_delta = -0.05   # wrong + low confidence → known weakness
+
+        if self.db and user_id:
+            doc_id = str(uuid4())
+            self.db.collection("user_checkpoints").document(doc_id).set({
+                "userId": user_id,
+                "topic_doc_id": topic_doc_id,   # user_topics Firestore doc ID (ties checkpoint to student's topic)
+                "session_id": session_id,
+                "topic_id": topic_id,
+                "concept_tested": concept_tested,
+                "question": question,
+                "options": options,
+                "student_answer": student_answer,
+                "correct_answer": correct_answer,
+                "is_correct": is_correct,
+                "confidence_rating": confidence_rating,
+                "was_skipped": was_skipped,
+                "mastery_delta": mastery_delta,
+                "timestamp": datetime.now(timezone.utc),
+            })
+
+        return {"is_correct": is_correct, "mastery_delta": mastery_delta}
 
     # ── Deliverable 4 ─────────────────────────────────────────────────────────
     def run_intervention(self, request) -> dict:

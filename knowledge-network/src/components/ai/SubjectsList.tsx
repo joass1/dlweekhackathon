@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Folder, ChevronDown, ChevronRight, FileText,
   Upload, GripVertical, Trash2, CheckCircle, AlertCircle,
@@ -293,15 +294,26 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
         )}
       </div>
 
-      {/* ── Upload Modal ─────────────────────────────────────────────────────── */}
-      {isUploadModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-lg p-6 w-[440px] max-h-[90vh] overflow-y-auto shadow-xl">
+      {/* ── Upload Modal — portalled to document.body so it sits above everything ── */}
+      {isUploadModalOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ zIndex: 9999 }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeUploadModal(); }}
+        >
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/60" />
+
+          {/* Modal card — explicit white bg + black text to override any parent theme */}
+          <div
+            className="relative rounded-xl p-6 w-[460px] max-h-[90vh] overflow-y-auto shadow-2xl border border-gray-200"
+            style={{ backgroundColor: '#ffffff', color: '#111827' }}
+          >
             <div className="flex justify-between items-center mb-5">
-              <h3 className="text-lg font-semibold">Upload Course Materials</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Upload Course Materials</h3>
               <button
                 onClick={closeUploadModal}
-                className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                className="text-gray-400 hover:text-gray-700 text-lg leading-none"
                 disabled={isUploading}
               >
                 ✕
@@ -310,7 +322,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
 
             {/* ── Course / project file selection ── */}
             <div className="mb-4">
-              <label className="block text-sm font-medium mb-1.5">
+              <label className="block text-sm font-medium text-gray-900 mb-1.5">
                 Project File <span className="text-red-500">*</span>
               </label>
 
@@ -318,7 +330,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                 <select
                   value={uploadCourseId}
                   onChange={e => { setUploadCourseId(e.target.value); setNewCourseName(''); }}
-                  className="w-full p-2 border rounded-lg text-sm mb-2 bg-background"
+                  className="w-full p-2 border border-gray-300 rounded-lg text-sm mb-2 bg-white text-gray-900"
                   disabled={isUploading || !!newCourseName.trim()}
                 >
                   {modalCourses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -327,14 +339,14 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
 
               <div className="flex items-center gap-2">
                 {modalCourses.length > 0 && (
-                  <span className="text-xs text-muted-foreground flex-shrink-0">or create new:</span>
+                  <span className="text-xs text-gray-600 flex-shrink-0">or create new:</span>
                 )}
                 <input
                   type="text"
                   value={newCourseName}
                   onChange={e => setNewCourseName(e.target.value)}
                   placeholder={modalCourses.length === 0 ? 'Course name (required)' : 'New course name…'}
-                  className="flex-1 p-2 border rounded-lg text-sm bg-background"
+                  className="flex-1 p-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 placeholder:text-gray-400"
                   disabled={isUploading}
                 />
               </div>
@@ -351,9 +363,9 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
               onDragLeave={() => setIsDraggingFiles(false)}
               onDrop={handleFileDrop}
             >
-              <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground mb-1">Drop files here or click to select</p>
-              <p className="text-xs text-muted-foreground mb-3">PDF, TXT, MD supported</p>
+              <Upload className="w-8 h-8 mx-auto text-gray-400 mb-2" />
+              <p className="text-sm text-gray-600 mb-1">Drop files here or click to select</p>
+              <p className="text-xs text-gray-500 mb-3">PDF, TXT, MD supported</p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -375,15 +387,15 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             {/* ── Pending files ── */}
             {pendingFiles.length > 0 && (
               <div className="mb-4 space-y-1">
-                <p className="text-xs text-muted-foreground mb-1">Selected files:</p>
+                <p className="text-xs text-gray-600 mb-1">Selected files:</p>
                 {pendingFiles.map((f, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm p-1.5 rounded bg-accent">
-                    <FileText className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                  <div key={i} className="flex items-center gap-2 text-sm p-1.5 rounded bg-gray-50 text-gray-900">
+                    <FileText className="w-4 h-4 flex-shrink-0 text-gray-400" />
                     <span className="flex-1 truncate" title={f.name}>{f.name}</span>
                     {!isUploading && (
                       <button
                         onClick={() => removeFile(i)}
-                        className="text-muted-foreground hover:text-red-500 text-xs leading-none"
+                        className="text-gray-400 hover:text-red-500 text-xs leading-none"
                       >
                         ✕
                       </button>
@@ -396,9 +408,9 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             {/* ── Upload results ── */}
             {uploadResults.length > 0 && (
               <div className="mb-4 space-y-1">
-                <p className="text-xs text-muted-foreground mb-1">Upload results:</p>
+                <p className="text-xs text-gray-600 mb-1">Upload results:</p>
                 {uploadResults.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm p-1.5 rounded bg-background border border-border">
+                  <div key={i} className="flex items-center gap-2 text-sm p-1.5 rounded bg-gray-50 border border-gray-200 text-gray-900">
                     {r.status === 'success' ? (
                       <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
                     ) : (
@@ -422,7 +434,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             <div className="flex justify-end gap-2 pt-1">
               <button
                 onClick={closeUploadModal}
-                className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900"
                 disabled={isUploading}
               >
                 {uploadResults.some(r => r.status === 'success') ? 'Close' : 'Cancel'}
@@ -448,7 +460,8 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

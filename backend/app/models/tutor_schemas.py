@@ -46,7 +46,31 @@ class TutorChatRequest(BaseModel):
     userId: Optional[str] = None
     knowledge_state: Optional[KnowledgeState] = None
     concept_ids: Optional[List[str]] = None
-    mode: str = "socratic"  # "socratic" | "content_aware"
+
+
+class CheckpointRequest(BaseModel):
+    topic_id: str
+    topic_doc_id: Optional[str] = None   # Firestore user_topics document ID
+    session_messages: List[dict]
+    already_tested: Optional[List[str]] = []
+
+
+class CheckpointSubmitRequest(BaseModel):
+    session_id: str
+    topic_id: str
+    topic_doc_id: Optional[str] = None   # Firestore user_topics document ID
+    concept_tested: str
+    question: str
+    options: List[str]
+    student_answer: str
+    correct_answer: str
+    confidence_rating: int  # 1–5
+    was_skipped: bool = False
+
+
+class CheckpointSubmitResponse(BaseModel):
+    is_correct: Optional[bool]
+    mastery_delta: float
 
 
 class PrerequisiteChain(BaseModel):

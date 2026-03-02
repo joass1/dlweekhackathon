@@ -52,6 +52,7 @@ export default function Page() {
   const [isKGExpanded, setIsKGExpanded] = useState(false);
   const [isNeedsAttentionOpen, setIsNeedsAttentionOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [isCourseProgressOpen, setIsCourseProgressOpen] = useState(false);
   const [showMapLabels, setShowMapLabels] = useState(false);
   const studentId = useStudentId();
   const { user } = useAuth();
@@ -147,7 +148,33 @@ export default function Page() {
   const nextFocusConcept = attentionConcepts[0];
   const totalAttempts = progress?.total_attempts ?? 0;
   const accuracy = progress?.accuracy ?? 0;
+  const accuracyPct = Math.round(accuracy * 100);
   const recentAttempts = progress?.recent_attempts ?? [];
+  const courseProgress = useMemo(() => {
+    const grouped: Record<string, KGNode[]> = {};
+    nodes.forEach((n) => {
+      const key = n.courseId || n.category || 'General';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(n);
+    });
+
+    return Object.entries(grouped)
+      .map(([key, courseNodes]) => {
+        const course = courses.find(c => c.id === key);
+        const masteredCount = courseNodes.filter(n => n.status === 'mastered').length;
+        const weakCountForCourse = courseNodes.filter(n => n.status === 'weak').length;
+        const totalMastery = courseNodes.reduce((sum, n) => sum + n.mastery, 0);
+        const avgMastery = courseNodes.length > 0 ? Math.round(totalMastery / courseNodes.length) : 0;
+        return {
+          name: course?.name || key.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          total: courseNodes.length,
+          mastered: masteredCount,
+          weak: weakCountForCourse,
+          progress: avgMastery,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [nodes, courses]);
 
   const faded = 'opacity-0 pointer-events-none';
   const visible = 'opacity-100';
@@ -163,18 +190,19 @@ export default function Page() {
   );
 
   useEffect(() => {
-    if (!isNeedsAttentionOpen && !isActivityOpen) return;
+    if (!isNeedsAttentionOpen && !isActivityOpen && !isCourseProgressOpen) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsNeedsAttentionOpen(false);
         setIsActivityOpen(false);
+        setIsCourseProgressOpen(false);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isNeedsAttentionOpen, isActivityOpen]);
+  }, [isNeedsAttentionOpen, isActivityOpen, isCourseProgressOpen]);
 
   return (
     <div
@@ -233,25 +261,32 @@ export default function Page() {
         </Card>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
-          <Card className="p-5 h-full min-h-[140px] bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-1 h-full bg-emerald-400 rounded-l-xl" />
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-sm font-medium text-white/70">Mastery Progress</p>
-                {loading ? (
-                  <div className="mt-3 text-white/60"><BounceLoader size={20} /></div>
-                ) : (
-                  <>
-                    <p className="text-3xl font-bold mt-2 text-emerald-400">{masteryRate}%</p>
-                    <p className="text-sm text-white/60 mt-1">{mastered} of {total} concepts mastered</p>
-                  </>
-                )}
+          <button
+            type="button"
+            onClick={() => setIsCourseProgressOpen(true)}
+            className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Open course mastery progress"
+          >
+            <Card className="p-5 h-full min-h-[140px] bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden transition-shadow hover:shadow-md">
+              <div className="absolute top-0 left-0 w-1 h-full bg-emerald-400 rounded-l-xl" />
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-white/70">Mastery Progress</p>
+                  {loading ? (
+                    <div className="mt-3 text-white/60"><BounceLoader size={20} /></div>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold mt-2 text-emerald-400">{masteryRate}%</p>
+                      <p className="text-sm text-white/60 mt-1">{mastered} of {total} concepts mastered</p>
+                    </>
+                  )}
+                </div>
+                <div className="p-2.5 rounded-xl bg-emerald-500/20">
+                  <BookOpen className="h-5 w-5 text-emerald-400" />
+                </div>
               </div>
-              <div className="p-2.5 rounded-xl bg-emerald-500/20">
-                <BookOpen className="h-5 w-5 text-emerald-400" />
-              </div>
-            </div>
-          </Card>
+            </Card>
+          </button>
 
           <button
             type="button"
@@ -296,7 +331,7 @@ export default function Page() {
                   ) : (
                     <>
                       <p className="text-3xl font-bold mt-2 text-sky-400">{totalAttempts}</p>
-                      <p className="text-sm text-white/60 mt-1">{Math.round(accuracy * 100)}% accuracy</p>
+                      <p className="text-sm text-white/60 mt-1">{accuracyPct}% accuracy</p>
                     </>
                   )}
                 </div>
@@ -308,6 +343,55 @@ export default function Page() {
           </button>
         </section>
       </div>
+
+      <section className={`mt-8 space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {progress && progress.self_awareness.total_attempts > 0 && (
+            <Card className="rounded-2xl bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white p-5">
+              <h3 className="font-semibold mb-3">Self-Awareness Score</h3>
+              <div className="flex items-center gap-6">
+                <div>
+                  <p className="text-3xl font-bold text-indigo-400">{Math.round(progress.self_awareness.score * 100)}%</p>
+                  <p className="text-xs text-white/60">Confidence calibration</p>
+                </div>
+                <div className="flex-1">
+                  <div className="w-full bg-white/10 rounded-full h-3">
+                    <div className="bg-indigo-400 h-3 rounded-full" style={{ width: `${progress.self_awareness.score * 100}%` }} />
+                  </div>
+                  <div className="flex justify-between text-xs text-white/50 mt-1">
+                    <span>Over-confident</span>
+                    <span>Well-calibrated</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-medium">{(progress.self_awareness.calibration_gap * 100).toFixed(0)}% gap</p>
+                  <p className="text-xs text-white/60">{progress.self_awareness.total_attempts} rated</p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {progress && progress.total_attempts > 0 && (
+            <Card className="rounded-2xl bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white p-5">
+              <h3 className="font-semibold mb-3">Mistake Breakdown</h3>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <p className="text-2xl font-bold text-emerald-400">{progress.correct_attempts}</p>
+                  <p className="text-xs text-white/60">Correct</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-orange-400">{progress.careless_count}</p>
+                  <p className="text-xs text-white/60">Careless</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-red-400">{progress.conceptual_count}</p>
+                  <p className="text-xs text-white/60">Conceptual</p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 gap-6 mt-8">
         <div
@@ -340,7 +424,7 @@ export default function Page() {
                 </button>
                 <button
                   onClick={toggleKG}
-                  className="p-1 rounded hover:bg-accent text-white/60"
+                  className="p-1 rounded hover:bg-white/10 text-white/60"
                   title={isKGExpanded ? 'Collapse' : 'Expand'}
                   aria-label={isKGExpanded ? 'Collapse knowledge map' : 'Expand knowledge map'}
                 >
@@ -374,7 +458,6 @@ export default function Page() {
             </div>
           </Card>
         </div>
-
       </div>
 
       {isNeedsAttentionOpen && (
@@ -392,12 +475,12 @@ export default function Page() {
             <div className="p-4 border-b flex items-center justify-between">
               <div>
                 <h3 className="font-semibold">Needs Attention</h3>
-                <p className="text-sm text-white/60">Concepts that are weak or still learning</p>
+                <p className="text-sm text-muted-foreground">Concepts that are weak or still learning</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsNeedsAttentionOpen(false)}
-                className="p-1 rounded hover:bg-accent text-white/60"
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
                 aria-label="Close needs attention details"
               >
                 <X className="w-4 h-4" />
@@ -406,12 +489,12 @@ export default function Page() {
 
             <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
-                <div className="flex items-center justify-center py-8 text-sm text-white/60">
+                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
                   <span className="mr-2 inline-flex"><BounceLoader size={20} /></span>
                   Loading concepts...
                 </div>
               ) : attentionConcepts.length === 0 ? (
-                <p className="text-sm text-white/60 py-4 text-center">No concepts currently need attention.</p>
+                <p className="text-sm text-muted-foreground py-4 text-center">No concepts currently need attention.</p>
               ) : (
                 <div className="space-y-3">
                   {attentionConcepts.map((concept) => (
@@ -433,7 +516,7 @@ export default function Page() {
                             style={{ width: `${concept.mastery}%` }}
                           />
                         </div>
-                        <p className="text-xs text-white/60 mt-1">Mastery: {concept.mastery}%</p>
+                        <p className="text-xs text-muted-foreground mt-1">Mastery: {concept.mastery}%</p>
                       </div>
                     </div>
                   ))}
@@ -459,12 +542,12 @@ export default function Page() {
             <div className="p-4 border-b flex items-center justify-between">
               <div>
                 <h3 className="font-semibold">Recent Activity</h3>
-                <p className="text-sm text-white/60">Your latest assessment outcomes</p>
+                <p className="text-sm text-muted-foreground">Your latest assessment outcomes</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsActivityOpen(false)}
-                className="p-1 rounded hover:bg-accent text-white/60"
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
                 aria-label="Close activity history"
               >
                 <X className="w-4 h-4" />
@@ -473,12 +556,12 @@ export default function Page() {
 
             <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
-                <div className="flex items-center justify-center py-8 text-sm text-white/60">
+                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
                   <span className="mr-2 inline-flex"><BounceLoader size={20} /></span>
                   Loading activity...
                 </div>
               ) : recentAttempts.length === 0 ? (
-                <p className="text-sm text-white/60 py-4 text-center">No activity yet. Take an assessment to generate history.</p>
+                <p className="text-sm text-muted-foreground py-4 text-center">No activity yet. Take an assessment to generate history.</p>
               ) : (
                 <div className="space-y-2">
                   {recentAttempts.slice(-12).reverse().map((attempt, i) => (
@@ -495,6 +578,67 @@ export default function Page() {
                       <span className={`text-xs ${attempt.is_correct ? 'text-green-600' : 'text-red-600'}`}>
                         {attempt.is_correct ? 'Correct' : 'Incorrect'}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCourseProgressOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setIsCourseProgressOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Knowledge graph progress by course"
+            className="w-full max-w-2xl max-h-[80vh] bg-card rounded-xl shadow-xl border overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Knowledge Graph Progress By Course</h3>
+                <p className="text-sm text-muted-foreground">Course-level mastery breakdown</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCourseProgressOpen(false)}
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                aria-label="Close course progress"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
+              {loading ? (
+                <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                  <span className="mr-2 inline-flex"><BounceLoader size={18} /></span>
+                  Loading course progress...
+                </div>
+              ) : courseProgress.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">No course data yet. Upload materials to get started.</p>
+              ) : (
+                <div className="space-y-3">
+                  {courseProgress.map((course, index) => (
+                    <div key={index} className="rounded-xl border p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <h4 className="font-medium">{course.name}</h4>
+                          <p className="text-xs text-muted-foreground">{course.total} concepts</p>
+                        </div>
+                        <p className="font-semibold">{course.progress}%</p>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2 mb-2">
+                        <div className="bg-[#03b2e6] h-2 rounded-full" style={{ width: `${course.progress}%` }} />
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-green-600">{course.mastered} mastered</span>
+                        <span className="text-red-600">{course.weak} weak</span>
+                      </div>
                     </div>
                   ))}
                 </div>

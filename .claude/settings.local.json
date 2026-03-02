@@ -5,7 +5,8 @@
       "Bash(npm install firebase)",
       "Bash(npm install @tailwindcss/typography)",
       "Bash(git stash)",
-      "Bash(git pull)"
+      "Bash(git pull)",
+      "Bash(cd /Applications/MAMP/htdocs/dlweekhackathon/knowledge-network && npx tsc --noEmit --pretty 2>&1 | head -60)"
     ]
   }
 }

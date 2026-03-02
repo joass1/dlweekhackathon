@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { ChatInput, ChatWindow, NotesContext, SubjectsList } from '@/components/ai';
+import { ChatInput, ChatWindow, MicroCheckpoint, NotesContext, SubjectsList } from '@/components/ai';
+import type { CheckpointQuestion } from '@/components/ai';
 import { ScopedTopic } from '@/components/ai/ChatInput';
 import Split from 'react-split';
 import { useSearchParams } from 'next/navigation';
@@ -36,8 +37,14 @@ export default function AIAssistantPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
-  const [mode, setMode] = useState<'socratic' | 'content_aware'>('socratic');
   const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
+
+  // Micro-checkpoint state
+  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const messageCountRef = useRef(0);
+  const lastCheckpointAtRef = useRef(-8); // start so first check fires at msg 3
+  const checkpointedConceptsRef = useRef<string[]>([]);
+  const [activeCheckpoint, setActiveCheckpoint] = useState<CheckpointQuestion | null>(null);
 
   const assistantMessages = useMemo(
     () => messages.filter((m) => m.role === 'assistant'),
@@ -82,6 +89,103 @@ export default function AIAssistantPage() {
   const handleTopicRemove = (id: string) =>
     setScopedTopics(prev => prev.filter(t => t.id !== id));
 
+  const fetchCheckpoint = async (sessionMessages: { role: string; content: string }[]) => {
+    if (!scopedTopics.length) return;
+    const topicId = scopedTopics[0].conceptId;
+    try {
+      const token = await getIdToken();
+      const res = await fetch('/api/ai/checkpoint', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          topic_id: topicId,
+          topic_doc_id: scopedTopics[0].id,
+          session_messages: sessionMessages,
+          already_tested: checkpointedConceptsRef.current,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.question) return;
+      setActiveCheckpoint({
+        session_id: sessionIdRef.current,
+        concept_tested: data.concept_tested ?? topicId,
+        question: data.question,
+        options: data.options ?? [],
+        correct_answer: data.correct_answer ?? '',
+        explanation: data.explanation ?? '',
+      });
+      checkpointedConceptsRef.current = [
+        ...checkpointedConceptsRef.current,
+        data.concept_tested ?? topicId,
+      ];
+    } catch (err) {
+      console.error('Checkpoint fetch error:', err);
+    }
+  };
+
+  const handleCheckpointSubmit = async (answer: string, confidence: number) => {
+    if (!activeCheckpoint) return;
+    setActiveCheckpoint(null);
+    try {
+      const token = await getIdToken();
+      await fetch('/api/ai/checkpoint/submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          session_id: activeCheckpoint.session_id,
+          topic_id: scopedTopics[0]?.conceptId ?? '',
+          topic_doc_id: scopedTopics[0]?.id ?? null,
+          concept_tested: activeCheckpoint.concept_tested,
+          question: activeCheckpoint.question,
+          options: activeCheckpoint.options,
+          student_answer: answer,
+          correct_answer: activeCheckpoint.correct_answer,
+          confidence_rating: confidence,
+          was_skipped: false,
+        }),
+      });
+    } catch (err) {
+      console.error('Checkpoint submit error:', err);
+    }
+  };
+
+  const handleCheckpointSkip = async () => {
+    if (!activeCheckpoint) return;
+    const snap = activeCheckpoint;
+    setActiveCheckpoint(null);
+    try {
+      const token = await getIdToken();
+      await fetch('/api/ai/checkpoint/submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          session_id: snap.session_id,
+          topic_id: scopedTopics[0]?.conceptId ?? '',
+          topic_doc_id: scopedTopics[0]?.id ?? null,
+          concept_tested: snap.concept_tested,
+          question: snap.question,
+          options: snap.options,
+          student_answer: '',
+          correct_answer: snap.correct_answer,
+          confidence_rating: 1,
+          was_skipped: true,
+        }),
+      });
+    } catch (err) {
+      console.error('Checkpoint skip error:', err);
+    }
+  };
+
   const handleSendMessage = async (content: string) => {
     setIsLoading(true);
     setHighlightedSourceIndex(null);
@@ -104,7 +208,6 @@ export default function AIAssistantPage() {
         body: JSON.stringify({
           query: content,
           concept_ids: scopedTopics.map(t => t.conceptId),
-          mode,
         })
       });
 
@@ -122,6 +225,23 @@ export default function AIAssistantPage() {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMessage]);
+
+      // Micro-checkpoint trigger: fire after ≥3 msgs with 8-msg cooldown
+      messageCountRef.current += 1;
+      const mc = messageCountRef.current;
+      if (
+        mc >= 3 &&
+        mc - lastCheckpointAtRef.current >= 8 &&
+        scopedTopics.length > 0 &&
+        !activeCheckpoint
+      ) {
+        lastCheckpointAtRef.current = mc;
+        const sessionMsgs = [...messages, userMessage, assistantMessage].map(m => ({
+          role: m.role,
+          content: m.content,
+        }));
+        fetchCheckpoint(sessionMsgs);
+      }
     } catch (error) {
       console.error('Error in chat:', error);
     } finally {
@@ -173,8 +293,6 @@ export default function AIAssistantPage() {
               scopedTopics={scopedTopics}
               onTopicDrop={handleTopicDrop}
               onTopicRemove={handleTopicRemove}
-              mode={mode}
-              onModeToggle={() => setMode(m => m === 'socratic' ? 'content_aware' : 'socratic')}
             />
           </div>
         </div>
@@ -202,6 +320,15 @@ export default function AIAssistantPage() {
           </div>
         </div>
       </Split>
+
+      {/* Micro-checkpoint popup — fixed overlay, outside Split */}
+      {activeCheckpoint && (
+        <MicroCheckpoint
+          checkpoint={activeCheckpoint}
+          onSubmit={handleCheckpointSubmit}
+          onSkip={handleCheckpointSkip}
+        />
+      )}
     </div>
   );
 }
