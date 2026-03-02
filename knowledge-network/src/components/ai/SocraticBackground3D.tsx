@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Html, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -11,12 +11,12 @@ type CharacterModelProps = {
   onCitationClick?: (n: number) => void;
 };
 
-/** Split text on [N] citation markers and render clickable superscript badges. */
-function expandSpeechCitations(
+/** Expand [N] citations in a single text segment. */
+function inlineCitations(
   text: string,
   onCitationClick?: (n: number) => void
-): React.ReactNode {
-  if (!/\[\d+\]/.test(text)) return text;
+): React.ReactNode[] {
+  if (!/\[\d+\]/.test(text)) return [text];
   const parts = text.split(/(\[\d+\])/);
   return parts.map((part, i) => {
     const m = part.match(/^\[(\d+)\]$/);
@@ -37,6 +37,34 @@ function expandSpeechCitations(
   });
 }
 
+/** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers. */
+function expandSpeechCitations(
+  text: string,
+  onCitationClick?: (n: number) => void
+): React.ReactNode {
+  const sections = text.split(/\n?%%SEP%%\n?/);
+  if (sections.length <= 1) return inlineCitations(text, onCitationClick);
+  return sections.map((section, i) => (
+    <React.Fragment key={i}>
+      {i > 0 && <hr className="my-2 border-slate-300" />}
+      <span>{inlineCitations(section, onCitationClick)}</span>
+    </React.Fragment>
+  ));
+}
+
+/** Native wheel handler — stops propagation so the bubble scrolls, not the page. */
+function handleWheel(e: WheelEvent) {
+  const el = e.currentTarget as HTMLDivElement;
+  if (!el) return;
+  const { scrollTop, scrollHeight, clientHeight } = el;
+  const atTop = scrollTop <= 0 && e.deltaY < 0;
+  const atBottom = scrollTop + clientHeight >= scrollHeight && e.deltaY > 0;
+  // Only stop propagation when there's room to scroll (or content overflows)
+  if (!atTop && !atBottom) {
+    e.stopPropagation();
+  }
+}
+
 function CharacterModel({
   speechText,
   isSpeaking,
@@ -46,6 +74,22 @@ function CharacterModel({
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const headPitchRef = useRef(0);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Imperatively attach a non-passive wheel listener so we can call
+  // preventDefault + stopPropagation — guarantees the bubble scrolls
+  // instead of the event leaking to parent/canvas layers.
+  const attachWheelHandler = useCallback((node: HTMLDivElement | null) => {
+    // Detach from previous node
+    if (scrollRef.current) {
+      scrollRef.current.removeEventListener('wheel', handleWheel);
+    }
+    scrollRef.current = node;
+    if (node) {
+      node.addEventListener('wheel', handleWheel, { passive: false });
+    }
+  }, []);
 
   const bubbleMaxHeight = useMemo(() => {
     const words = speechText.trim() ? speechText.trim().split(/\s+/).length : 0;
@@ -103,9 +147,9 @@ function CharacterModel({
           >
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
             <div
+              ref={attachWheelHandler}
               className="overflow-y-auto whitespace-pre-wrap pr-0.5 touch-pan-y"
-              style={{ maxHeight: `${bubbleMaxHeight}px` }}
-              onWheel={(e) => e.stopPropagation()}
+              style={{ maxHeight: `${bubbleMaxHeight}px`, overscrollBehavior: 'contain' }}
               onTouchMove={(e) => e.stopPropagation()}
             >
               {expandSpeechCitations(speechText, onCitationClick)}

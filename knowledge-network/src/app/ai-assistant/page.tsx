@@ -59,7 +59,7 @@ export default function AIAssistantPage() {
   const selectedAssistantSpeech = useMemo(() => {
     const parts = [initialSocraticPrompt, ...cleanedAssistantMessages];
     if (isLoading) parts.push('Thinking...');
-    return parts.join('\n\n');
+    return parts.join('\n%%SEP%%\n');
   }, [cleanedAssistantMessages, initialSocraticPrompt, isLoading]);
 
   useEffect(() => {
