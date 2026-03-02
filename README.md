@@ -1,12 +1,46 @@
 # Mentora
 
-Mentora is an adaptive learning web app with:
-- course material upload and concept extraction
-- personalized knowledge graph / knowledge map
-- Socratic Tutor with context-aware responses
-- assessment and checkpoint flows
-- peer hubs with collaborative sessions and Twilio video token support
-- Firebase-backed auth and storage
+Mentora is an adaptive learning web app that turns uploaded study materials into a personalized knowledge graph, then uses that graph to drive tutoring, assessments, study missions, and collaborative peer sessions.
+
+## Product Overview
+Mentora is designed to help students learn more effectively by:
+- building a personal concept graph from their own materials
+- identifying weak concepts and prerequisite gaps
+- guiding understanding through Socratic tutoring
+- running targeted assessments and checkpoints
+- supporting collaborative learning in Peer Hubs
+
+## Implemented Features
+- Authentication and user-scoped data
+  - Firebase auth integration
+  - per-user courses, topics, progress, and graph context
+- Upload Materials
+  - upload PDF/TXT/MD content
+  - chunking + concept extraction
+  - user/course-aware knowledge graph updates
+  - add new courses from the upload flow
+- Knowledge Map
+  - interactive concept graph visualization
+  - concept mastery/state representation
+  - bubble actions route to Assessment, Socratic Tutor, and Peer Hubs
+- Socratic Tutor
+  - context-aware tutoring flow
+  - citation-aware responses and checkpoint hooks
+  - 3D character scene with speech bubble UI
+- Assessments
+  - generate quiz from user knowledge context
+  - evaluate/classify answers
+  - micro-checkpoints, mastery updates, and assessment history
+- Study Missions
+  - study chunks and flashcard generation
+  - weak/decaying concept targeting
+- Peer Hubs
+  - collaborative session creation/joining
+  - AI-generated question rounds
+  - boss battle UI with animated 3D boss state (idle/hit/death + periodic attacks)
+  - video room token endpoint for WebRTC sessions
+- Progress
+  - aggregated learner progress from assessment and graph signals
 
 ## Stack
 - Frontend: Next.js 15, React 19, TypeScript, Tailwind

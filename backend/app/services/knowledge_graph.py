@@ -127,6 +127,7 @@ class KnowledgeGraphEngine:
         concept_id: str,
         is_correct: bool,
         is_careless: bool = False,
+        confidence_1_to_5: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Record an answer attempt and update mastery/status.
 
@@ -150,9 +151,17 @@ class KnowledgeGraphEngine:
         if is_correct:
             # ── Correct answer ────────────────────────────────────────────────
             node["correct_count"] += 1
-            accuracy = node["correct_count"] / node["attempt_count"]
-            prior = node["mastery_score"]
-            node["mastery_score"] = min(1.0, 0.8 * accuracy + 0.2 * prior)
+            prior = float(node.get("mastery_score", 0.0))
+            base_gain = 0.06 + 0.14 * (1.0 - prior)
+            if confidence_1_to_5 is None:
+                confidence_factor = 1.0
+            else:
+                clamped_conf = max(1, min(5, int(confidence_1_to_5)))
+                # Confidence weighting: level 1 ("guessing") gets only 25% of
+                # normal gain; level 5 gets full gain.
+                confidence_factor = 0.25 + 0.75 * ((clamped_conf - 1) / 4.0)
+            gain = base_gain * confidence_factor
+            node["mastery_score"] = min(1.0, prior + gain)
             node["decay_timestamp"] = (
                 datetime.utcnow() + timedelta(days=DECAY_GRACE_DAYS)
             ).isoformat()
@@ -165,9 +174,9 @@ class KnowledgeGraphEngine:
 
         else:
             # ── Conceptual mistake — mastery drops + recursive prereq trace ───
-            accuracy = node["correct_count"] / node["attempt_count"]
-            prior = node["mastery_score"]
-            node["mastery_score"] = max(0.0, min(1.0, 0.8 * accuracy + 0.2 * prior))
+            prior = float(node.get("mastery_score", 0.0))
+            drop = 0.08 + 0.10 * prior
+            node["mastery_score"] = max(0.0, prior - drop)
             node["careless_badge"] = False  # clearly not careless
 
             # Recursive Prerequisite Knowledge Tracing:

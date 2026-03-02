@@ -95,7 +95,7 @@ extra_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[*default_origins, *extra_origins],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$|^https://.*\.ngrok(-free)?\.app$|^https://.*\.ngrok\.io$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$|^https://.*\.ngrok(-free)?\.app$|^https://.*\.ngrok\.io$|^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -392,6 +392,7 @@ def _apply_user_kg_update(
     concept: str,
     is_correct: bool,
     mistake_type: Optional[str] = None,
+    confidence_1_to_5: Optional[int] = None,
 ) -> Optional[dict]:
     try:
         user_kg_engine = _get_user_kg_engine(student_id)
@@ -403,11 +404,13 @@ def _apply_user_kg_update(
             concept_id=concept_id,
             is_correct=is_correct,
             is_careless=(mistake_type == "careless"),
+            confidence_1_to_5=confidence_1_to_5,
         )
         return {
             "concept_id": concept_id,
             "is_correct": is_correct,
             "mistake_type": mistake_type,
+            "confidence_1_to_5": confidence_1_to_5,
             "status": "updated",
             "node": result.get("node"),
         }
@@ -416,6 +419,7 @@ def _apply_user_kg_update(
             "concept_id": concept,
             "is_correct": is_correct,
             "mistake_type": mistake_type,
+            "confidence_1_to_5": confidence_1_to_5,
             "status": "failed",
             "error": str(e),
         }
@@ -1149,20 +1153,36 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
                 "mistake_type": mistake_type or "none",
             })
             question_payload = student_quiz.get(answer.question_id, {}) if isinstance(student_quiz, dict) else {}
-            concept_for_update = str(
-                action.get("concept")
-                or question_payload.get("concept")
-                or request.concept
-            )
-            kg_update = _apply_user_kg_update(
-                student_id=student_id,
-                concept=concept_for_update,
-                is_correct=is_correct,
-                mistake_type=mistake_type,
-            )
+            candidate_concepts = [
+                str(action.get("concept") or "").strip(),
+                str(question_payload.get("concept") or "").strip(),
+                str(request.concept or "").strip(),
+            ]
+            # Preserve order, drop empty duplicates.
+            ordered_candidates = []
+            for c in candidate_concepts:
+                if c and c not in ordered_candidates:
+                    ordered_candidates.append(c)
+
+            kg_update = None
+            for candidate in ordered_candidates:
+                attempt_update = _apply_user_kg_update(
+                    student_id=student_id,
+                    concept=candidate,
+                    is_correct=is_correct,
+                    mistake_type=mistake_type,
+                    confidence_1_to_5=answer.confidence_1_to_5,
+                )
+                if not attempt_update:
+                    continue
+                kg_update = attempt_update
+                if str(attempt_update.get("status")) == "updated":
+                    break
             action["mistake_type"] = action.get("mistake_type", mistake_type or "none")
             if kg_update is not None:
                 action["kg_update"] = kg_update
+            if ordered_candidates:
+                action["kg_update_candidates"] = ordered_candidates
             enriched_actions.append(action)
 
         result.integration_actions = enriched_actions
@@ -1209,6 +1229,7 @@ async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest, student
             concept=request.question_id.split("checkpoint-", 1)[-1].rsplit("-", 1)[0] if "checkpoint-" in request.question_id else request.question_id,
             is_correct=response.is_correct,
             mistake_type=None if response.is_correct else "conceptual",
+            confidence_1_to_5=request.confidence_1_to_5,
         )
         return response
     except ValueError as exc:
@@ -1382,6 +1403,7 @@ class UpdateMasteryRequest(BaseModel):
     concept_id: str
     is_correct: bool
     is_careless: Optional[bool] = False
+    confidence_1_to_5: Optional[int] = None
 
 class SetMasteryRequest(BaseModel):
     concept_id: str
@@ -1425,6 +1447,7 @@ async def kg_update_mastery(req: UpdateMasteryRequest, student_id: str = Depends
             concept_id=req.concept_id,
             is_correct=req.is_correct,
             is_careless=req.is_careless or False,
+            confidence_1_to_5=req.confidence_1_to_5,
         )
         return {"status": "ok", **result}
     except KeyError as e:
