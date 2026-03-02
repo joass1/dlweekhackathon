@@ -501,6 +501,8 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
         return assessment_engine.generate_quiz(request)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Quiz generation error: {exc}") from exc
 
 
 @app.post("/api/assessment/evaluate", response_model=EvaluateResponse)

@@ -6,9 +6,12 @@ import {
   classifyMistake,
   evaluateAnswer,
   generateQuiz,
+  getMicroCheckpoint,
+  submitMicroCheckpoint,
   overrideClassification,
   type QuizQuestionClient,
   type ClassifyResult,
+  type MicroCheckpointQuestion,
 } from '@/services/assessment';
 import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
@@ -16,6 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type AnswersMap = Record<string, number>;
 type ConfidenceMap = Record<string, number>;
+type CheckpointQueueItem = { concept?: string; missing_concept?: string | null };
 
 export default function AssessmentTakePage() {
   const router = useRouter();
@@ -30,6 +34,10 @@ export default function AssessmentTakePage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isEmptyAssessment, setIsEmptyAssessment] = useState(false);
   const [classificationResult, setClassificationResult] = useState<ClassifyResult | null>(null);
+  const [checkpoint, setCheckpoint] = useState<MicroCheckpointQuestion | null>(null);
+  const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
+  const [checkpointConfidence, setCheckpointConfidence] = useState(3);
+  const [pendingCheckpoints, setPendingCheckpoints] = useState<CheckpointQueueItem[]>([]);
   const studentId = useStudentId();
   const { getIdToken } = useAuth();
 
@@ -61,7 +69,7 @@ export default function AssessmentTakePage() {
             setIsEmptyAssessment(true);
             setLoadError(null);
           } else {
-            setLoadError('Could not generate the quiz. Please retry.');
+            setLoadError(msg || 'Could not generate the quiz. Please retry.');
           }
         }
       } finally {
@@ -134,6 +142,10 @@ export default function AssessmentTakePage() {
       const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token);
       const classification = await classifyMistake(studentId, subjectId, answerPayload, token);
       setClassificationResult(classification);
+
+      const conceptualQueue: CheckpointQueueItem[] = (classification.classifications || [])
+        .filter((c) => c.mistake_type === 'conceptual')
+        .map((c) => ({ concept: subjectId, missing_concept: c.missing_concept }));
 
       // Update KG mastery + BKT for each answered question
       try {

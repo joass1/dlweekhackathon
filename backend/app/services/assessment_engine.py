@@ -656,7 +656,15 @@ class AssessmentEngine:
                         model="gpt-5.2",
                         messages=messages,
                     )
-                content = completion.choices[0].message.content or "{}"
+                # GPT-5.2 reasoning models may return content in output_text
+                # or nested under choices. Handle both.
+                content = None
+                if hasattr(completion, 'output_text') and completion.output_text:
+                    content = completion.output_text
+                elif hasattr(completion, 'choices') and completion.choices:
+                    msg = completion.choices[0].message
+                    content = msg.content if msg else None
+                content = content or "{}"
                 parsed = _extract_json_object(content)
                 questions = parsed.get("questions", [])
                 validated = self._validate_generated_questions(concept, questions, remaining)
@@ -672,12 +680,11 @@ class AssessmentEngine:
                 self._last_quiz_generation_error = f"OpenAI request/parse failure: {exc}"
                 continue
 
-        if len(collected) < num_questions:
-            if not self._last_quiz_generation_error:
-                self._last_quiz_generation_error = (
-                    f"Generated only {len(collected)}/{num_questions} valid questions."
-                )
-            return []
+        if len(collected) == 0:
+            raise ValueError(
+                f"LLM generated 0/{num_questions} valid questions after 4 attempts. "
+                f"Last error: {self._last_quiz_generation_error or 'unknown'}"
+            )
 
         # Re-index IDs deterministically after multi-pass collection.
         return [
@@ -868,7 +875,13 @@ class AssessmentEngine:
                         {"role": "user", "content": json.dumps(payload)},
                     ],
                 )
-                parsed = _extract_json_object(completion.choices[0].message.content or "{}")
+                cls_content = None
+                if hasattr(completion, 'output_text') and completion.output_text:
+                    cls_content = completion.output_text
+                elif hasattr(completion, 'choices') and completion.choices:
+                    cls_msg = completion.choices[0].message
+                    cls_content = cls_msg.content if cls_msg else None
+                parsed = _extract_json_object(cls_content or "{}")
                 mistake_type_raw = parsed.get("mistake_type", "conceptual")
                 mistake_type = mistake_type_raw if mistake_type_raw in {"careless", "conceptual"} else "conceptual"
                 missing_concept = _normalize_missing_concept(parsed.get("missing_concept"), concept)

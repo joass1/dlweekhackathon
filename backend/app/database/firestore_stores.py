@@ -79,14 +79,10 @@ class FirestoreAssessmentStore:
             .collection("classifications").document(question_id).get()
         return doc.to_dict() if doc.exists else None
 
-    def get_all_classifications(self, student_id: str, course_id: str) -> Dict[str, dict]:
-        quizzes_col = self._course_ref(student_id, course_id).collection("quizzes")
-        result: Dict[str, dict] = {}
-        for quiz_doc in quizzes_col.stream():
-            cls_doc = quiz_doc.reference.collection("classification").document("latest").get()
-            if cls_doc.exists:
-                result[quiz_doc.id] = cls_doc.to_dict()
-        return result
+    def get_all_classifications(self, student_id: str) -> Dict[str, dict]:
+        col = self.db.collection("students").document(student_id) \
+            .collection("classifications")
+        return {doc.id: doc.to_dict() for doc in col.stream()}
 
     # ── Blind spot counts ─────────────────────────────────────────────────────
 
@@ -101,6 +97,17 @@ class FirestoreAssessmentStore:
         self.db.collection("students").document(student_id).set(
             {"blind_spot_counts": blind_spots}, merge=True
         )
+
+    # ── Assessment runs ─────────────────────────────────────────────────────
+
+    def get_assessment_runs(self, student_id: str) -> List[dict]:
+        col = self.db.collection("students").document(student_id) \
+            .collection("assessment_runs").order_by("submitted_at")
+        return [doc.to_dict() for doc in col.stream()]
+
+    def add_assessment_run(self, student_id: str, run: dict) -> None:
+        self.db.collection("students").document(student_id) \
+            .collection("assessment_runs").add(run)
 
     # ── Transaction helper (mimics old API) ───────────────────────────────────
 
