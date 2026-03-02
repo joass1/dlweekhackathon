@@ -69,39 +69,39 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     defs.append('marker')
       .attr('id', 'arrowhead')
       .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 25)
+      .attr('refX', 30)
       .attr('refY', 0)
       .attr('orient', 'auto')
       .attr('markerWidth', 6)
       .attr('markerHeight', 6)
       .append('path')
       .attr('d', 'M 0,-5 L 10,0 L 0,5')
-      .attr('fill', '#94a3b8');
+      .attr('fill', '#cbd5e1');
 
     const ballColors: Record<Node['status'], { fill: string; stroke: string; text: string }> = {
-      mastered: { fill: '#22c55e', stroke: '#15803d', text: '#14532d' },
-      learning: { fill: '#eab308', stroke: '#a16207', text: '#713f12' },
-      weak: { fill: '#ef4444', stroke: '#b91c1c', text: '#7f1d1d' },
-      not_started: { fill: '#d1d5db', stroke: '#6b7280', text: '#374151' },
+      mastered: { fill: '#34d399', stroke: '#059669', text: '#ffffff' },
+      learning: { fill: '#fbbf24', stroke: '#d97706', text: '#ffffff' },
+      weak: { fill: '#f87171', stroke: '#dc2626', text: '#ffffff' },
+      not_started: { fill: '#94a3b8', stroke: '#64748b', text: '#ffffff' },
     };
 
     const simulation = d3.forceSimulation<Node>(graphNodes)
-      .force('link', d3.forceLink<Node, Link>(graphLinks).id(d => d.id).distance(100))
+      .force('link', d3.forceLink<Node, Link>(graphLinks).id(d => d.id).distance(110))
       .force('charge', d3.forceManyBody().strength(-300))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(35));
+      .force('collision', d3.forceCollide().radius(44));
 
     // Links
     const link = svg.append('g')
       .selectAll('line')
       .data(graphLinks)
       .join('line')
-      .style('stroke', d => d.type === 'prerequisite' ? '#94a3b8' : '#e2e8f0')
-      .style('stroke-width', d => d.type === 'prerequisite' ? 2 : 1)
+      .style('stroke', d => d.type === 'prerequisite' ? '#cbd5e1' : '#94a3b8')
+      .style('stroke-width', d => d.type === 'prerequisite' ? 2.2 : 1.2)
       .style('stroke-dasharray', d => d.type === 'prerequisite' ? 'none' : '4,4')
       .attr('marker-end', d => d.type === 'prerequisite' ? 'url(#arrowhead)' : '');
 
-    const nodeR = (d: Node) => 14 + (d.mastery / 100) * 12;
+    const nodeR = (d: Node) => 18.5 + (d.mastery / 100) * 15.8;
 
     // Node groups (minimal flat circles + centered number)
     const nodeGroup = svg.append('g')
@@ -125,11 +125,11 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('class', 'node-body')
       .attr('r', nodeR)
       .style('fill', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#dbeafe' : ballColors[d.status].fill
+        isStartPointNode(d) && d.status === 'not_started' ? '#38bdf8' : ballColors[d.status].fill
       ))
-      .style('fill-opacity', 0.78)
+      .style('fill-opacity', 0.9)
       .style('stroke', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#0284c7' : ballColors[d.status].stroke
+        isStartPointNode(d) && d.status === 'not_started' ? '#0ea5e9' : ballColors[d.status].stroke
       ))
       .style('stroke-width', d => isStartPointNode(d) ? 2.2 : 1.6);
 
@@ -142,7 +142,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('font-weight', 'bold')
       .attr('font-family', 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial')
       .attr('fill', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#0c4a6e' : ballColors[d.status].text
+        isStartPointNode(d) && d.status === 'not_started' ? '#ffffff' : ballColors[d.status].text
       ))
       .style('pointer-events', 'none');
 
@@ -156,17 +156,19 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('font-size', '11px')
       .attr('dx', d => nodeR(d) + 6)
       .attr('dy', 4)
-      .attr('fill', '#374151');
+      .attr('fill', '#e2e8f0');
 
     // Tooltip
     const tooltip = d3.select('body').append('div')
       .style('position', 'absolute')
-      .style('background', 'white')
-      .style('border', '1px solid #e5e7eb')
+      .style('background', 'rgba(15, 23, 42, 0.85)')
+      .style('backdrop-filter', 'blur(4px)')
+      .style('border', '1px solid rgba(255,255,255,0.15)')
       .style('border-radius', '8px')
       .style('padding', '8px 12px')
       .style('font-size', '12px')
-      .style('box-shadow', '0 4px 6px rgba(0,0,0,0.1)')
+      .style('color', 'rgba(255,255,255,0.9)')
+      .style('box-shadow', '0 4px 12px rgba(0,0,0,0.3)')
       .style('pointer-events', 'none')
       .style('opacity', 0)
       .style('z-index', '1000');
@@ -248,37 +250,37 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
   return (
     <div className="w-full h-full relative">
       <svg ref={svgRef} className="w-full h-full" />
-      <div className="absolute bottom-3 left-3 bg-card/90 border rounded-lg p-2 text-xs flex gap-4">
-        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> Mastered</div>
-        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-yellow-500 inline-block" /> Learning</div>
-        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Weak</div>
-        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-gray-300 inline-block" /> Not Started</div>
+      <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur-sm border border-white/20 rounded-lg p-2 text-xs text-white/80 flex gap-4">
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-emerald-400 inline-block" /> Mastered</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> Learning</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-400 inline-block" /> Weak</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-slate-400 inline-block" /> Not Started</div>
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded-full border-2 border-sky-500 border-dashed inline-block" />
-          Suggested Start Points
+          <span className="w-3 h-3 rounded-full border-2 border-sky-400 border-dashed inline-block" />
+          Suggested Start
         </div>
       </div>
 
       {selectedNode && (
         <div
-          className="absolute inset-0 z-20 bg-black/30 flex items-center justify-center p-4"
+          className="absolute inset-0 z-20 bg-black/40 flex items-center justify-center p-4"
           onClick={() => setSelectedNode(null)}
         >
           <div
-            className="w-full max-w-md rounded-xl bg-white border border-gray-200 shadow-xl p-5"
+            className="w-full max-w-md rounded-xl bg-slate-900/80 backdrop-blur-sm border border-white/20 shadow-xl p-5 text-white"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-wide text-gray-500">Selected Topic</p>
-                <h3 className="text-lg font-semibold text-gray-900">{selectedNode.title}</h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-xs uppercase tracking-wide text-white/50">Selected Topic</p>
+                <h3 className="text-lg font-semibold text-white">{selectedNode.title}</h3>
+                <p className="text-sm text-white/60 mt-1">
                   Mastery {selectedNode.mastery}% • {selectedNode.status.replace('_', ' ')}
                 </p>
               </div>
               <button
                 type="button"
-                className="text-gray-400 hover:text-gray-600"
+                className="text-white/40 hover:text-white/80 transition-colors"
                 onClick={() => setSelectedNode(null)}
                 aria-label="Close"
               >
@@ -289,7 +291,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
             <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
-                className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
+                className="rounded-lg border border-violet-400/30 bg-violet-500/20 px-3 py-2 text-sm font-medium text-violet-300 hover:bg-violet-500/30 transition-colors"
                 onClick={() => {
                   const params = new URLSearchParams({
                     topic: selectedNode.title,
@@ -303,7 +305,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+                className="rounded-lg border border-emerald-400/30 bg-emerald-500/20 px-3 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-500/30 transition-colors"
                 onClick={() => {
                   const params = new URLSearchParams({
                     topic: selectedNode.title,
@@ -317,7 +319,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                className="rounded-lg border border-sky-400/30 bg-sky-500/20 px-3 py-2 text-sm font-medium text-sky-300 hover:bg-sky-500/30 transition-colors"
                 onClick={() => {
                   const params = new URLSearchParams({
                     topic: selectedNode.title,
