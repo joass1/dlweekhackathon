@@ -94,8 +94,8 @@ export default function GroupsPage() {
   if (loading) {
     return (
       <div className="p-6 flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-6 h-6 animate-spin text-emerald-600 mr-2" />
-        <span className="text-gray-500">Matching peer learning hubs...</span>
+        <Loader2 className="w-6 h-6 animate-spin text-[#03b2e6] mr-2" />
+        <span className="text-muted-foreground">Matching peer learning hubs...</span>
       </div>
     );
   }
@@ -112,15 +112,15 @@ export default function GroupsPage() {
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-2">Peer Learning Hubs</h1>
-      <p className="text-sm text-gray-500 mb-6">
+      <p className="text-sm text-muted-foreground mb-6">
         Balanced groups where each member&apos;s strengths complement others&apos; weaknesses.
       </p>
 
       {hubs.length === 0 ? (
         <Card className="p-8 text-center">
           <Users className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 mb-2">No hubs available yet.</p>
-          <p className="text-sm text-gray-400">Upload course materials and complete some assessments first.</p>
+          <p className="text-muted-foreground mb-2">No hubs available yet.</p>
+          <p className="text-sm text-muted-foreground">Upload course materials and complete some assessments first.</p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -128,39 +128,39 @@ export default function GroupsPage() {
             const yourHub = hub.members.some(m => m.student_id === studentId);
             return (
               <Link key={hub.hub_id} href={`/groups/${hub.hub_id}`}>
-                <Card className={`hover:shadow-lg transition-shadow ${yourHub ? 'ring-2 ring-emerald-400' : ''}`}>
+                <Card className={`hover:shadow-lg transition-shadow ${yourHub ? 'ring-2 ring-[#03b2e6]' : ''}`}>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Users className="w-4 h-4" />
                       Hub {hub.hub_id.replace('hub_', '#')}
-                      {yourHub && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Your Hub</span>}
+                      {yourHub && <span className="text-xs bg-[#e0f4fb] text-[#03b2e6] px-2 py-0.5 rounded-full">Your Hub</span>}
                     </CardTitle>
-                    <p className="text-sm text-gray-500">{hub.members.length} members</p>
+                    <p className="text-sm text-muted-foreground">{hub.members.length} members</p>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Avg Mastery</span>
+                        <span className="text-muted-foreground">Avg Mastery</span>
                         <span className="font-medium">{Math.round(hub.hub_avg_mastery * 100)}%</span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div className="w-full bg-muted rounded-full h-2">
                         <div
-                          className="bg-emerald-600 h-2 rounded-full"
+                          className="bg-[#03b2e6] h-2 rounded-full"
                           style={{ width: `${hub.hub_avg_mastery * 100}%` }}
                         />
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Complementarity</span>
+                        <span className="text-muted-foreground">Complementarity</span>
                         <span className="font-medium">{(hub.complementarity_score * 100).toFixed(0)}%</span>
                       </div>
                       <div className="flex flex-wrap gap-1 mt-2">
                         {Object.entries(hub.tier_distribution).map(([tier, count]) => (
-                          <span key={tier} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                          <span key={tier} className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
                             {tier}: {count}
                           </span>
                         ))}
                       </div>
-                      <div className="text-xs text-gray-400 mt-2">
+                      <div className="text-xs text-muted-foreground mt-2">
                         {hub.members.map(m => m.name).join(', ')}
                       </div>
                     </div>

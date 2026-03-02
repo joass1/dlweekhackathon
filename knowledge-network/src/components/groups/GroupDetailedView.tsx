@@ -73,7 +73,7 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
           <button
             onClick={() => setActiveTab('feed')}
             className={`px-4 py-2 rounded-lg transition-colors ${
-              activeTab === 'feed' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'
+              activeTab === 'feed' ? 'bg-purple-100 text-purple-700' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
             Group Feed
@@ -81,7 +81,7 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
           <button
             onClick={() => setActiveTab('analysis')}
             className={`px-4 py-2 rounded-lg transition-colors ${
-              activeTab === 'analysis' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'
+              activeTab === 'analysis' ? 'bg-purple-100 text-purple-700' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
             Learning Analysis
@@ -89,7 +89,7 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
           <button
             onClick={() => setActiveTab('sessions')}
             className={`px-4 py-2 rounded-lg transition-colors ${
-              activeTab === 'sessions' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'
+              activeTab === 'sessions' ? 'bg-purple-100 text-purple-700' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
             Peer Sessions
@@ -113,11 +113,11 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
                       <div className="flex-1">
                         <div className="flex justify-between items-start">
                           <span className="font-medium">{item.userName}</span>
-                          <span className="text-sm text-gray-500">
+                          <span className="text-sm text-muted-foreground">
                             {item.timestamp.toLocaleDateString()}
                           </span>
                         </div>
-                        <p className="mt-1 text-gray-600">{item.content}</p>
+                        <p className="mt-1 text-muted-foreground">{item.content}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -140,7 +140,7 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
                 {members.map((member) => (
                   <div key={member.id} className="border-b pb-4 last:border-b-0">
                     <div className="font-medium">{member.name}</div>
-                    <div className="text-sm text-gray-600 mt-2">
+                    <div className="text-sm text-muted-foreground mt-2">
                       <div>Strengths: {member.strengths.join(", ")}</div>
                       <div>Needs Help: {member.needsHelp.join(", ")}</div>
                     </div>
@@ -162,7 +162,7 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
                     <span>Overall Progress</span>
                     <span>75%</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-muted rounded-full h-2">
                     <div
                       className="bg-purple-600 h-2 rounded-full"
                       style={{ width: '75%' }}
@@ -174,7 +174,7 @@ export const GroupDetailView = ({ groupId }: GroupDetailViewProps) => {
                     <span>Assessment Completion</span>
                     <span>4/5</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-muted rounded-full h-2">
                     <div
                       className="bg-purple-600 h-2 rounded-full"
                       style={{ width: '80%' }}

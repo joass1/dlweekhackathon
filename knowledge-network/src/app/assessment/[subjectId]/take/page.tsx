@@ -238,10 +238,10 @@ export default function AssessmentTakePage() {
 
   if (isLoadingQuiz) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Generating quiz...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03b2e6] mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Generating quiz...</p>
         </div>
       </div>
     );
@@ -249,12 +249,12 @@ export default function AssessmentTakePage() {
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="max-w-md w-full text-center bg-white rounded-lg border border-red-200 p-6">
           <h2 className="text-lg font-semibold text-red-700 mb-2">Quiz load failed</h2>
-          <p className="text-sm text-gray-600 mb-4">{loadError}</p>
+          <p className="text-sm text-muted-foreground mb-4">{loadError}</p>
           <button
-            className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700"
+            className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]"
             onClick={() => window.location.reload()}
           >
             Retry
@@ -266,14 +266,14 @@ export default function AssessmentTakePage() {
 
   if (isEmptyAssessment) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="max-w-md w-full text-center bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-2">No assessment available yet</h2>
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-muted-foreground mb-4">
             Your knowledge map has no concepts for this assessment yet. Upload study materials first.
           </p>
           <button
-            className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700"
+            className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]"
             onClick={() => router.push('/upload')}
           >
             Upload Materials
@@ -284,10 +284,10 @@ export default function AssessmentTakePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <div className="min-h-screen bg-background py-8">
       <div className="max-w-3xl mx-auto px-4">
         <h1 className="text-2xl font-bold mb-2">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
-        <p className="text-sm text-gray-500 mb-8">Answer each question, then rate how confident you are in your answer.</p>
+        <p className="text-sm text-muted-foreground mb-8">Answer each question, then rate how confident you are in your answer.</p>
 
         <div className="space-y-8">
           {questions.map((question) => (
@@ -303,7 +303,7 @@ export default function AssessmentTakePage() {
                     key={index}
                     className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
                       answers[question.question_id] === index
-                        ? 'border-emerald-500 bg-emerald-50'
+                        ? 'border-[#03b2e6] bg-[#e0f4fb]'
                         : 'border-gray-200 hover:border-gray-300'
                     }`}
                     onClick={() => handleAnswer(question.question_id, index)}
@@ -314,7 +314,7 @@ export default function AssessmentTakePage() {
                       name={question.question_id}
                       checked={answers[question.question_id] === index}
                       onChange={() => handleAnswer(question.question_id, index)}
-                      className="mr-3 accent-emerald-600"
+                      className="mr-3 accent-[#03b2e6]"
                     />
                     <label htmlFor={`${question.question_id}-${index}`} className="cursor-pointer flex-1">
                       {option}
@@ -324,8 +324,8 @@ export default function AssessmentTakePage() {
               </div>
 
               {answers[question.question_id] !== undefined && (
-                <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">How confident are you in this answer?</label>
+                <div className="mt-4 p-4 bg-background rounded-lg border border-muted">
+                  <label className="block text-sm font-medium text-foreground mb-2">How confident are you in this answer?</label>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-red-500 w-14">Guessing</span>
                     <input
@@ -339,7 +339,7 @@ export default function AssessmentTakePage() {
                           [question.question_id]: parseInt(e.target.value, 10),
                         }))
                       }
-                      className="flex-1 accent-emerald-600"
+                      className="flex-1 accent-[#03b2e6]"
                     />
                     <span className="text-xs text-green-600 w-14 text-right">Certain</span>
                   </div>
@@ -367,7 +367,7 @@ export default function AssessmentTakePage() {
           <button
             onClick={handleSubmit}
             disabled={isSubmitting || questions.length === 0}
-            className="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+            className="bg-[#03b2e6] text-white px-6 py-2 rounded-full hover:bg-[#029ad0] disabled:opacity-50"
           >
             {isSubmitting ? 'Analyzing...' : 'Submit Assessment'}
           </button>
@@ -378,14 +378,14 @@ export default function AssessmentTakePage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
           <div className="max-w-xl w-full bg-white rounded-xl p-6">
             <h2 className="text-xl font-semibold mb-2">Micro-checkpoint</h2>
-            <p className="text-gray-700 mb-4">{checkpoint.stem}</p>
+            <p className="text-foreground mb-4">{checkpoint.stem}</p>
             <div className="space-y-2 mb-4">
               {checkpoint.options.map((option, index) => (
                 <button
                   key={index}
                   onClick={() => setCheckpointAnswer(index)}
                   className={`w-full text-left p-3 border rounded-lg ${
-                    checkpointAnswer === index ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'
+                    checkpointAnswer === index ? 'border-[#03b2e6] bg-[#e0f4fb]' : 'border-gray-200'
                   }`}
                 >
                   {option}
@@ -403,12 +403,12 @@ export default function AssessmentTakePage() {
               >
                 Skip
               </button>
-              <button className="px-4 py-2 rounded bg-emerald-600 text-white" onClick={submitCheckpoint}>
+              <button className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]" onClick={submitCheckpoint}>
                 Submit checkpoint
               </button>
             </div>
-            <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="mt-4 p-4 bg-background rounded-lg border border-muted">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 Confidence for checkpoint answer
               </label>
               <div className="flex items-center gap-3">
@@ -419,7 +419,7 @@ export default function AssessmentTakePage() {
                   max="5"
                   value={checkpointConfidence}
                   onChange={(e) => setCheckpointConfidence(parseInt(e.target.value, 10))}
-                  className="flex-1 accent-emerald-600"
+                  className="flex-1 accent-[#03b2e6]"
                 />
                 <span className="text-xs text-green-600 w-14 text-right">Certain</span>
               </div>

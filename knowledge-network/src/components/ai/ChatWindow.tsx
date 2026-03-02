@@ -28,20 +28,20 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
           className={`p-4 rounded-lg ${
             message.role === 'assistant' 
               ? 'bg-blue-50 ml-4' 
-              : 'bg-gray-50 mr-4'
+              : 'bg-accent mr-4'
           }`}
         >
-          <p className="text-gray-800">{message.content}</p>
+          <p className="text-foreground">{message.content}</p>
           {message.relatedNotes && message.role === 'assistant' && (
-            <div className="mt-2 text-xs text-gray-500">
+            <div className="mt-2 text-xs text-muted-foreground">
               Sources: {message.relatedNotes.map(note => note.text).join(', ')}
             </div>
           )}
         </div>
       ))}
       {isLoading && (
-        <div className="p-4 bg-gray-50 rounded-lg animate-pulse">
-          <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+        <div className="p-4 bg-accent rounded-lg animate-pulse">
+          <div className="h-4 bg-muted rounded w-3/4"></div>
         </div>
       )}
     </div>

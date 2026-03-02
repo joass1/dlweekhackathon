@@ -13,7 +13,7 @@ export function SmartSearchBar({ placeholder, filters }: SmartSearchBarProps) {
   return (
     <div className="space-y-4">
       <div className="relative">
-        <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+        <Search className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
         <Input
           placeholder={placeholder}
           className="pl-10 h-12"

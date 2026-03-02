@@ -203,7 +203,7 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
   return (
     <div className="w-full h-full relative">
       <svg ref={svgRef} className="w-full h-full" />
-      <div className="absolute bottom-3 left-3 bg-white/90 border rounded-lg p-2 text-xs flex gap-4">
+      <div className="absolute bottom-3 left-3 bg-card/90 border rounded-lg p-2 text-xs flex gap-4">
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> Mastered</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-yellow-500 inline-block" /> Learning</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Weak</div>

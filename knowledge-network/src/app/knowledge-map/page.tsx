@@ -140,7 +140,7 @@ export default function KnowledgeMapPage() {
       <div className="flex justify-between items-center mb-4">
         <div>
           <h1 className="text-2xl font-bold">Knowledge Map</h1>
-          <p className="text-sm text-gray-500">Visualize your mastery across all concepts. Drag nodes to rearrange.</p>
+          <p className="text-sm text-muted-foreground">Visualize your mastery across all concepts. Drag nodes to rearrange.</p>
         </div>
         <select
           value={selectedCourse}
@@ -155,26 +155,26 @@ export default function KnowledgeMapPage() {
 
       <div className="grid grid-cols-4 gap-4 mb-4">
         <Card className="p-3 border-l-4 border-l-green-500">
-          <p className="text-sm text-gray-500">Mastered</p>
+          <p className="text-sm text-muted-foreground">Mastered</p>
           <p className="text-xl font-bold text-green-600">{stats.mastered}</p>
         </Card>
         <Card className="p-3 border-l-4 border-l-yellow-500">
-          <p className="text-sm text-gray-500">Learning</p>
+          <p className="text-sm text-muted-foreground">Learning</p>
           <p className="text-xl font-bold text-yellow-600">{stats.learning}</p>
         </Card>
         <Card className="p-3 border-l-4 border-l-red-500">
-          <p className="text-sm text-gray-500">Weak</p>
+          <p className="text-sm text-muted-foreground">Weak</p>
           <p className="text-xl font-bold text-red-600">{stats.weak}</p>
         </Card>
         <Card className="p-3 border-l-4 border-l-gray-300">
-          <p className="text-sm text-gray-500">Not Started</p>
-          <p className="text-xl font-bold text-gray-400">{stats.notStarted}</p>
+          <p className="text-sm text-muted-foreground">Not Started</p>
+          <p className="text-xl font-bold text-muted-foreground">{stats.notStarted}</p>
         </Card>
       </div>
 
       <Card className="flex-1 min-h-0">
         {loading ? (
-          <div className="h-full w-full grid place-items-center text-sm text-gray-500">Loading knowledge graph...</div>
+          <div className="h-full w-full grid place-items-center text-sm text-muted-foreground">Loading knowledge graph...</div>
         ) : (
           <KnowledgeGraph
             nodes={filteredNodes.map((n) => ({

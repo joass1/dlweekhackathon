@@ -36,11 +36,11 @@ export function PeerSessionScheduler({ groupId }: Props) {
             <div key={member.id} className="border rounded-lg p-4">
               <div className="flex justify-between items-center mb-2">
                 <span className="font-medium">{member.name}</span>
-                <span className="text-sm text-gray-500">
+                <span className="text-sm text-muted-foreground">
                   Available: {member.availability.join(", ")}
                 </span>
               </div>
-              <button className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors">
+              <button className="bg-[#03b2e6] text-white px-4 py-2 rounded-lg hover:bg-[#029ad0] transition-colors">
                 Schedule Session
               </button>
             </div>

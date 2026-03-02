@@ -109,8 +109,8 @@ export default function ProfilePage() {
   if (loading) {
     return (
       <div className="p-6 flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-6 h-6 animate-spin text-emerald-600 mr-2" />
-        <span className="text-gray-500">Loading profile...</span>
+        <Loader2 className="w-6 h-6 animate-spin text-[#03b2e6] mr-2" />
+        <span className="text-muted-foreground">Loading profile...</span>
       </div>
     );
   }
@@ -118,13 +118,13 @@ export default function ProfilePage() {
   return (
     <div className="p-6">
       <div className="flex items-center gap-6 mb-8">
-        <div className="w-24 h-24 bg-emerald-600 rounded-full flex items-center justify-center text-white text-3xl">
+        <div className="w-24 h-24 bg-[#03b2e6] rounded-full flex items-center justify-center text-white text-3xl">
           {studentId.slice(0, 2).toUpperCase()}
         </div>
         <div>
           <h1 className="text-2xl font-bold">Student Profile</h1>
-          <p className="text-gray-600 text-sm">ID: {studentId}</p>
-          <p className="text-gray-500 text-sm">{courses.length} course{courses.length !== 1 ? 's' : ''} enrolled</p>
+          <p className="text-muted-foreground text-sm">ID: {studentId}</p>
+          <p className="text-muted-foreground text-sm">{courses.length} course{courses.length !== 1 ? 's' : ''} enrolled</p>
         </div>
       </div>
 
@@ -156,7 +156,7 @@ export default function ProfilePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{progress?.total_attempts ?? 0}</div>
-            <p className="text-xs text-gray-500">{Math.round((progress?.accuracy ?? 0) * 100)}% accuracy</p>
+            <p className="text-xs text-muted-foreground">{Math.round((progress?.accuracy ?? 0) * 100)}% accuracy</p>
           </CardContent>
         </Card>
 
@@ -167,7 +167,7 @@ export default function ProfilePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-purple-600">{progress?.blind_spots.found ?? 0}</div>
-            <p className="text-xs text-gray-500">{progress?.blind_spots.resolved ?? 0} resolved</p>
+            <p className="text-xs text-muted-foreground">{progress?.blind_spots.resolved ?? 0} resolved</p>
           </CardContent>
         </Card>
 
@@ -189,20 +189,20 @@ export default function ProfilePage() {
           <div className="flex items-center gap-6">
             <div>
               <p className="text-3xl font-bold text-indigo-600">{Math.round(progress.self_awareness.score * 100)}%</p>
-              <p className="text-xs text-gray-500">Confidence calibration</p>
+              <p className="text-xs text-muted-foreground">Confidence calibration</p>
             </div>
             <div className="flex-1">
-              <div className="w-full bg-gray-200 rounded-full h-3">
+              <div className="w-full bg-muted rounded-full h-3">
                 <div className="bg-indigo-500 h-3 rounded-full" style={{ width: `${progress.self_awareness.score * 100}%` }} />
               </div>
-              <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <div className="flex justify-between text-xs text-muted-foreground mt-1">
                 <span>Over-confident</span>
                 <span>Well-calibrated</span>
               </div>
             </div>
             <div className="text-right">
               <p className="text-sm font-medium">{(progress.self_awareness.calibration_gap * 100).toFixed(0)}% gap</p>
-              <p className="text-xs text-gray-500">{progress.self_awareness.total_attempts} rated</p>
+              <p className="text-xs text-muted-foreground">{progress.self_awareness.total_attempts} rated</p>
             </div>
           </div>
         </Card>
@@ -215,15 +215,15 @@ export default function ProfilePage() {
           <div className="grid grid-cols-3 gap-4 text-center">
             <div>
               <p className="text-2xl font-bold text-green-600">{progress.correct_attempts}</p>
-              <p className="text-xs text-gray-500">Correct</p>
+              <p className="text-xs text-muted-foreground">Correct</p>
             </div>
             <div>
               <p className="text-2xl font-bold text-orange-600">{progress.careless_count}</p>
-              <p className="text-xs text-gray-500">Careless</p>
+              <p className="text-xs text-muted-foreground">Careless</p>
             </div>
             <div>
               <p className="text-2xl font-bold text-red-600">{progress.conceptual_count}</p>
-              <p className="text-xs text-gray-500">Conceptual</p>
+              <p className="text-xs text-muted-foreground">Conceptual</p>
             </div>
           </div>
         </Card>
@@ -231,7 +231,7 @@ export default function ProfilePage() {
 
       <h2 className="text-xl font-semibold mb-4">Knowledge Graph Progress</h2>
       {courseProgress.length === 0 ? (
-        <Card className="p-8 text-center text-gray-400 text-sm">
+        <Card className="p-8 text-center text-muted-foreground text-sm">
           No course data yet. Upload materials to get started!
         </Card>
       ) : (
@@ -242,7 +242,7 @@ export default function ProfilePage() {
                 <div className="flex justify-between items-center mb-4">
                   <div>
                     <h3 className="font-semibold">{course.name}</h3>
-                    <p className="text-sm text-gray-500">{course.total} concepts</p>
+                    <p className="text-sm text-muted-foreground">{course.total} concepts</p>
                   </div>
                   <div className="text-right flex items-center gap-2">
                     <span className={`w-3 h-3 rounded-full ${
@@ -251,9 +251,9 @@ export default function ProfilePage() {
                     <p className="font-semibold">{course.progress}%</p>
                   </div>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
+                <div className="w-full bg-muted rounded-full h-2 mb-4">
                   <div
-                    className="bg-emerald-600 h-2 rounded-full"
+                    className="bg-[#03b2e6] h-2 rounded-full"
                     style={{ width: `${course.progress}%` }}
                   />
                 </div>

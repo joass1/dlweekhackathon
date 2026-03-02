@@ -141,13 +141,13 @@ export default function SignInPage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#03b2e6]" />
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
         {/* Brand */}
         <div className="flex flex-col items-center mb-8">
@@ -165,23 +165,23 @@ export default function SignInPage() {
         <Card>
           <CardHeader className="pb-4">
             {/* Tab switcher */}
-            <div className="flex rounded-lg bg-slate-100 p-1">
+            <div className="flex rounded-full bg-muted p-1">
               <button
                 onClick={() => { setTab("signin"); setError(""); setMessage(""); }}
-                className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors ${
                   tab === "signin"
-                    ? "bg-white text-emerald-700 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "bg-white text-[#03b2e6] shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Sign In
               </button>
               <button
                 onClick={() => { setTab("signup"); setError(""); setMessage(""); }}
-                className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors ${
                   tab === "signup"
-                    ? "bg-white text-emerald-700 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "bg-white text-[#03b2e6] shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Sign Up
@@ -196,7 +196,7 @@ export default function SignInPage() {
               </div>
             )}
             {message && (
-              <div className="mb-4 rounded-md bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-700">
+              <div className="mb-4 rounded-md bg-blue-50 border border-[#03b2e6]/30 p-3 text-sm text-[#03b2e6]">
                 {message}
               </div>
             )}
@@ -234,7 +234,7 @@ export default function SignInPage() {
                   <Button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="w-full bg-[#03b2e6] hover:bg-[#029ad0] text-white"
                   >
                     {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                     Sign In
@@ -261,7 +261,7 @@ export default function SignInPage() {
                     <div className="w-full border-t border-gray-200" />
                   </div>
                   <div className="relative flex justify-center text-sm">
-                    <span className="bg-white px-2 text-gray-500">or</span>
+                    <span className="bg-card px-2 text-muted-foreground">or</span>
                   </div>
                 </div>
 
@@ -351,7 +351,7 @@ export default function SignInPage() {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="w-full bg-[#03b2e6] hover:bg-[#029ad0] text-white"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                   Create Account

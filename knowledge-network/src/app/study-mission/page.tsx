@@ -166,10 +166,10 @@ export default function StudyMissionPage() {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <h1 className="text-2xl font-bold flex items-center gap-2 mb-2">
-          <Rocket className="w-6 h-6 text-emerald-600" />
+          <Rocket className="w-6 h-6 text-[#03b2e6]" />
           Study Mission
         </h1>
-        <p className="text-gray-500 mb-8">
+        <p className="text-muted-foreground mb-8">
           Tell us how much time you have. Mentora will create an optimized study queue
           prioritized by knowledge gap severity, prerequisite depth, and decay risk.
         </p>
@@ -181,10 +181,10 @@ export default function StudyMissionPage() {
               <button
                 key={mins}
                 onClick={() => setStudyMinutes(mins)}
-                className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
                   studyMinutes === mins
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'border-gray-300 hover:border-emerald-400'
+                    ? 'bg-[#03b2e6] text-white border-[#03b2e6]'
+                    : 'border-gray-300 hover:border-[#03b2e6]'
                 }`}
               >
                 {mins} min
@@ -192,9 +192,9 @@ export default function StudyMissionPage() {
             ))}
           </div>
 
-          <div className="bg-gray-50 rounded-lg p-4 mb-6">
+          <div className="bg-background rounded-lg p-4 mb-6">
             <h3 className="text-sm font-medium mb-2">Mission Preview</h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               {studyMinutes <= 15
                 ? 'Quick review: 1-2 high-priority concepts'
                 : studyMinutes <= 30
@@ -213,7 +213,7 @@ export default function StudyMissionPage() {
           <button
             onClick={startMission}
             disabled={loading}
-            className="w-full py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+            className="w-full py-3 bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] font-medium flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Generating Study Plan...</>
@@ -231,14 +231,14 @@ export default function StudyMissionPage() {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Rocket className="w-6 h-6 text-emerald-600" />
+            <Rocket className="w-6 h-6 text-[#03b2e6]" />
             Study Mission
           </h1>
-          <p className="text-gray-500 text-sm">AI-prioritized concepts based on your knowledge graph</p>
+          <p className="text-muted-foreground text-sm">AI-prioritized concepts based on your knowledge graph</p>
         </div>
 
         <Card className="p-4 text-center min-w-[200px]">
-          <div className="flex items-center justify-center gap-1 text-xs text-gray-500 mb-1">
+          <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-1">
             <Clock className="w-3 h-3" /> Time Remaining
           </div>
           <p className={`text-4xl font-mono font-bold mb-2 ${timeRemaining < 60 ? 'text-red-600' : ''}`}>
@@ -246,11 +246,11 @@ export default function StudyMissionPage() {
           </p>
           <div className="flex gap-2 justify-center">
             <button onClick={() => setMissionActive(!missionActive)}
-              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-1 text-sm">
+              className="px-4 py-2 bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] flex items-center gap-1 text-sm">
               {missionActive ? <><Pause className="w-4 h-4" /> Pause</> : <><Play className="w-4 h-4" /> Resume</>}
             </button>
             <button onClick={() => { setTimeRemaining(studyMinutes * 60); setMissionActive(false); }}
-              className="px-3 py-2 border rounded-lg hover:bg-gray-50">
+              className="px-3 py-2 border rounded-lg hover:bg-accent">
               <RotateCcw className="w-4 h-4" />
             </button>
           </div>
@@ -259,8 +259,8 @@ export default function StudyMissionPage() {
 
       {/* Mission Briefing */}
       {missionBriefing && (
-        <Card className="p-4 mb-6 bg-emerald-50 border-emerald-200">
-          <p className="text-sm text-emerald-800">{missionBriefing}</p>
+        <Card className="p-4 mb-6 bg-[#e0f4fb] border-[#03b2e6]/30">
+          <p className="text-sm text-foreground">{missionBriefing}</p>
         </Card>
       )}
 
@@ -270,8 +270,8 @@ export default function StudyMissionPage() {
           <span>{completedConcepts.size}/{concepts.length} concepts reviewed</span>
           <span>{concepts.length > 0 ? Math.round((completedConcepts.size / concepts.length) * 100) : 0}% complete</span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div className="bg-emerald-600 h-2 rounded-full transition-all"
+        <div className="w-full bg-muted rounded-full h-2">
+          <div className="bg-[#03b2e6] h-2 rounded-full transition-all"
             style={{ width: `${concepts.length > 0 ? (completedConcepts.size / concepts.length) * 100 : 0}%` }} />
         </div>
       </div>
@@ -287,7 +287,7 @@ export default function StudyMissionPage() {
           return (
             <Card key={concept.concept_id}
               className={`p-4 transition-all ${
-                index === currentConceptIndex && missionActive ? 'ring-2 ring-emerald-500 bg-emerald-50' :
+                index === currentConceptIndex && missionActive ? 'ring-2 ring-[#03b2e6] bg-[#e0f4fb]' :
                 completedConcepts.has(concept.concept_id) ? 'opacity-60' : ''
               }`}>
               <div className="flex items-start justify-between">
@@ -306,17 +306,17 @@ export default function StudyMissionPage() {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-gray-500 mb-2">
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-2">
                     <span>Mastery: {masteryPct}%</span>
                     <span>~{concept.estimated_minutes} min</span>
                     <span>Score: {concept.score.toFixed(2)}</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2 max-w-xs">
+                  <div className="w-full bg-muted rounded-full h-1.5 mb-2 max-w-xs">
                     <div className={`h-1.5 rounded-full ${
                       masteryPct >= 70 ? 'bg-green-500' : masteryPct >= 40 ? 'bg-yellow-500' : 'bg-red-500'
                     }`} style={{ width: `${masteryPct}%` }} />
                   </div>
-                  <div className="flex gap-4 text-xs text-gray-400">
+                  <div className="flex gap-4 text-xs text-muted-foreground">
                     <span>Gap: {(concept.factors.gap_severity * 100).toFixed(0)}%</span>
                     <span>Prereq depth: {concept.factors.prereq_depth}</span>
                     <span>Decay risk: {(concept.factors.decay_risk * 100).toFixed(0)}%</span>
@@ -326,10 +326,10 @@ export default function StudyMissionPage() {
                   <button
                     onClick={() => markComplete(concept.concept_id)}
                     disabled={completedConcepts.has(concept.concept_id)}
-                    className={`px-4 py-2 rounded-lg text-sm flex-shrink-0 ${
+                    className={`px-4 py-2 rounded-full text-sm flex-shrink-0 ${
                       completedConcepts.has(concept.concept_id)
                         ? 'bg-green-100 text-green-700'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        : 'bg-[#03b2e6] text-white hover:bg-[#029ad0]'
                     }`}>
                     {completedConcepts.has(concept.concept_id) ? (
                       <span className="flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Done</span>
@@ -337,7 +337,7 @@ export default function StudyMissionPage() {
                   </button>
                   <Link
                     href={`/ai-assistant`}
-                    className="text-xs text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+                    className="text-xs text-[#03b2e6] hover:text-[#03b2e6] flex items-center gap-1"
                   >
                     <BookOpen className="w-3 h-3" /> Study with Tutor
                   </Link>
@@ -350,17 +350,17 @@ export default function StudyMissionPage() {
 
       {/* Session complete */}
       {concepts.length > 0 && completedConcepts.size === concepts.length && (
-        <Card className="mt-6 p-6 bg-emerald-50 border-emerald-200 text-center">
-          <CheckCircle className="w-12 h-12 text-emerald-600 mx-auto mb-3" />
-          <h2 className="text-xl font-bold text-emerald-800 mb-2">Mission Complete!</h2>
-          <p className="text-emerald-700 mb-4">
+        <Card className="mt-6 p-6 bg-[#e0f4fb] border-[#03b2e6]/30 text-center">
+          <CheckCircle className="w-12 h-12 text-[#03b2e6] mx-auto mb-3" />
+          <h2 className="text-xl font-bold text-foreground mb-2">Mission Complete!</h2>
+          <p className="text-[#03b2e6] mb-4">
             You reviewed all {concepts.length} priority concepts. Your knowledge map has been updated.
           </p>
           <div className="flex justify-center gap-3">
-            <Link href="/knowledge-map" className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm">
+            <Link href="/knowledge-map" className="px-4 py-2 bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] text-sm">
               View Knowledge Map
             </Link>
-            <Link href="/assessment" className="px-4 py-2 border border-emerald-600 text-emerald-700 rounded-lg hover:bg-emerald-50 text-sm">
+            <Link href="/assessment" className="px-4 py-2 border border-[#03b2e6] text-[#03b2e6] rounded-full hover:bg-[#e0f4fb] text-sm">
               Take Assessment
             </Link>
           </div>

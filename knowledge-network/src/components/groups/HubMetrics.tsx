@@ -43,15 +43,15 @@ function MetricCard({ title, value, change, description }: MetricCardProps) {
   const isPositive = change.startsWith('+');
   
   return (
-    <div className="bg-gray-50 rounded-lg p-4">
-      <h3 className="text-sm text-gray-600">{title}</h3>
+    <div className="bg-accent rounded-lg p-4">
+      <h3 className="text-sm text-muted-foreground">{title}</h3>
       <div className="flex items-end space-x-2 mt-2">
         <span className="text-2xl font-bold">{value}</span>
         <span className={`text-sm ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
           {change}
         </span>
       </div>
-      <p className="text-xs text-gray-500 mt-2">{description}</p>
+      <p className="text-xs text-muted-foreground mt-2">{description}</p>
     </div>
   );
 }

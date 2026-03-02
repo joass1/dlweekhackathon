@@ -130,7 +130,7 @@ export default function UploadPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Upload Course Materials</h1>
-      <p className="text-gray-500 mb-6">
+      <p className="text-muted-foreground mb-6">
         Upload your lecture notes, textbooks, and study materials. Mentora will analyze them
         to build your personalized knowledge graph.
       </p>
@@ -152,7 +152,7 @@ export default function UploadPage() {
           <button
             type="button"
             onClick={handleAddCourse}
-            className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+            className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]"
           >
             Add Course
           </button>
@@ -161,13 +161,13 @@ export default function UploadPage() {
 
       <div
         className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors mb-6 ${
-          isDragging ? 'border-emerald-500 bg-emerald-50' : 'border-gray-300 hover:border-emerald-400'
+          isDragging ? 'border-[#03b2e6] bg-[#e0f4fb]' : 'border-gray-300 hover:border-[#03b2e6]'
         }`}
         onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={e => { e.preventDefault(); setIsDragging(false); handleUpload(e.dataTransfer.files); }}
       >
-        <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
+        <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
         <p className="text-lg font-medium mb-2">
           {isUploading
             ? 'Uploading & processing...'
@@ -175,12 +175,12 @@ export default function UploadPage() {
               ? 'Upload complete. Starting assessment...'
               : 'Drop files here or click to upload'}
         </p>
-        <p className="text-sm text-gray-500 mb-4">PDF, DOCX, TXT, MD supported</p>
+        <p className="text-sm text-muted-foreground mb-4">PDF, DOCX, TXT, MD supported</p>
         <input type="file" className="hidden" id="upload-input" multiple
           accept=".pdf,.doc,.docx,.txt,.md"
           onChange={e => e.target.files && handleUpload(e.target.files)} />
         <label htmlFor="upload-input"
-          className="inline-block px-6 py-2 bg-emerald-600 text-white rounded-lg cursor-pointer hover:bg-emerald-700">
+          className="inline-block px-6 py-2 bg-[#03b2e6] text-white rounded-full cursor-pointer hover:bg-[#029ad0]">
           Browse Files
         </label>
       </div>
@@ -190,8 +190,8 @@ export default function UploadPage() {
           <h3 className="font-semibold mb-3">Uploaded Files</h3>
           <div className="space-y-2">
             {uploadedFiles.map((file, i) => (
-              <div key={i} className="flex items-center gap-3 p-2 rounded bg-gray-50">
-                <FileText className="w-4 h-4 text-gray-500" />
+              <div key={i} className="flex items-center gap-3 p-2 rounded bg-background">
+                <FileText className="w-4 h-4 text-muted-foreground" />
                 <span className="flex-1">{file.filename}</span>
                 {file.status === 'success' ? (
                   <span className="flex items-center gap-1 text-sm text-green-600">
@@ -208,12 +208,12 @@ export default function UploadPage() {
         </Card>
       )}
 
-      <Card className="p-4 bg-emerald-50 border-emerald-200">
+      <Card className="p-4 bg-[#e0f4fb] border-[#03b2e6]/30">
         <div className="flex gap-3">
-          <BookOpen className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+          <BookOpen className="w-5 h-5 text-[#03b2e6] mt-0.5 flex-shrink-0" />
           <div>
-            <h3 className="font-medium text-emerald-800">What happens next?</h3>
-            <p className="text-sm text-emerald-700 mt-1">
+            <h3 className="font-medium text-foreground">What happens next?</h3>
+            <p className="text-sm text-[#03b2e6] mt-1">
               Mentora extracts key concepts and builds prerequisite relationships
               to create your knowledge graph. Once processed, view it on your{' '}
               <Link href="/knowledge-map" className="underline font-medium">Knowledge Map</Link>.

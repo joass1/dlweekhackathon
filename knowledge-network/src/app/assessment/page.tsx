@@ -73,17 +73,17 @@ export default function AssessmentSelectionPage() {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
+    <div className="min-h-screen bg-background py-12">
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold mb-4">LearnGraph Assessments</h1>
-          <p className="text-gray-600 max-w-2xl mx-auto">
+          <p className="text-muted-foreground max-w-2xl mx-auto">
             Assessments are generated from your uploaded materials and current knowledge map.
           </p>
         </div>
 
         {loading ? (
-          <div className="bg-white border rounded-xl p-10 text-center text-gray-600">Loading concepts...</div>
+          <div className="bg-white border rounded-xl p-10 text-center text-muted-foreground">Loading concepts...</div>
         ) : null}
 
         {!loading && error ? (
@@ -96,12 +96,12 @@ export default function AssessmentSelectionPage() {
         {!loading && !error && concepts.length === 0 ? (
           <div className="bg-white border rounded-xl p-10 text-center">
             <h2 className="text-xl font-semibold mb-2">No concepts found yet</h2>
-            <p className="text-gray-600 mb-6">
+            <p className="text-muted-foreground mb-6">
               Upload course materials first. Your assessments will only appear after concepts exist in your knowledge map.
             </p>
             <Link
               href="/upload"
-              className="inline-flex items-center px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+              className="inline-flex items-center px-5 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]"
             >
               Upload Materials
             </Link>
@@ -118,14 +118,14 @@ export default function AssessmentSelectionPage() {
               >
                 <div className="p-6">
                   <h2 className="text-xl font-semibold mb-2">{concept.title}</h2>
-                  <p className="text-gray-600 mb-4">{concept.category}</p>
-                  <div className="flex items-center justify-between text-sm text-gray-500">
+                  <p className="text-muted-foreground mb-4">{concept.category}</p>
+                  <div className="flex items-center justify-between text-sm text-muted-foreground">
                     <span>5 questions</span>
                     <span>{concept.masteryPct}% mastery</span>
                   </div>
                 </div>
-                <div className="bg-emerald-50 p-4 text-center">
-                  <span className="text-emerald-600 font-medium">Begin Assessment</span>
+                <div className="bg-[#e0f4fb] p-4 text-center">
+                  <span className="text-[#03b2e6] font-medium">Begin Assessment</span>
                 </div>
               </button>
             ))}

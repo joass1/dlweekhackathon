@@ -7,13 +7,13 @@
   }
   
   .gutter {
-    background-color: #e5e7eb;
+    background-color: #e8e7e3;
     cursor: col-resize;
     width: 4px;
   }
   
   .gutter:hover {
-    background-color: #d1d5db;
+    background-color: #cbc9c4;
   }
   
   .gutter.gutter-horizontal {

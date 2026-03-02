@@ -97,14 +97,14 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
     <div className="flex flex-col gap-2">
       {/* Mode toggle */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-muted-foreground">
           {mode === 'content_aware' ? '📖 Content-Aware Mode' : '🧠 Socratic Mode'}
         </span>
         <label
           className="flex items-center gap-2 cursor-pointer"
           title="Toggle on for direct answers from your sources. Toggle off for Socratic guided learning."
         >
-          <span className="text-xs text-gray-400">Socratic</span>
+          <span className="text-xs text-muted-foreground">Socratic</span>
           <button
             type="button"
             role="switch"
@@ -131,25 +131,25 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
         onDrop={handleDrop}
         className={`min-h-[44px] flex flex-wrap items-center gap-1 px-3 py-2 rounded-lg border-2 border-dashed transition-colors ${
           isDragOver
-            ? 'border-emerald-400 bg-emerald-50'
+            ? 'border-[#03b2e6] bg-[#e0f4fb]'
             : scopedTopics.length > 0
-              ? 'border-emerald-200 bg-gray-50'
+              ? 'border-[#03b2e6]/30 bg-accent'
               : 'border-gray-300'
         }`}
       >
         {scopedTopics.length === 0 ? (
-          <span className="text-xs text-gray-400">Drag a topic from the sidebar to scope your question</span>
+          <span className="text-xs text-muted-foreground">Drag a topic from the sidebar to scope your question</span>
         ) : (
           scopedTopics.map(topic => (
             <span
               key={topic.id}
-              className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 text-xs rounded-full"
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#e0f4fb] text-foreground text-xs rounded-full"
             >
               <span>{topic.subjectName} › {topic.title}</span>
               <button
                 type="button"
                 onClick={() => onTopicRemove(topic.id)}
-                className="hover:text-emerald-600"
+                className="hover:text-[#03b2e6]"
               >
                 <X className="h-3 w-3" />
               </button>

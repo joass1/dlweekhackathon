@@ -31,17 +31,17 @@ export function GroupFeed({ groupId }: Props) {
         <Card key={item.id}>
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
-              <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+              <div className="w-10 h-10 bg-[#e0f4fb] rounded-full flex items-center justify-center">
                 {item.initial}
               </div>
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <span className="font-medium">{item.userName}</span>
-                  <span className="text-sm text-gray-500">
+                  <span className="text-sm text-muted-foreground">
                     {format(item.timestamp, 'dd/MM/yyyy')}
                   </span>
                 </div>
-                <p className="mt-1 text-gray-600">{item.content}</p>
+                <p className="mt-1 text-muted-foreground">{item.content}</p>
               </div>
             </div>
           </CardContent>

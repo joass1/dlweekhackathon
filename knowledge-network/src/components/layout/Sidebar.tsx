@@ -52,12 +52,12 @@ export const Sidebar = () => {
             referrerPolicy="no-referrer"
           />
         ) : (
-          <div className="w-12 h-12 bg-emerald-600 rounded-full flex items-center justify-center text-white text-lg">
+          <div className="w-12 h-12 bg-[#03b2e6] rounded-full flex items-center justify-center text-white text-lg">
             {initials}
           </div>
         )}
         <h2 className="text-base font-semibold mt-2">{displayName}</h2>
-        <p className="text-sm text-gray-600 truncate">{user?.email}</p>
+        <p className="text-sm text-muted-foreground truncate">{user?.email}</p>
       </div>
 
       {/* Navigation */}
@@ -70,7 +70,7 @@ export const Sidebar = () => {
               key={item.path}
               href={item.path}
               className={`w-full p-3 text-left rounded-lg flex items-center space-x-3 ${
-                isActive ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-gray-200'
+                isActive ? 'bg-[#e0f4fb] text-[#03b2e6]' : 'hover:bg-accent'
               }`}
             >
               <Icon size={20} />

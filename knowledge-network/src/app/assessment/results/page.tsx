@@ -42,21 +42,21 @@ export default function ResultsPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Finding your perfect study group...</p>
+          <p className="mt-4 text-muted-foreground">Finding your perfect study group...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
+    <div className="min-h-screen bg-background py-12">
       <div className="max-w-4xl mx-auto px-4">
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold mb-4">🎉 Group Matching Complete!</h1>
-          <p className="text-gray-600">
+          <p className="text-muted-foreground">
             You've been matched with peers who complement your learning style
           </p>
         </div>

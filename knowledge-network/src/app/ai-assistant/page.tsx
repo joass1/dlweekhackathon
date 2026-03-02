@@ -99,9 +99,9 @@ export default function AIAssistantPage() {
 
       {/* Main chat area */}
       <div className="h-screen flex flex-col">
-        <div className="p-4 border-b bg-emerald-50">
-          <h2 className="font-semibold text-emerald-800">Socratic Tutor</h2>
-          <p className="text-sm text-emerald-600">I guide you with questions to help you discover answers yourself</p>
+        <div className="p-4 border-b bg-[#e0f4fb]">
+          <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
+          <p className="text-sm text-[#03b2e6]">I guide you with questions to help you discover answers yourself</p>
         </div>
         <div className="flex-1 overflow-y-auto">
           <ChatWindow

@@ -212,17 +212,17 @@ export default function AssessmentResultsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
+    <div className="min-h-screen bg-background py-12">
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold mb-4">Your Peer Learning Hub is Ready!</h1>
-          <p className="text-gray-600 mb-4">
+          <p className="text-muted-foreground mb-4">
             Meet your study partners for {(subjectId as string).replace(/-/g, ' ')}. You've been matched based on complementary knowledge graph profiles.
           </p>
           {/* Add refresh button */}
           <button
             onClick={handleRefresh}
-            className="text-emerald-500 hover:text-emerald-600 text-sm flex items-center mx-auto"
+            className="text-[#03b2e6] hover:text-[#029ad0] text-sm flex items-center mx-auto"
           >
             <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -234,19 +234,19 @@ export default function AssessmentResultsPage() {
         {assessmentSummary && (
           <div className="grid md:grid-cols-4 gap-4 mb-8">
             <div className="bg-white rounded-lg p-4 shadow-sm">
-              <p className="text-xs text-gray-500">Assessment Score</p>
+              <p className="text-xs text-muted-foreground">Assessment Score</p>
               <p className="text-2xl font-semibold">{assessmentSummary.score ?? 0}%</p>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
-              <p className="text-xs text-gray-500">Blind Spots Found</p>
+              <p className="text-xs text-muted-foreground">Blind Spots Found</p>
               <p className="text-2xl font-semibold">{assessmentSummary.blind_spot_found_count ?? 0}</p>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
-              <p className="text-xs text-gray-500">Blind Spots Resolved</p>
+              <p className="text-xs text-muted-foreground">Blind Spots Resolved</p>
               <p className="text-2xl font-semibold">{assessmentSummary.blind_spot_resolved_count ?? 0}</p>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
-              <p className="text-xs text-gray-500">Self-Awareness</p>
+              <p className="text-xs text-muted-foreground">Self-Awareness</p>
               <p className="text-2xl font-semibold">{selfAwareness !== null ? `${Math.round(selfAwareness * 100)}%` : '-'}</p>
             </div>
           </div>
@@ -264,7 +264,7 @@ export default function AssessmentResultsPage() {
                       {item.mistake_type}
                     </span>
                   </p>
-                  <p className="text-sm text-gray-600 mt-1">{item.rationale}</p>
+                  <p className="text-sm text-muted-foreground mt-1">{item.rationale}</p>
                 </div>
               ))}
             </div>
@@ -278,10 +278,10 @@ export default function AssessmentResultsPage() {
               {assessmentSummary.integration_actions.map((item) => (
                 <div key={`${item.question_id}-hook`} className="rounded border border-gray-200 p-3">
                   <p className="text-sm font-medium">{item.question_id}</p>
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-muted-foreground">
                     RPKT target: {item.rpkt_probe?.missing_concept || item.rpkt_probe?.concept || '-'}
                   </p>
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-muted-foreground">
                     Intervention path: {item.intervention?.mistake_type || item.mistake_type}
                   </p>
                 </div>
@@ -310,12 +310,12 @@ export default function AssessmentResultsPage() {
                 
                 <div className="space-y-4">
                   <div>
-                    <h4 className="text-sm font-medium text-gray-500 mb-2">Strengths</h4>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Strengths</h4>
                     <div className="space-y-2">
                       {member.strengths.map((strength, index) => (
                         <div 
                           key={index}
-                          className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-sm text-center"
+                          className="bg-[#e0f4fb] text-[#03b2e6] px-3 py-1 rounded-full text-sm text-center"
                         >
                           {strength}
                         </div>
@@ -324,7 +324,7 @@ export default function AssessmentResultsPage() {
                   </div>
                   
                   <div>
-                    <h4 className="text-sm font-medium text-gray-500 mb-2">Availability</h4>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Availability</h4>
                     <div className="space-y-2">
                       {member.availability.map((time, index) => (
                         <div 
@@ -345,13 +345,13 @@ export default function AssessmentResultsPage() {
         <div className="text-center space-x-4">
           <button 
             onClick={() => router.push('/')}
-            className="bg-emerald-600 text-white px-8 py-3 rounded-lg hover:bg-emerald-700"
+            className="bg-[#03b2e6] text-white px-8 py-3 rounded-full hover:bg-[#029ad0]"
           >
             Go to Dashboard
           </button>
           <button 
             onClick={() => router.push('/assessment')}
-            className="bg-gray-100 text-gray-700 px-8 py-3 rounded-lg hover:bg-gray-200"
+            className="bg-muted text-foreground px-8 py-3 rounded-full hover:bg-accent"
           >
             Take Another Assessment
           </button>

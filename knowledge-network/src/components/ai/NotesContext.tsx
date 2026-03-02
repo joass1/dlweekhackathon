@@ -35,11 +35,11 @@ export function NotesContext({ activeNotes, onNoteClick }: NotesContextProps) {
         {activeNotes.map((note) => (
           <div 
             key={note.id}
-            className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
+            className="p-3 bg-accent rounded-lg hover:bg-accent cursor-pointer"
             onClick={() => onNoteClick(note)}
           >
-            <p className="text-sm text-gray-600">{note.text}</p>
-            <p className="text-xs text-gray-400 mt-1">Relevance: {Math.round(note.score * 100)}%</p>
+            <p className="text-sm text-muted-foreground">{note.text}</p>
+            <p className="text-xs text-muted-foreground mt-1">Relevance: {Math.round(note.score * 100)}%</p>
           </div>
         ))}
       </div>

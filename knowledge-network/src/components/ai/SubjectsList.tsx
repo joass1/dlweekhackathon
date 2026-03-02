@@ -137,10 +137,10 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
 
         {isLoadingSubjects ? (
           <div className="flex justify-center py-8">
-            <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-[#03b2e6] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : subjects.length === 0 ? (
-          <div className="text-center py-8 text-gray-400 text-sm">
+          <div className="text-center py-8 text-muted-foreground text-sm">
             <p>No courses yet.</p>
             <p className="mt-1">Upload materials to get started.</p>
           </div>
@@ -149,7 +149,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             {subjects.map((subject) => (
               <div key={subject.id} className="mb-4">
                 <button
-                  className="flex items-center w-full p-2 bg-gray-50 hover:bg-gray-100 rounded"
+                  className="flex items-center w-full p-2 bg-accent hover:bg-accent rounded"
                   onClick={() => toggleSubject(subject.id)}
                 >
                   {expandedSubjects.has(subject.id) ? (
@@ -176,16 +176,16 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                             }));
                             e.dataTransfer.effectAllowed = 'copy';
                           }}
-                          className="flex items-center flex-1 min-w-0 p-2 hover:bg-gray-100 rounded text-sm cursor-grab"
+                          className="flex items-center flex-1 min-w-0 p-2 hover:bg-accent rounded text-sm cursor-grab"
                           onClick={() => onNoteSelect(note.id)}
                         >
-                          <GripVertical className="w-3 h-3 mr-1 text-gray-400 flex-shrink-0" />
+                          <GripVertical className="w-3 h-3 mr-1 text-muted-foreground flex-shrink-0" />
                           <FileText className="w-4 h-4 mr-2 flex-shrink-0" />
                           <span className="truncate">{note.title}</span>
                         </button>
                         <button
                           onClick={(e) => handleDeleteTopic(note.id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-opacity flex-shrink-0"
+                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-500 transition-opacity flex-shrink-0"
                           title="Delete topic"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -203,12 +203,12 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       {/* Upload Modal */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96">
+          <div className="bg-card rounded-lg p-6 w-96">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold">Upload Files</h3>
               <button
                 onClick={() => setIsUploadModalOpen(false)}
-                className="text-gray-500 hover:text-gray-700"
+                className="text-muted-foreground hover:text-foreground"
                 disabled={isUploading}
               >
                 ✕
@@ -227,7 +227,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
               <label
                 htmlFor="file-upload"
                 className={`cursor-pointer text-sm ${
-                  isUploading ? 'text-gray-400' : 'text-gray-600 hover:text-blue-500'
+                  isUploading ? 'text-muted-foreground' : 'text-muted-foreground hover:text-blue-500'
                 }`}
               >
                 {isUploading ? 'Uploading...' : 'Drop files here or click to upload'}
@@ -236,7 +236,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
             <div className="flex justify-end mt-4">
               <button
                 onClick={() => setIsUploadModalOpen(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+                className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
                 disabled={isUploading}
               >
                 Cancel

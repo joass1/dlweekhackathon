@@ -18,7 +18,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#03b2e6]" />
       </div>
     );
   }
