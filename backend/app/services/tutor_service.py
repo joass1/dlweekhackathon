@@ -179,8 +179,7 @@ class TutorService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Course context:\n{context_text}\n\nStudent question: {message}"},
             ],
-            max_tokens=500,
-            temperature=0.7,
+            max_completion_tokens=500,
         )
         return {
             "answer": response.choices[0].message.content,
@@ -244,8 +243,7 @@ class TutorService:
         response = self.openai.chat.completions.create(
             model="gpt-5.2",
             messages=[{"role": "user", "content": llm_prompt}],
-            max_tokens=300,
-            temperature=0.6,
+            max_completion_tokens=300,
         )
 
         raw = response.choices[0].message.content.strip()
@@ -315,8 +313,7 @@ class TutorService:
         response = self.openai.chat.completions.create(
             model="gpt-5.2",
             messages=[{"role": "user", "content": llm_prompt}],
-            max_tokens=150,
-            temperature=0.8,
+            max_completion_tokens=150,
         )
 
         raw = response.choices[0].message.content.strip()

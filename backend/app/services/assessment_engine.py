@@ -645,7 +645,6 @@ class AssessmentEngine:
                 try:
                     completion = self.client.chat.completions.create(
                         model="gpt-5.2",
-                        temperature=0.2,
                         response_format={"type": "json_object"},
                         messages=messages,
                     )
@@ -654,7 +653,6 @@ class AssessmentEngine:
                     self._last_quiz_generation_error = f"response_format mode failed: {format_exc}"
                     completion = self.client.chat.completions.create(
                         model="gpt-5.2",
-                        temperature=0.2,
                         messages=messages,
                     )
                 content = completion.choices[0].message.content or "{}"
@@ -856,7 +854,6 @@ class AssessmentEngine:
             try:
                 completion = self.client.chat.completions.create(
                     model="gpt-5.2",
-                    temperature=0,
                     messages=[
                         {
                             "role": "system",

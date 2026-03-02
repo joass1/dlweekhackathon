@@ -32,9 +32,9 @@ export function NotesContext({ activeNotes, onNoteClick }: NotesContextProps) {
     <div className="p-4">
       <h2 className="text-lg font-semibold mb-4">Related Context</h2>
       <div className="space-y-4">
-        {activeNotes.map((note) => (
-          <div 
-            key={note.id}
+        {activeNotes.map((note, index) => (
+          <div
+            key={createUniqueKey(note.text, index)}
             className="p-3 bg-accent rounded-lg hover:bg-accent cursor-pointer"
             onClick={() => onNoteClick(note)}
           >
