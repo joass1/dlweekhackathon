@@ -113,6 +113,13 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       not_started: { fill: '#94a3b8', stroke: '#64748b', text: '#ffffff' },
     };
 
+    const visualStatus = (d: Node): Node['status'] => {
+      if (d.status === 'not_started') return 'not_started';
+      if (d.mastery >= 80) return 'mastered';
+      if (d.mastery >= 50) return 'learning';
+      return 'weak';
+    };
+
     const simulation = d3.forceSimulation<Node>(graphNodes)
       .force('link', d3.forceLink<Node, Link>(graphLinks).id(d => d.id).distance(110))
       .force('charge', d3.forceManyBody().strength(-300))
@@ -153,7 +160,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('class', 'node-glow')
       .attr('r', d => nodeR(d) + 2)
       .style('fill', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#38bdf8' : ballColors[d.status].fill
+        isStartPointNode(d) && d.status === 'not_started' ? '#38bdf8' : ballColors[visualStatus(d)].fill
       ))
       .style('fill-opacity', 0.35)
       .attr('filter', 'url(#node-glow)');
@@ -163,11 +170,11 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('class', 'node-body')
       .attr('r', nodeR)
       .style('fill', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#38bdf8' : ballColors[d.status].fill
+        isStartPointNode(d) && d.status === 'not_started' ? '#38bdf8' : ballColors[visualStatus(d)].fill
       ))
       .style('fill-opacity', 0.9)
       .style('stroke', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#0ea5e9' : ballColors[d.status].stroke
+        isStartPointNode(d) && d.status === 'not_started' ? '#0ea5e9' : ballColors[visualStatus(d)].stroke
       ))
       .style('stroke-width', d => isStartPointNode(d) ? 2.2 : 1.6);
 
@@ -180,7 +187,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('font-weight', 'bold')
       .attr('font-family', 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial')
       .attr('fill', d => (
-        isStartPointNode(d) && d.status === 'not_started' ? '#ffffff' : ballColors[d.status].text
+        isStartPointNode(d) && d.status === 'not_started' ? '#ffffff' : ballColors[visualStatus(d)].text
       ))
       .style('pointer-events', 'none');
 
