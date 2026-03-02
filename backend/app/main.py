@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -48,6 +48,15 @@ from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
 from app.services.assessment_engine import AssessmentEngine, AssessmentStateStore
 from app.services.tutor_service import TutorService
+from app.services.peer_session_service import PeerSessionService
+from app.models.peer_schemas import (
+    CreateSessionRequest,
+    CreateSessionResponse,
+    JoinSessionRequest,
+    SessionStateResponse,
+    SubmitAnswerRequest,
+    SubmitAnswerResponse,
+)
 from app.models.tutor_schemas import (
     EmbedContentRequest, EmbedContentResponse,
     RetrieveContextRequest,
@@ -76,7 +85,7 @@ extra_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[*default_origins, *extra_origins],
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$|^https://.*\.ngrok(-free)?\.app$|^https://.*\.ngrok\.io$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -133,6 +142,7 @@ if not openai_api_key:
     print("WARNING: OPENAI_API_KEY not set — AI tutor endpoints will fail at runtime")
 _openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 tutor_service = TutorService(db, _openai_client)
+peer_session_service = PeerSessionService(db, _openai_client)
 
 
 def _courses_collection(student_id: str):
@@ -1063,3 +1073,213 @@ async def get_student_progress(student_id: str, current_user_id: str = Depends(g
     }
 
     return progress
+
+
+# ── Peer Learning Hub Session Endpoints ────────────────────────────────────
+
+@app.post("/api/peer/session")
+async def create_peer_session(
+    req: CreateSessionRequest,
+    student_id: str = Depends(get_student_id),
+):
+    """Create a new peer session with AI-generated questions."""
+    member_profiles = [m.model_dump() for m in req.member_profiles]
+    result = peer_session_service.create_session(
+        hub_id=req.hub_id,
+        topic=req.topic,
+        member_profiles=member_profiles,
+        created_by=student_id,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return CreateSessionResponse(**result)
+
+
+@app.post("/api/peer/session/join")
+async def join_peer_session(
+    req: JoinSessionRequest,
+    student_id: str = Depends(get_student_id),
+):
+    """Join an existing peer session."""
+    result = peer_session_service.join_session(
+        session_id=req.session_id,
+        student_id=student_id,
+        name=req.name,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.get("/api/peer/session/{session_id}")
+async def get_peer_session(
+    session_id: str,
+    student_id: str = Depends(get_student_id),
+):
+    """Get full session state (polled by frontend every 3s)."""
+    session = peer_session_service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionStateResponse(**session)
+
+
+@app.get("/api/peer/session/active/{hub_id}")
+async def get_active_peer_session(
+    hub_id: str,
+    student_id: str = Depends(get_student_id),
+):
+    """Find an active or waiting session for a hub."""
+    session = peer_session_service.get_active_session(hub_id)
+    if not session:
+        return {"session": None}
+    return {"session": SessionStateResponse(**session)}
+
+
+@app.post("/api/peer/session/answer")
+async def submit_peer_answer(
+    req: SubmitAnswerRequest,
+    student_id: str = Depends(get_student_id),
+):
+    """Submit and evaluate an answer for the current question."""
+    result = peer_session_service.submit_answer(
+        session_id=req.session_id,
+        question_id=req.question_id,
+        answer_text=req.answer_text,
+        student_id=student_id,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return SubmitAnswerResponse(**result)
+
+
+@app.post("/api/peer/session/{session_id}/advance")
+async def advance_peer_question(
+    session_id: str,
+    student_id: str = Depends(get_student_id),
+):
+    """Advance to the next round-robin question."""
+    result = peer_session_service.advance_question(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/peer/session/{session_id}/end")
+async def end_peer_session(
+    session_id: str,
+    student_id: str = Depends(get_student_id),
+):
+    """End a peer session."""
+    result = peer_session_service.end_session(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/api/peer/session/history/{hub_id}")
+async def get_peer_session_history(
+    hub_id: str,
+    student_id: str = Depends(get_student_id),
+    limit: int = 20,
+):
+    """Get completed session history for a hub (for metrics)."""
+    runs = peer_session_service.get_hub_session_history(hub_id, limit)
+    return {"sessions": runs}
+
+
+# ── WebRTC Signaling (WebSocket) ──────────────────────────────────────────
+
+import json as _json
+from collections import defaultdict
+from typing import Dict as _Dict
+
+# session_id -> {student_id -> WebSocket}
+_signaling_rooms: _Dict[str, _Dict[str, WebSocket]] = defaultdict(dict)
+
+
+@app.websocket("/ws/peer/signal/{session_id}")
+async def webrtc_signal(websocket: WebSocket, session_id: str):
+    """
+    WebSocket signaling server for WebRTC peer connections.
+
+    Protocol:
+      Client sends JSON messages:
+        {"type": "join",          "student_id": "..."}
+        {"type": "offer",         "target": "<student_id>", "sdp": {...}}
+        {"type": "answer",        "target": "<student_id>", "sdp": {...}}
+        {"type": "ice-candidate", "target": "<student_id>", "candidate": {...}}
+
+      Server relays to target peer with sender info:
+        {"type": "offer",         "from": "<sender_id>", "sdp": {...}}
+        {"type": "answer",        "from": "<sender_id>", "sdp": {...}}
+        {"type": "ice-candidate", "from": "<sender_id>", "candidate": {...}}
+        {"type": "peer-joined",   "student_id": "<new_peer>", "peers": [...]}
+        {"type": "peer-left",     "student_id": "<left_peer>"}
+    """
+    await websocket.accept()
+    room = _signaling_rooms[session_id]
+    student_id: str | None = None
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            msg = _json.loads(raw)
+            msg_type = msg.get("type")
+
+            if msg_type == "join":
+                student_id = msg.get("student_id", "")
+                room[student_id] = websocket
+
+                # Tell the new peer about existing peers
+                existing_peers = [pid for pid in room if pid != student_id]
+                await websocket.send_text(_json.dumps({
+                    "type": "peer-joined",
+                    "student_id": student_id,
+                    "peers": existing_peers,
+                }))
+
+                # Notify all existing peers about the new peer
+                for pid, ws in room.items():
+                    if pid != student_id:
+                        try:
+                            await ws.send_text(_json.dumps({
+                                "type": "peer-joined",
+                                "student_id": student_id,
+                                "peers": list(room.keys()),
+                            }))
+                        except Exception:
+                            pass
+
+            elif msg_type in ("offer", "answer", "ice-candidate"):
+                target = msg.get("target")
+                if target and target in room:
+                    payload = {k: v for k, v in msg.items() if k != "target"}
+                    payload["from"] = student_id
+                    try:
+                        await room[target].send_text(_json.dumps(payload))
+                    except Exception:
+                        pass
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        # Clean up
+        if student_id and session_id in _signaling_rooms:
+            _signaling_rooms[session_id].pop(student_id, None)
+
+            # Notify remaining peers
+            for pid, ws in _signaling_rooms[session_id].items():
+                try:
+                    import asyncio
+                    asyncio.ensure_future(ws.send_text(_json.dumps({
+                        "type": "peer-left",
+                        "student_id": student_id,
+                    })))
+                except Exception:
+                    pass
+
+            # Clean up empty room
+            if not _signaling_rooms[session_id]:
+                del _signaling_rooms[session_id]
