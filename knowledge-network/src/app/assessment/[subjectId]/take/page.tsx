@@ -74,7 +74,7 @@ export default function AssessmentTakePage() {
     return () => {
       cancelled = true;
     };
-  }, [studentId, subjectId, retryKey, courseId, getIdToken]);
+  }, [studentId, subjectId, getIdToken]);
 
   const handleAnswer = (questionId: string, answerIndex: number) => {
     setAnswers((prev) => ({
