@@ -37,50 +37,68 @@ class TutorService:
         return len(chunks)
 
     # ── Deliverable 2 ─────────────────────────────────────────────────────────
+    _STOPWORDS = {
+        "what", "is", "are", "the", "a", "an", "how", "why", "when", "where", "who",
+        "does", "do", "can", "should", "would", "will", "of", "in", "on", "at", "to",
+        "for", "with", "this", "that", "these", "those", "it", "its", "be", "been",
+        "have", "has", "had", "i", "you", "we", "they", "my", "your", "our", "me",
+        "about", "which", "and", "or", "not", "but", "if", "so", "as", "by", "from",
+        "give", "tell", "explain", "describe", "define", "means", "mean",
+    }
+
     @staticmethod
-    def _token_overlap(query: str, text: str) -> float:
-        tokens = {t for t in query.lower().split() if t}
-        if not tokens:
-            return 0.0
+    def _score_chunk(query_tokens: set, text: str) -> float:
+        """Score a chunk by how many meaningful query tokens appear in it."""
+        if not query_tokens:
+            return 1.0
         text_lower = text.lower()
-        return sum(1 for t in tokens if t in text_lower) / len(tokens)
+        hits = sum(1 for t in query_tokens if t in text_lower)
+        return hits / len(query_tokens)
 
-    def retrieve_context(self, concept: str, limit: int = 4, user_id: str = None, concept_ids: list = None) -> list:
-        concept_id_slug = concept.lower().replace(" ", "-").replace("'", "")
+    def retrieve_context(self, query: str, limit: int = 5, user_id: str = None, concept_ids: list = None) -> list:
+        if self.db is None:
+            return []
 
-        # Try concept_id filtered fetch first
+        # Extract meaningful tokens (drop stopwords and very short words)
+        query_tokens = {
+            t for t in query.lower().split()
+            if t and t not in self._STOPWORDS and len(t) > 2
+        }
+
+        # Fetch candidate chunks:
+        # • If concept_ids given (notes pinned in UI), scope to those concepts
+        # • Otherwise scan all chunks for this user
         if concept_ids:
-            query = self.db.collection(self.collection).where("concept_id", "in", concept_ids)
-        else:
-            query = self.db.collection(self.collection).where("concept_id", "==", concept_id_slug)
-        if user_id:
-            query = query.where("userId", "==", user_id)
-        docs = query.limit(50).stream()
-
-        rows = [doc.to_dict() for doc in docs if doc.to_dict()]
-        if not rows:
-            # Fallback: scan chunks scoped to userId + concept_ids if given
-            query = self.db.collection(self.collection)
-            if concept_ids:
-                query = query.where("concept_id", "in", concept_ids)
+            q = self.db.collection(self.collection).where("concept_id", "in", concept_ids[:10])
             if user_id:
-                query = query.where("userId", "==", user_id)
-            docs = query.limit(200).stream()
-            rows = [doc.to_dict() for doc in docs if doc.to_dict()]
+                q = q.where("userId", "==", user_id)
+            docs = q.limit(300).stream()
+        elif user_id:
+            docs = (
+                self.db.collection(self.collection)
+                .where("userId", "==", user_id)
+                .limit(300)
+                .stream()
+            )
+        else:
+            return []
 
         scored = []
-        seen = set()
-        for row in rows:
-            text = str(row.get("text", ""))
+        seen: set = set()
+        for doc in docs:
+            row = doc.to_dict()
+            if not row:
+                continue
+            text = str(row.get("text", "")).strip()
             if not text:
                 continue
             h = hash(text)
             if h in seen:
                 continue
             seen.add(h)
-            score = self._token_overlap(concept, text)
+            score = self._score_chunk(query_tokens, text)
             scored.append({
-                "text": text[:300],
+                "text": text,          # full chunk — no truncation
                 "concept_id": str(row.get("concept_id", "unknown")),
                 "score": score,
                 "chunk_id": str(uuid4()),
@@ -95,29 +113,32 @@ class TutorService:
             "You are Mentora, a precise and reliable Study Companion.\n\n"
 
             "PRIMARY OBJECTIVE:\n"
-            "Provide clear, complete, and accurate answers strictly grounded in the provided course context.\n\n"
+            "Provide clear, complete, and accurate answers grounded in the retrieved course context.\n\n"
 
-            "NON-NEGOTIABLE RULES:\n"
+            "RULES:\n"
             "1. Answer the question directly and fully.\n"
-            "2. Base every claim only on the provided course materials.\n"
-            "3. Explicitly cite the relevant concept, topic, section, or definition name from the context.\n"
-            "4. Do NOT introduce outside knowledge, assumptions, or speculation.\n"
-            "5. If the answer is not present in the context, clearly state: "
-            "\"The provided course context does not contain this information.\"\n"
-            "6. If the question is ambiguous, state the ambiguity before answering.\n"
-            "7. Keep responses under 180 words.\n\n"
+            "2. Ground your answer in the retrieved course context wherever possible.\n"
+            "3. When a sentence draws from a numbered source chunk, append [N] at the end of that "
+            "sentence, where N is the source number shown in the context "
+            "(e.g. 'Attention uses scaled dot-product scoring [1].').\n"
+            "4. If the retrieved context partially covers the topic, use it as your foundation "
+            "and supplement with your general knowledge to give a complete answer.\n"
+            "5. Only say the topic is absent if the retrieved context has NO relevance whatsoever "
+            "to the question — do not give up just because the context is incomplete.\n"
+            "6. Keep responses under 220 words.\n"
+            "7. Do NOT include a 'Referenced Concepts' or 'Sources' section at the end — "
+            "sources are shown separately in the UI.\n\n"
 
             "STYLE GUIDELINES:\n"
             "- Be structured and concise.\n"
             "- Define key terms before using them.\n"
-            "- Use short paragraphs or bullet points when helpful.\n"
+            "- Use bullet points when listing multiple components.\n"
             "- Avoid filler language.\n\n"
 
             "RESPONSE FORMAT:\n"
-            "Answer:\n"
-            "[Clear explanation]\n\n"
-            "Referenced Concepts:\n"
-            "- [Concept/Topic Name]\n"
+            "Write the answer directly with inline [N] citation markers after sentences that draw "
+            "from source N. Example: 'The model computes scaled dot-product attention [1] using "
+            "Q, K, V matrices [2].'\n"
         )
 
     def _build_socratic_prompt(self, knowledge_state) -> str:
@@ -165,8 +186,22 @@ class TutorService:
         return base + extra
 
     def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None, mode: str = "socratic") -> dict:
-        context_chunks = self.retrieve_context(message, limit=3, user_id=user_id, concept_ids=concept_ids)
-        context_text = " ".join(c["text"] for c in context_chunks)
+        # Content-aware mode benefits from more chunks for richer coverage
+        retrieval_limit = 8 if mode == "content_aware" else 5
+        context_chunks = self.retrieve_context(message, limit=retrieval_limit, user_id=user_id, concept_ids=concept_ids)
+
+        # Assign 1-based citation indices so the LLM can reference them as [1], [2], ...
+        for i, chunk in enumerate(context_chunks):
+            chunk["index"] = i + 1
+
+        # Format context with numbered labels so the LLM knows which [N] to use
+        if context_chunks:
+            context_text = "\n\n---\n\n".join(
+                f"[{c['index']}] [Source: {c['concept_id']}]\n{c['text']}"
+                for c in context_chunks
+            )
+        else:
+            context_text = "(No course materials retrieved — answer from general knowledge.)"
 
         if mode == "content_aware":
             system_prompt = self._build_content_aware_prompt()
@@ -177,9 +212,9 @@ class TutorService:
             model="gpt-5.2",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Course context:\n{context_text}\n\nStudent question: {message}"},
+                {"role": "user", "content": f"Retrieved course context:\n{context_text}\n\nStudent question: {message}"},
             ],
-            max_completion_tokens=500,
+            max_completion_tokens=600,
         )
         return {
             "answer": response.choices[0].message.content,

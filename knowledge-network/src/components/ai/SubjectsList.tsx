@@ -1,7 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Folder, ChevronDown, ChevronRight, FileText, Upload, GripVertical, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  Folder, ChevronDown, ChevronRight, FileText,
+  Upload, GripVertical, Trash2, CheckCircle, AlertCircle,
+} from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Subject {
@@ -13,8 +16,18 @@ interface Subject {
 const toConceptId = (title: string) =>
   title.toLowerCase().replace(/'/g, '').replace(/\s+/g, '-');
 
+const slugify = (name: string) =>
+  name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'course';
+
 interface SubjectsListProps {
   onNoteSelect: (noteId: string) => void;
+}
+
+interface UploadResult {
+  filename: string;
+  status: 'success' | 'error';
+  chunks?: number;
+  error?: string;
 }
 
 export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
@@ -22,8 +35,17 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [isLoadingSubjects, setIsLoadingSubjects] = useState(true);
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
+
+  // Upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [modalCourses, setModalCourses] = useState<{ id: string; name: string }[]>([]);
+  const [uploadCourseId, setUploadCourseId] = useState('');
+  const [newCourseName, setNewCourseName] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [uploadResults, setUploadResults] = useState<UploadResult[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -60,13 +82,10 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
   }, [fetchTopics]);
 
   const toggleSubject = (subjectId: string) => {
-    const newExpanded = new Set(expandedSubjects);
-    if (newExpanded.has(subjectId)) {
-      newExpanded.delete(subjectId);
-    } else {
-      newExpanded.add(subjectId);
-    }
-    setExpandedSubjects(newExpanded);
+    const next = new Set(expandedSubjects);
+    if (next.has(subjectId)) next.delete(subjectId);
+    else next.add(subjectId);
+    setExpandedSubjects(next);
   };
 
   const handleDeleteTopic = async (docId: string, e: React.MouseEvent) => {
@@ -79,47 +98,115 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       await fetchTopics();
-    } catch (error) {
-      console.error('Delete failed:', error);
+    } catch {
       alert('Failed to delete topic.');
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files) return;
+  // ── Upload modal ─────────────────────────────────────────────────────────────
 
-    setIsUploading(true);
-    const formData = new FormData();
+  const openUploadModal = async () => {
+    setUploadResults([]);
+    setPendingFiles([]);
+    setNewCourseName('');
+    setIsDraggingFiles(false);
 
-    Array.from(files).forEach((file) => {
-      formData.append('files', file);
-    });
+    // Seed from already-loaded subjects while API call is in flight
+    const fromSubjects = subjects.map(s => ({ id: s.id, name: s.name }));
+    setModalCourses(fromSubjects);
+    setUploadCourseId(fromSubjects[0]?.id ?? '');
+    setIsUploadModalOpen(true);
 
+    // Refresh from the courses API for the authoritative list
     try {
       const token = await getIdToken();
-      const response = await fetch(`${base}/upload`, {
-        method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        body: formData,
+      const res = await fetch(`${base}/api/courses`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
+      if (res.ok) {
+        const data = await res.json();
+        const fetched: { id: string; name: string }[] = Array.isArray(data.courses) ? data.courses : [];
+        if (fetched.length > 0) {
+          setModalCourses(fetched);
+          setUploadCourseId(prev => (fetched.find(c => c.id === prev) ? prev : fetched[0].id));
+        }
       }
-
-      const result = await response.json();
-      console.log('Upload successful:', result);
-      setIsUploadModalOpen(false);
-      await fetchTopics();
-    } catch (error) {
-      console.error('Upload error:', error);
-      alert('Failed to upload files. Please try again.');
-    } finally {
-      setIsUploading(false);
-      event.target.value = '';
+    } catch {
+      // subjects-derived list already set above as fallback
     }
   };
+
+  const closeUploadModal = () => {
+    if (isUploading) return;
+    setIsUploadModalOpen(false);
+    setPendingFiles([]);
+    setUploadResults([]);
+    setNewCourseName('');
+  };
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingFiles(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => /\.(pdf|txt|md)$/i.test(f.name));
+    if (files.length) setPendingFiles(prev => [...prev, ...files]);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length) setPendingFiles(prev => [...prev, ...files]);
+    e.target.value = '';
+  };
+
+  const removeFile = (index: number) =>
+    setPendingFiles(prev => prev.filter((_, i) => i !== index));
+
+  const effectiveCourseId = newCourseName.trim()
+    ? slugify(newCourseName.trim())
+    : uploadCourseId;
+
+  const effectiveCourseName = newCourseName.trim()
+    ? newCourseName.trim()
+    : (modalCourses.find(c => c.id === uploadCourseId)?.name ?? uploadCourseId);
+
+  const canUpload = pendingFiles.length > 0 && (!!uploadCourseId || !!newCourseName.trim()) && !isUploading;
+
+  const handleUpload = async () => {
+    if (!canUpload) return;
+    setIsUploading(true);
+    setUploadResults([]);
+    const formData = new FormData();
+    pendingFiles.forEach(f => formData.append('files', f));
+    formData.append('course_id', effectiveCourseId);
+    formData.append('course_name', effectiveCourseName);
+    try {
+      const token = await getIdToken();
+      const res = await fetch(`${base}/upload`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+      const result = await res.json();
+      const results: UploadResult[] = (result.files || []).map(
+        (f: { filename: string; chunks: number; status?: string; error?: string }) => ({
+          filename: f.filename,
+          status: (f.status || 'success') as 'success' | 'error',
+          chunks: f.chunks,
+          error: f.error,
+        })
+      );
+      setUploadResults(results);
+      setPendingFiles([]);
+      await fetchTopics();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setUploadResults(pendingFiles.map(f => ({ filename: f.name, status: 'error' as const, error: message })));
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full text-slate-100">
@@ -127,7 +214,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold text-white drop-shadow-sm">My Courses</h2>
           <button
-            onClick={() => setIsUploadModalOpen(true)}
+            onClick={openUploadModal}
             className="flex items-center px-3 py-1 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600"
           >
             <Upload className="w-4 h-4 mr-1" />
@@ -148,9 +235,11 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
           <div className="space-y-2">
             {subjects.map((subject) => (
               <div key={subject.id} className="mb-4">
+                {/* Course row — title tooltip (Problem 11) */}
                 <button
                   className="flex items-center w-full p-2 rounded border border-white/25 bg-slate-800/55 hover:bg-slate-700/65 transition-colors shadow-sm"
                   onClick={() => toggleSubject(subject.id)}
+                  title={subject.name}
                 >
                   {expandedSubjects.has(subject.id) ? (
                     <ChevronDown className="w-4 h-4 mr-2 flex-shrink-0" />
@@ -164,12 +253,18 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                 {expandedSubjects.has(subject.id) && (
                   <div className="ml-6 space-y-1 mt-1">
                     {subject.notes.map((note) => (
+<<<<<<< Updated upstream
                       <div
                         key={note.id}
                         className="group flex items-center rounded-md border border-white/20 bg-slate-900/45"
                       >
+=======
+                      <div key={note.id} className="group flex items-center">
+                        {/* File row — title tooltip (Problem 11) */}
+>>>>>>> Stashed changes
                         <button
                           draggable
+                          title={note.title}
                           onDragStart={(e) => {
                             e.dataTransfer.setData('application/json', JSON.stringify({
                               id: note.id,
@@ -203,47 +298,159 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
         )}
       </div>
 
-      {/* Upload Modal */}
+      {/* ── Upload Modal ─────────────────────────────────────────────────────── */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-lg p-6 w-96">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Upload Files</h3>
+          <div className="bg-card rounded-lg p-6 w-[440px] max-h-[90vh] overflow-y-auto shadow-xl">
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="text-lg font-semibold">Upload Course Materials</h3>
               <button
-                onClick={() => setIsUploadModalOpen(false)}
-                className="text-muted-foreground hover:text-foreground"
+                onClick={closeUploadModal}
+                className="text-muted-foreground hover:text-foreground text-lg leading-none"
                 disabled={isUploading}
               >
                 ✕
               </button>
             </div>
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 transition-colors">
+
+            {/* ── Course / project file selection ── */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1.5">
+                Project File <span className="text-red-500">*</span>
+              </label>
+
+              {modalCourses.length > 0 && (
+                <select
+                  value={uploadCourseId}
+                  onChange={e => { setUploadCourseId(e.target.value); setNewCourseName(''); }}
+                  className="w-full p-2 border rounded-lg text-sm mb-2 bg-background"
+                  disabled={isUploading || !!newCourseName.trim()}
+                >
+                  {modalCourses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              )}
+
+              <div className="flex items-center gap-2">
+                {modalCourses.length > 0 && (
+                  <span className="text-xs text-muted-foreground flex-shrink-0">or create new:</span>
+                )}
+                <input
+                  type="text"
+                  value={newCourseName}
+                  onChange={e => setNewCourseName(e.target.value)}
+                  placeholder={modalCourses.length === 0 ? 'Course name (required)' : 'New course name…'}
+                  className="flex-1 p-2 border rounded-lg text-sm bg-background"
+                  disabled={isUploading}
+                />
+              </div>
+            </div>
+
+            {/* ── File drop zone ── */}
+            <div
+              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors mb-4 ${
+                isDraggingFiles
+                  ? 'border-[#03b2e6] bg-[#e0f4fb]'
+                  : 'border-gray-300 hover:border-[#03b2e6]'
+              }`}
+              onDragOver={e => { e.preventDefault(); setIsDraggingFiles(true); }}
+              onDragLeave={() => setIsDraggingFiles(false)}
+              onDrop={handleFileDrop}
+            >
+              <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground mb-1">Drop files here or click to select</p>
+              <p className="text-xs text-muted-foreground mb-3">PDF, TXT, MD supported</p>
               <input
+                ref={fileInputRef}
                 type="file"
                 className="hidden"
-                id="file-upload"
+                id="sidebar-file-upload"
                 multiple
-                accept=".pdf,.doc,.docx,.txt,.md"
-                onChange={handleFileUpload}
+                accept=".pdf,.txt,.md"
+                onChange={handleFileSelect}
                 disabled={isUploading}
               />
               <label
-                htmlFor="file-upload"
-                className={`cursor-pointer text-sm ${
-                  isUploading ? 'text-muted-foreground' : 'text-muted-foreground hover:text-blue-500'
-                }`}
+                htmlFor="sidebar-file-upload"
+                className="inline-block px-4 py-1.5 bg-[#03b2e6] text-white text-sm rounded-full cursor-pointer hover:bg-[#029ad0]"
               >
-                {isUploading ? 'Uploading...' : 'Drop files here or click to upload'}
+                Browse Files
               </label>
             </div>
-            <div className="flex justify-end mt-4">
+
+            {/* ── Pending files ── */}
+            {pendingFiles.length > 0 && (
+              <div className="mb-4 space-y-1">
+                <p className="text-xs text-muted-foreground mb-1">Selected files:</p>
+                {pendingFiles.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm p-1.5 rounded bg-accent">
+                    <FileText className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                    <span className="flex-1 truncate" title={f.name}>{f.name}</span>
+                    {!isUploading && (
+                      <button
+                        onClick={() => removeFile(i)}
+                        className="text-muted-foreground hover:text-red-500 text-xs leading-none"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── Upload results ── */}
+            {uploadResults.length > 0 && (
+              <div className="mb-4 space-y-1">
+                <p className="text-xs text-muted-foreground mb-1">Upload results:</p>
+                {uploadResults.map((r, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm p-1.5 rounded bg-background border border-border">
+                    {r.status === 'success' ? (
+                      <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                    )}
+                    <span className="flex-1 truncate" title={r.filename}>{r.filename}</span>
+                    <span className={`text-xs flex-shrink-0 ${r.status === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                      {r.status === 'success' ? `${r.chunks} chunks` : 'Failed'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Validation hint */}
+            {pendingFiles.length > 0 && !uploadCourseId && !newCourseName.trim() && (
+              <p className="text-xs text-amber-600 mb-3">Select or create a project file to continue.</p>
+            )}
+
+            {/* ── Actions ── */}
+            <div className="flex justify-end gap-2 pt-1">
               <button
-                onClick={() => setIsUploadModalOpen(false)}
+                onClick={closeUploadModal}
                 className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
                 disabled={isUploading}
               >
-                Cancel
+                {uploadResults.some(r => r.status === 'success') ? 'Close' : 'Cancel'}
               </button>
+              {(uploadResults.length === 0 || pendingFiles.length > 0) && (
+                <button
+                  onClick={handleUpload}
+                  disabled={!canUpload}
+                  className="px-4 py-2 text-sm bg-[#03b2e6] text-white rounded-full hover:bg-[#029ad0] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
+                  {isUploading ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Uploading…
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      Upload
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

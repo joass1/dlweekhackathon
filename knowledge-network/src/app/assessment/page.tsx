@@ -5,8 +5,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
-import { useAuth } from '@/contexts/AuthContext';
-import { getAssessmentHistory, type AssessmentHistoryRun } from '@/services/assessment';
 import { useStudentId } from '@/hooks/useStudentId';
 
 interface GraphNode {
@@ -21,12 +19,10 @@ interface GraphNode {
 export default function AssessmentSelectionPage() {
   const router = useRouter();
   const { apiFetchWithAuth } = useAuthedApi();
-  const { getIdToken } = useAuth();
   const studentId = useStudentId();
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
-  const [pastRuns, setPastRuns] = useState<AssessmentHistoryRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,59 +59,6 @@ export default function AssessmentSelectionPage() {
     };
   }, [apiFetchWithAuth]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadHistory = async () => {
-      try {
-        const token = await getIdToken();
-        let runs = await getAssessmentHistory(token, undefined, 20);
-        if (!runs.length) {
-          const progress = await apiFetchWithAuth<{ recent_attempts?: any[] }>(
-            `/api/students/${studentId}/progress`
-          ).catch(() => ({ recent_attempts: [] }));
-          const recent = Array.isArray(progress?.recent_attempts) ? progress.recent_attempts : [];
-          if (recent.length) {
-            const byConcept = new Map<string, any[]>();
-            for (const a of recent) {
-              const key = String(a?.concept || 'unknown');
-              const arr = byConcept.get(key) || [];
-              arr.push(a);
-              byConcept.set(key, arr);
-            }
-            runs = Array.from(byConcept.entries()).map(([concept, attempts], idx) => {
-              const total = attempts.length;
-              const correct = attempts.filter((a) => !!a?.is_correct).length;
-              const submitted_at = String(attempts[attempts.length - 1]?.timestamp || new Date().toISOString());
-              return {
-                run_id: `recent-${concept}-${idx}`,
-                student_id: studentId,
-                concept,
-                submitted_at,
-                score: total ? Math.round((correct / total) * 10000) / 100 : 0,
-                correct_count: correct,
-                total_questions: total,
-                blind_spot_found_count: 0,
-                blind_spot_resolved_count: 0,
-                questions: [],
-              } as AssessmentHistoryRun;
-            });
-            runs.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
-          }
-        }
-        if (!cancelled) {
-          setPastRuns(runs);
-        }
-      } catch {
-        if (!cancelled) {
-          setPastRuns([]);
-        }
-      }
-    };
-    loadHistory();
-    return () => {
-      cancelled = true;
-    };
-  }, [getIdToken, apiFetchWithAuth, studentId]);
 
   const concepts = useMemo(
     () =>
@@ -279,36 +222,6 @@ export default function AssessmentSelectionPage() {
           </div>
         ) : null}
 
-        {!loading && !error ? (
-          <div className="mt-10 bg-white border rounded-xl p-6">
-            <h2 className="text-xl font-semibold mb-4">Past Assessments</h2>
-            {pastRuns.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No past assessments yet. Complete one to see history.</p>
-            ) : (
-              <div className="space-y-3">
-                {pastRuns.map((run) => (
-                  <div key={run.run_id} className="rounded-lg border border-gray-200 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{String(run.concept || '').replace(/-/g, ' ')}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(run.submitted_at).toLocaleString()} • {run.correct_count}/{run.total_questions} correct
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold">{Math.round(Number(run.score || 0))}%</span>
-                      <button
-                        className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] text-sm"
-                        onClick={() => router.push(`/assessment/${run.concept}/take?retry=${Date.now()}`)}
-                      >
-                        Retake
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : null}
       </div>
     </div>
   );

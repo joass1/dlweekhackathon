@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
-import { getSelfAwarenessScore } from '@/services/assessment';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
+import { getSelfAwarenessScore, getAssessmentRun } from '@/services/assessment';
 import { useAuth } from '@/contexts/AuthContext';
+import { useStudentId } from '@/hooks/useStudentId';
 
 type ReviewItem = {
   question_id: string;
@@ -19,8 +20,11 @@ type ReviewItem = {
 export default function AssessmentResultsPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const subjectId = params.subjectId as string;
+  const runId = searchParams.get('run_id');
   const { getIdToken } = useAuth();
+  const studentId = useStudentId();
 
   const [summary, setSummary] = useState<{
     score: number;
@@ -29,8 +33,50 @@ export default function AssessmentResultsPage() {
     review: ReviewItem[];
   } | null>(null);
   const [selfAwareness, setSelfAwareness] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
 
+  // Load from API if run_id is provided
   useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    setLoading(true);
+    const loadRun = async () => {
+      try {
+        const token = await getIdToken();
+        const run = await getAssessmentRun(runId, token);
+        if (cancelled) return;
+        const review: ReviewItem[] = (run.questions || []).map((q) => ({
+          question_id: q.question_id,
+          stem: q.stem || '',
+          selected_answer: q.selected_answer || '-',
+          correct_answer: q.correct_answer || '-',
+          is_correct: !!q.is_correct,
+          confidence_1_to_5: q.confidence_1_to_5 || 3,
+          mistake_type: q.mistake_type,
+          rationale: q.rationale,
+        }));
+        setSummary({
+          score: run.score || 0,
+          blind_spot_found_count: run.blind_spot_found_count || 0,
+          blind_spot_resolved_count: run.blind_spot_resolved_count || 0,
+          review,
+        });
+        getSelfAwarenessScore(studentId, token)
+          .then((s) => setSelfAwareness(s.score))
+          .catch(() => setSelfAwareness(null));
+      } catch (err) {
+        console.error('Failed to load assessment run:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    loadRun();
+    return () => { cancelled = true; };
+  }, [runId, getIdToken, studentId]);
+
+  // Fallback: load from sessionStorage (for just-completed assessments)
+  useEffect(() => {
+    if (runId) return; // API load takes priority
     const storageKey = `assessment_result_${subjectId}`;
     const raw = typeof window !== 'undefined' ? window.sessionStorage.getItem(storageKey) : null;
     if (!raw) return;
@@ -81,7 +127,18 @@ export default function AssessmentResultsPage() {
     } catch {
       setSummary(null);
     }
-  }, [subjectId, getIdToken]);
+  }, [subjectId, getIdToken, runId]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03b2e6] mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading results...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background py-12">
@@ -111,6 +168,12 @@ export default function AssessmentResultsPage() {
             <p className="text-2xl font-semibold">{selfAwareness !== null ? `${Math.round(selfAwareness * 100)}%` : '-'}</p>
           </div>
         </div>
+
+        {!summary?.review?.length && !loading ? (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-8 text-center text-muted-foreground">
+            No detailed results available for this assessment.
+          </div>
+        ) : null}
 
         {!!summary?.review?.length && (
           <div className="bg-white rounded-xl shadow-sm p-6 mb-8">
@@ -156,14 +219,13 @@ export default function AssessmentResultsPage() {
             Retry This Topic
           </button>
           <button
-            onClick={() => router.push('/assessment')}
+            onClick={() => router.push(`/assessment/${subjectId}/intro`)}
             className="bg-muted text-foreground px-8 py-3 rounded-full hover:bg-accent"
           >
-            Back to Assessments
+            Back to Topic
           </button>
         </div>
       </div>
     </div>
   );
 }
-

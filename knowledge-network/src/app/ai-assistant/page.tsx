@@ -13,13 +13,13 @@ interface Message {
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
-  relatedNotes?: ContextItem[];
 }
 
 interface ContextItem {
   text: string;
-  id: string;
+  concept_id: string;
   score: number;
+  index?: number;
 }
 
 const SocraticBackground3D = dynamic(
@@ -37,6 +37,7 @@ export default function AIAssistantPage() {
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
   const [mode, setMode] = useState<'socratic' | 'content_aware'>('socratic');
+<<<<<<< Updated upstream
   const [selectedAssistantIndex, setSelectedAssistantIndex] = useState<number>(-1);
 
   const assistantMessages = useMemo(
@@ -67,6 +68,9 @@ export default function AIAssistantPage() {
 
   const canGoPreviousReply = selectedAssistantIndex > 0;
   const canGoNextReply = selectedAssistantIndex >= 0 && selectedAssistantIndex < assistantMessages.length - 1;
+=======
+  const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
+>>>>>>> Stashed changes
 
   useEffect(() => {
     const topic = (searchParams.get('topic') || '').trim();
@@ -90,6 +94,7 @@ export default function AIAssistantPage() {
 
   const handleSendMessage = async (content: string) => {
     setIsLoading(true);
+    setHighlightedSourceIndex(null);
     try {
       const userMessage: Message = {
         id: crypto.randomUUID(),
@@ -125,7 +130,6 @@ export default function AIAssistantPage() {
         content: answer,
         role: 'assistant',
         timestamp: new Date(),
-        relatedNotes: context
       };
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
@@ -143,6 +147,7 @@ export default function AIAssistantPage() {
         aria-hidden
       />
 
+<<<<<<< Updated upstream
       <Split
         className="relative z-10 flex h-screen overflow-hidden bg-transparent"
         sizes={[20, 50, 30]}
@@ -155,6 +160,19 @@ export default function AIAssistantPage() {
             onNoteSelect={(noteId) => {
               // Handle note selection
             }}
+=======
+      {/* Main chat area */}
+      <div className="h-screen flex flex-col">
+        <div className="p-4 border-b bg-[#e0f4fb]">
+          <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
+          <p className="text-sm text-[#03b2e6]">I guide you with questions to help you discover answers yourself</p>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <ChatWindow
+            messages={messages}
+            isLoading={isLoading}
+            onCitationClick={(n) => setHighlightedSourceIndex(n)}
+>>>>>>> Stashed changes
           />
         </div>
 
@@ -192,6 +210,7 @@ export default function AIAssistantPage() {
           </div>
         </div>
 
+<<<<<<< Updated upstream
         {/* Right sidebar */}
         <div className="relative z-10 border-l border-white/20 bg-slate-900/58 h-screen backdrop-blur-sm flex flex-col">
           <div className="flex-1 overflow-y-auto">
@@ -215,5 +234,16 @@ export default function AIAssistantPage() {
         </div>
       </Split>
     </div>
+=======
+      {/* Right sidebar */}
+      <div className="border-l h-screen overflow-y-auto">
+        <NotesContext
+          activeNotes={activeNotes}
+          onNoteClick={(note) => console.log('Note clicked:', note)}
+          highlightedSourceIndex={highlightedSourceIndex}
+        />
+      </div>
+    </Split>
+>>>>>>> Stashed changes
   );
 }

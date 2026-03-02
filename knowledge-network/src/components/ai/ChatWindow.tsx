@@ -1,24 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 
-interface ContextItem {
-  text: string;
-  id: string;
-  score: number;
-}
-
 interface Message {
   id: string;
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
-  relatedNotes?: ContextItem[];
 }
 
 interface ChatWindowProps {
   messages: Message[];
   isLoading: boolean;
+<<<<<<< Updated upstream
   showAssistantMessages?: boolean;
+=======
+  onCitationClick?: (index: number) => void;
+>>>>>>> Stashed changes
 }
 
 const THINKING_PHRASES = [
@@ -71,6 +68,7 @@ function ThinkingIndicator() {
   );
 }
 
+<<<<<<< Updated upstream
 export function ChatWindow({
   messages,
   isLoading,
@@ -79,6 +77,69 @@ export function ChatWindow({
   const visibleMessages = showAssistantMessages
     ? messages
     : messages.filter((message) => message.role !== 'assistant');
+=======
+/**
+ * Replace [N] citation markers with %%CITE:N%% so they survive markdown parsing
+ * as plain text without being interpreted as link syntax.
+ */
+function preprocessCitations(content: string): string {
+  return content.replace(/\[(\d+)\]/g, '%%CITE:$1%%');
+}
+
+/**
+ * Split a string on %%CITE:N%% markers and return interleaved React nodes —
+ * plain text fragments and clickable <sup> badges.
+ */
+function expandCitations(
+  text: string,
+  onCitationClick?: (n: number) => void
+): React.ReactNode[] {
+  if (!text.includes('%%CITE:')) return [text];
+  // Split with capturing group → odd indices are citation markers
+  const parts = text.split(/(%%CITE:\d+%%)/);
+  return parts.map((part, i) => {
+    const m = part.match(/^%%CITE:(\d+)%%$/);
+    if (m) {
+      const n = Number(m[1]);
+      return (
+        <sup
+          key={i}
+          className="cursor-pointer inline-flex items-center justify-center w-4 h-4 text-[0.6em] font-bold text-white bg-[#03b2e6] hover:bg-[#0291be] rounded-full ml-0.5 mr-0.5 transition-colors select-none"
+          onClick={() => onCitationClick?.(n)}
+          title={`Jump to source ${n}`}
+        >
+          {n}
+        </sup>
+      );
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
+/** Expand citation markers in string children; leave element children untouched. */
+function processChildren(
+  children: React.ReactNode,
+  onCitationClick?: (n: number) => void
+): React.ReactNode[] {
+  return React.Children.toArray(children).flatMap((child) => {
+    if (typeof child === 'string') {
+      return expandCitations(child, onCitationClick);
+    }
+    return [child];
+  });
+}
+
+export function ChatWindow({ messages, isLoading, onCitationClick }: ChatWindowProps) {
+  // Custom markdown components that expand %%CITE:N%% inside text nodes
+  const mdComponents = {
+    p: ({ children }: { children?: React.ReactNode }) => (
+      <p>{processChildren(children, onCitationClick)}</p>
+    ),
+    li: ({ children }: { children?: React.ReactNode }) => (
+      <li>{processChildren(children, onCitationClick)}</li>
+    ),
+  };
+>>>>>>> Stashed changes
 
   return (
     <div className="p-4 space-y-4">
@@ -92,13 +153,14 @@ export function ChatWindow({
           }`}
         >
           <div className="text-foreground prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-strong:text-foreground">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown
+              components={message.role === 'assistant' ? mdComponents : {}}
+            >
+              {message.role === 'assistant'
+                ? preprocessCitations(message.content)
+                : message.content}
+            </ReactMarkdown>
           </div>
-          {message.relatedNotes && message.role === 'assistant' && (
-            <div className="mt-2 text-xs text-muted-foreground">
-              Sources: {message.relatedNotes.map(note => note.text).join(', ')}
-            </div>
-          )}
         </div>
       ))}
       {isLoading && showAssistantMessages && <ThinkingIndicator />}

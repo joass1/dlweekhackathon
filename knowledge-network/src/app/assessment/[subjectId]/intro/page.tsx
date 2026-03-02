@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
+import { useAuth } from '@/contexts/AuthContext';
+import { getAssessmentHistory, type AssessmentHistoryRun } from '@/services/assessment';
 
 interface ConceptDetails {
   concept: string;
@@ -18,7 +20,9 @@ export default function AssessmentIntroPage() {
   const params = useParams();
   const subjectId = params.subjectId as string;
   const { apiFetchWithAuth } = useAuthedApi();
+  const { getIdToken } = useAuth();
   const [subject, setSubject] = useState<ConceptDetails | null>(null);
+  const [pastRuns, setPastRuns] = useState<AssessmentHistoryRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +52,26 @@ export default function AssessmentIntroPage() {
       cancelled = true;
     };
   }, [apiFetchWithAuth, subjectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadHistory = async () => {
+      try {
+        const token = await getIdToken();
+        const runs = await getAssessmentHistory(token, subjectId, 20);
+        if (!cancelled) {
+          setPastRuns(runs);
+        }
+      } catch (err) {
+        console.error('Failed to load assessment history:', err);
+        if (!cancelled) {
+          setPastRuns([]);
+        }
+      }
+    };
+    loadHistory();
+    return () => { cancelled = true; };
+  }, [getIdToken, subjectId]);
 
   if (loading) {
     return (
@@ -122,6 +146,35 @@ export default function AssessmentIntroPage() {
               Results will update your knowledge graph and concept mastery.
             </p>
           </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm p-6 mt-6">
+          <h2 className="text-xl font-semibold mb-4">Past Assessments</h2>
+          {pastRuns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No past assessments for this topic yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {pastRuns.map((run) => (
+                <div key={run.run_id} className="rounded-lg border border-gray-200 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{String(run.concept || '').replace(/-/g, ' ')}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {new Date(run.submitted_at).toLocaleString()} &bull; {run.correct_count}/{run.total_questions} correct
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold">{Math.round(Number(run.score || 0))}%</span>
+                    <button
+                      className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] text-sm"
+                      onClick={() => router.push(`/assessment/${subjectId}/results?run_id=${encodeURIComponent(run.run_id)}`)}
+                    >
+                      View Results
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

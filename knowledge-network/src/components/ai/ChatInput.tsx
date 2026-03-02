@@ -28,6 +28,7 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
   const [isListening, setIsListening] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const pillsRef = useRef<HTMLDivElement>(null);
 
   const startListening = () => {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
@@ -93,6 +94,14 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
     }
   };
 
+  // Redirect vertical mouse-wheel to horizontal scroll on the pills row
+  const handlePillsWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (pillsRef.current && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      pillsRef.current.scrollLeft += e.deltaY;
+    }
+  };
+
   return (
     <div className="flex flex-col gap-2">
       {/* Mode toggle */}
@@ -124,12 +133,15 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
         </label>
       </div>
 
-      {/* Drop zone / pills */}
+      {/* Drop zone / pills — single row, horizontal scroll */}
       <div
+        ref={pillsRef}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`min-h-[44px] flex flex-wrap items-center gap-1 px-3 py-2 rounded-lg border-2 border-dashed transition-colors ${
+        onWheel={handlePillsWheel}
+        style={{ scrollbarWidth: 'none' }}
+        className={`h-[44px] flex flex-nowrap items-center gap-1 px-3 overflow-x-auto rounded-lg border-2 border-dashed transition-colors [&::-webkit-scrollbar]:hidden ${
           isDragOver
             ? 'border-[#03b2e6] bg-[#e0f4fb]'
             : scopedTopics.length > 0
@@ -138,14 +150,16 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
         }`}
       >
         {scopedTopics.length === 0 ? (
-          <span className="text-xs text-muted-foreground">Drag a topic from the sidebar to scope your question</span>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            Drag a topic from the sidebar to scope your question
+          </span>
         ) : (
           scopedTopics.map(topic => (
             <span
               key={topic.id}
-              className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#e0f4fb] text-foreground text-xs rounded-full"
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#e0f4fb] text-foreground text-xs rounded-full flex-shrink-0"
             >
-              <span>{topic.subjectName} › {topic.title}</span>
+              <span className="whitespace-nowrap">{topic.subjectName} › {topic.title}</span>
               <button
                 type="button"
                 onClick={() => onTopicRemove(topic.id)}

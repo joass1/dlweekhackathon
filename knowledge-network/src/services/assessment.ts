@@ -220,6 +220,17 @@ export async function getAssessmentHistory(
   return response.runs || [];
 }
 
+export async function getAssessmentRun(
+  runId: string,
+  token?: string | null
+): Promise<AssessmentHistoryRun> {
+  return jsonFetch<AssessmentHistoryRun>(
+    `/api/assessment/history/${encodeURIComponent(runId)}`,
+    undefined,
+    token
+  );
+}
+
 // Kept for dashboard compatibility; replace with backend integration as needed.
 export async function getAssessments(_userId: string): Promise<Assessment[]> {
   return [];

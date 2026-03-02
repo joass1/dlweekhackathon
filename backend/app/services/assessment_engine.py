@@ -1106,6 +1106,67 @@ class AssessmentEngine:
             integration_actions=integration_actions,
         )
 
+    @staticmethod
+    def _derive_runs_from_quizzes(student_id: str, quizzes: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Reconstruct assessment runs from saved quiz questions.
+
+        Question IDs follow the pattern ``{concept}-{timestamp}-{uuid}-q{n}``.
+        Questions sharing the same prefix belong to the same run.
+        """
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for qid, q_data in quizzes.items():
+            if not isinstance(q_data, dict):
+                continue
+            # Split off the trailing "-qN" to get the run prefix.
+            parts = str(qid).rsplit("-q", 1)
+            run_prefix = parts[0] if len(parts) == 2 and parts[1].isdigit() else qid
+            groups.setdefault(run_prefix, []).append({**q_data, "question_id": qid})
+
+        derived: List[Dict[str, Any]] = []
+        for prefix, questions in groups.items():
+            q_concept = str(questions[0].get("concept", "unknown"))
+            # Extract timestamp from prefix: {concept}-{YYYYMMDD...}-{uuid}
+            prefix_parts = prefix.rsplit("-", 1)  # split uuid
+            ts_part = prefix_parts[0].rsplit("-", 1)[-1] if len(prefix_parts) >= 2 else ""
+            submitted_at = ""
+            if len(ts_part) >= 14:
+                try:
+                    submitted_at = datetime(
+                        int(ts_part[0:4]), int(ts_part[4:6]), int(ts_part[6:8]),
+                        int(ts_part[8:10]), int(ts_part[10:12]), int(ts_part[12:14]),
+                        tzinfo=timezone.utc,
+                    ).isoformat()
+                except (ValueError, IndexError):
+                    pass
+
+            total = len(questions)
+            derived.append({
+                "run_id": f"quiz-{prefix}",
+                "student_id": student_id,
+                "concept": q_concept,
+                "submitted_at": submitted_at,
+                "score": 0.0,
+                "correct_count": 0,
+                "total_questions": total,
+                "blind_spot_found_count": 0,
+                "blind_spot_resolved_count": 0,
+                "questions": [
+                    {
+                        "question_id": q.get("question_id", ""),
+                        "concept": q.get("concept", q_concept),
+                        "stem": q.get("stem", ""),
+                        "selected_answer": "",
+                        "correct_answer": q.get("correct_answer", ""),
+                        "is_correct": False,
+                        "confidence_1_to_5": 3,
+                        "mistake_type": "none",
+                        "rationale": "Recovered from quiz question data.",
+                    }
+                    for q in questions
+                ],
+            })
+        return derived
+
     def get_assessment_history(self, student_id: str, concept: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
         state, _ = self.store.transaction(student_id)
         runs = state.get("assessment_runs", {}).get(student_id, [])
@@ -1189,8 +1250,19 @@ class AssessmentEngine:
                 derived.append(current)
             runs = derived
 
+        if not runs:
+            # Final fallback: reconstruct runs from saved quiz questions.
+            quizzes = state.get("quizzes", {}).get(student_id, {})
+            if quizzes:
+                runs = self._derive_runs_from_quizzes(student_id, quizzes)
+
         if concept:
-            runs = [r for r in runs if str(r.get("concept", "")) == concept]
+            concept_key = _normalize_key(concept)
+            runs = [
+                r for r in runs
+                if str(r.get("concept", "")) == concept
+                or _normalize_key(str(r.get("concept", ""))) == concept_key
+            ]
         # Most recent first.
         runs_sorted = sorted(runs, key=lambda r: str(r.get("submitted_at", "")), reverse=True)
         return runs_sorted[: max(1, min(limit, 100))]
