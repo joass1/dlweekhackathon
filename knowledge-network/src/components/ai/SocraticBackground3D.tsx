@@ -105,14 +105,14 @@ function CharacterModel({
         </group>
       </group>
       {speechText ? (
-        <Html position={[0.02, 0.63, 0.12]} center>
+        <Html position={[0.02, 0.63, 0.12]} center style={{ pointerEvents: 'auto' }}>
           <div
-            className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm"
+            className="pointer-events-auto relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm"
           >
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
-            <p className="overflow-auto whitespace-pre-wrap pr-0.5" style={{ maxHeight: `${bubbleMaxHeight}px` }}>
+            <div className="overflow-y-auto whitespace-pre-wrap pr-0.5 touch-pan-y" style={{ maxHeight: `${bubbleMaxHeight}px` }}>
               {expandSpeechCitations(speechText, onCitationClick)}
-            </p>
+            </div>
             <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2">
               <button
                 type="button"
@@ -198,12 +198,13 @@ export default function SocraticBackground3D({
 }) {
   return (
     <BackgroundErrorBoundary>
-      <div className="absolute inset-0 pointer-events-none" aria-hidden>
+      <div className="absolute inset-0" aria-hidden>
         <Canvas
           dpr={[1, 1.5]}
           gl={{ alpha: true }}
           camera={{ position: [0, 0.5, 6], fov: 35 }}
           fallback={<StaticFallback />}
+          style={{ pointerEvents: 'none' }}
         >
           <ambientLight intensity={0.9} />
           <directionalLight position={[4, 5, 4]} intensity={1.25} />
