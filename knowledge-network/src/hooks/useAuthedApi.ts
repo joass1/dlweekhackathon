@@ -10,6 +10,9 @@ export function useAuthedApi() {
   const apiFetchWithAuth = useCallback(
     async <T>(path: string, init?: RequestInit): Promise<T> => {
       const token = await getIdToken();
+      if (!token) {
+        throw new Error("Not authenticated");
+      }
       return apiFetch<T>(path, init, token);
     },
     [getIdToken]
@@ -18,8 +21,11 @@ export function useAuthedApi() {
   const authedFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const token = await getIdToken();
+      if (!token) {
+        throw new Error("Not authenticated");
+      }
       const headers = new Headers(init?.headers ?? {});
-      if (token && !headers.has("Authorization")) {
+      if (!headers.has("Authorization")) {
         headers.set("Authorization", `Bearer ${token}`);
       }
       return fetch(input, {

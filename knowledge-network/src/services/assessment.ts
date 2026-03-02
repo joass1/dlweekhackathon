@@ -1,34 +1,5 @@
 import { Assessment, AssessmentResult } from '@/types/assessment';
-
-const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
-
-function sanitizeApiBaseUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    // Keep only scheme + host (+port). Ignore any accidentally appended path/query.
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    return 'http://127.0.0.1:8000';
-  }
-}
-
-const API_BASE_URL = sanitizeApiBaseUrl(RAW_API_BASE_URL);
-
-function getCandidateBaseUrls(): string[] {
-  const runtimeHost =
-    typeof window !== 'undefined' && window.location?.hostname
-      ? `http://${window.location.hostname}:8000`
-      : null;
-  const candidates = [
-    API_BASE_URL,
-    ...(runtimeHost ? [runtimeHost] : []),
-    'http://127.0.0.1:8000',
-    'http://localhost:8000',
-    'http://127.0.0.1:8001',
-    'http://localhost:8001',
-  ];
-  return [...new Set(candidates)];
-}
+import { apiFetch } from '@/services/api';
 
 type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -85,43 +56,15 @@ export interface MicroCheckpointQuestion {
   difficulty: Difficulty;
 }
 
-async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const baseUrls = getCandidateBaseUrls();
-  let lastNetworkError: unknown = null;
-
-  for (const base of baseUrls) {
-    try {
-      const response = await fetch(`${base}${path}`, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(init?.headers || {}),
-        },
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(`API ${response.status}: ${detail}`);
-      }
-
-      return response.json() as Promise<T>;
-    } catch (error) {
-      // Retry other base URLs only for network-level failures.
-      if (error instanceof TypeError) {
-        lastNetworkError = error;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw lastNetworkError ?? new Error('Failed to reach API');
+async function jsonFetch<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
+  return apiFetch<T>(path, init, token);
 }
 
 export async function generateQuiz(
   studentId: string,
   concept: string,
-  numQuestions = 5
+  numQuestions = 5,
+  token?: string | null
 ): Promise<QuizQuestionClient[]> {
   const payload = {
     student_id: studentId,
@@ -133,7 +76,8 @@ export async function generateQuiz(
     {
       method: 'POST',
       body: JSON.stringify(payload),
-    }
+    },
+    token
   );
   return response.questions;
 }
@@ -141,7 +85,8 @@ export async function generateQuiz(
 export async function evaluateAnswer(
   studentId: string,
   concept: string,
-  answers: QuizAnswerClient[]
+  answers: QuizAnswerClient[],
+  token?: string | null
 ): Promise<EvaluateResult> {
   return jsonFetch<EvaluateResult>('/api/assessment/evaluate', {
     method: 'POST',
@@ -150,13 +95,14 @@ export async function evaluateAnswer(
       concept,
       answers,
     }),
-  });
+  }, token);
 }
 
 export async function classifyMistake(
   studentId: string,
   concept: string,
-  answers: QuizAnswerClient[]
+  answers: QuizAnswerClient[],
+  token?: string | null
 ): Promise<ClassifyResult> {
   return jsonFetch<ClassifyResult>('/api/assessment/classify', {
     method: 'POST',
@@ -165,22 +111,23 @@ export async function classifyMistake(
       concept,
       answers,
     }),
-  });
+  }, token);
 }
 
-export async function getSelfAwarenessScore(studentId: string): Promise<{
+export async function getSelfAwarenessScore(studentId: string, token?: string | null): Promise<{
   student_id: string;
   score: number;
   total_attempts: number;
   calibration_gap: number;
 }> {
-  return jsonFetch(`/api/assessment/self-awareness/${studentId}`);
+  return jsonFetch(`/api/assessment/self-awareness/${studentId}`, undefined, token);
 }
 
 export async function getMicroCheckpoint(
   studentId: string,
   concept: string,
-  missingConcept?: string
+  missingConcept?: string,
+  token?: string | null
 ): Promise<MicroCheckpointQuestion> {
   const response = await jsonFetch<{ question: MicroCheckpointQuestion }>(
     '/api/assessment/micro-checkpoint',
@@ -191,7 +138,8 @@ export async function getMicroCheckpoint(
         concept,
         missing_concept: missingConcept || null,
       }),
-    }
+    },
+    token
   );
   return response.question;
 }
@@ -200,7 +148,8 @@ export async function submitMicroCheckpoint(
   studentId: string,
   questionId: string,
   selectedAnswer: string,
-  confidence = 3
+  confidence = 3,
+  token?: string | null
 ): Promise<{ question_id: string; is_correct: boolean; next_action: 'resolved' | 'needs_intervention' }> {
   return jsonFetch('/api/assessment/micro-checkpoint/submit', {
     method: 'POST',
@@ -210,12 +159,13 @@ export async function submitMicroCheckpoint(
       selected_answer: selectedAnswer,
       confidence_1_to_5: confidence,
     }),
-  });
+  }, token);
 }
 
 export async function overrideClassification(
   studentId: string,
-  questionId: string
+  questionId: string,
+  token?: string | null
 ): Promise<{ updated: boolean; question_id: string }> {
   return jsonFetch('/api/assessment/override', {
     method: 'POST',
@@ -224,7 +174,7 @@ export async function overrideClassification(
       question_id: questionId,
       override_to: 'careless',
     }),
-  });
+  }, token);
 }
 
 // Kept for dashboard compatibility; replace with backend integration as needed.

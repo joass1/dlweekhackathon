@@ -14,9 +14,11 @@ import {
 } from '@/services/assessment';
 import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
+import { useAuth } from '@/contexts/AuthContext';
 
 type AnswersMap = Record<string, number>;
 type ConfidenceMap = Record<string, number>;
+type CheckpointQueueItem = { concept: string; missing_concept?: string | null };
 
 export default function AssessmentTakePage() {
   const router = useRouter();
@@ -33,8 +35,10 @@ export default function AssessmentTakePage() {
   const [checkpoint, setCheckpoint] = useState<QuizQuestionClient | null>(null);
   const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
   const [checkpointConfidence, setCheckpointConfidence] = useState<number>(3);
+  const [pendingCheckpoints, setPendingCheckpoints] = useState<CheckpointQueueItem[]>([]);
   const [classificationResult, setClassificationResult] = useState<ClassifyResult | null>(null);
   const studentId = useStudentId();
+  const { getIdToken } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +47,8 @@ export default function AssessmentTakePage() {
       setLoadError(null);
       setIsEmptyAssessment(false);
       try {
-        const generated = await generateQuiz(studentId, subjectId, 5);
+        const token = await getIdToken();
+        const generated = await generateQuiz(studentId, subjectId, 5, token);
         if (!cancelled) {
           setQuestions(generated);
           setIsEmptyAssessment(generated.length === 0);
@@ -99,13 +104,21 @@ export default function AssessmentTakePage() {
       confidence_1_to_5: confidenceRatings[q.question_id] || 3,
     }));
 
-  const runMicroCheckpoint = async (result: ClassifyResult) => {
-    const conceptual = result.classifications.find((c) => c.mistake_type === 'conceptual');
-    if (!conceptual) {
+  const runNextCheckpoint = async (queueArg?: CheckpointQueueItem[]) => {
+    const queue = queueArg ?? pendingCheckpoints;
+    if (!queue.length) {
       return false;
     }
+    const [next, ...rest] = queue;
+    setPendingCheckpoints(rest);
     try {
-      const cp = await getMicroCheckpoint(studentId, subjectId, conceptual.missing_concept || undefined);
+      const token = await getIdToken();
+      const cp = await getMicroCheckpoint(
+        studentId,
+        next.concept || subjectId,
+        next.missing_concept || undefined,
+        token
+      );
       setCheckpoint(cp);
       setCheckpointAnswer(null);
       setCheckpointConfidence(3);
@@ -128,10 +141,18 @@ export default function AssessmentTakePage() {
 
     setIsSubmitting(true);
     try {
+      const token = await getIdToken();
       const answerPayload = getAnswerPayload();
-      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload);
-      const classification = await classifyMistake(studentId, subjectId, answerPayload);
+      const evaluation = await evaluateAnswer(studentId, subjectId, answerPayload, token);
+      const classification = await classifyMistake(studentId, subjectId, answerPayload, token);
       setClassificationResult(classification);
+      const conceptualQueue: CheckpointQueueItem[] = classification.classifications
+        .filter((c) => c.mistake_type === 'conceptual')
+        .map((c) => ({
+          concept: subjectId,
+          missing_concept: c.missing_concept,
+        }));
+      setPendingCheckpoints(conceptualQueue);
 
       // Update KG mastery + BKT for each answered question
       try {
@@ -147,7 +168,7 @@ export default function AssessmentTakePage() {
               is_correct: pq.is_correct,
               is_careless: isCareless,
             }),
-          });
+          }, token);
 
           // Update BKT state
           await apiFetch('/api/adaptive/bkt/update', {
@@ -157,7 +178,7 @@ export default function AssessmentTakePage() {
               is_correct: pq.is_correct,
               mistake_type: cls?.mistake_type === 'conceptual' ? 'conceptual' : cls?.mistake_type === 'careless' ? 'careless' : 'normal',
             }),
-          });
+          }, token);
         }
       } catch (integrationErr) {
         console.warn('Non-fatal: KG/BKT update failed:', integrationErr);
@@ -173,7 +194,7 @@ export default function AssessmentTakePage() {
         classification,
       });
 
-      const checkpointStarted = await runMicroCheckpoint(classification);
+      const checkpointStarted = await runNextCheckpoint(conceptualQueue);
       if (!checkpointStarted) {
         router.push(`/assessment/${subjectId}/matching`);
       }
@@ -187,7 +208,8 @@ export default function AssessmentTakePage() {
 
   const handleOverride = async (questionId: string) => {
     try {
-      await overrideClassification(studentId, questionId);
+      const token = await getIdToken();
+      await overrideClassification(studentId, questionId, token);
       if (classificationResult) {
         setClassificationResult({
           ...classificationResult,
@@ -212,11 +234,13 @@ export default function AssessmentTakePage() {
     }
     try {
       const selectedAnswer = checkpoint.options[checkpointAnswer];
+      const token = await getIdToken();
       const result = await submitMicroCheckpoint(
         studentId,
         checkpoint.question_id,
         selectedAnswer,
-        checkpointConfidence
+        checkpointConfidence,
+        token
       );
       const currentRaw = window.sessionStorage.getItem(`assessment_result_${subjectId}`);
       const current = currentRaw ? JSON.parse(currentRaw) : {};
@@ -229,7 +253,10 @@ export default function AssessmentTakePage() {
         },
       });
       setCheckpoint(null);
-      router.push(`/assessment/${subjectId}/matching`);
+      const hasMoreCheckpoints = await runNextCheckpoint();
+      if (!hasMoreCheckpoints) {
+        router.push(`/assessment/${subjectId}/matching`);
+      }
     } catch (error) {
       console.error('Checkpoint submit failed:', error);
       alert('Could not submit checkpoint.');
@@ -395,10 +422,14 @@ export default function AssessmentTakePage() {
             <div className="flex justify-end gap-2">
               <button
                 className="px-4 py-2 rounded border border-gray-300"
-                onClick={() => {
+                onClick={async () => {
                   setCheckpoint(null);
                   setCheckpointAnswer(null);
                   setCheckpointConfidence(3);
+                  const hasMoreCheckpoints = await runNextCheckpoint();
+                  if (!hasMoreCheckpoints) {
+                    router.push(`/assessment/${subjectId}/matching`);
+                  }
                 }}
               >
                 Skip

@@ -13,19 +13,9 @@ interface GraphNode {
   status?: string;
 }
 
-function getApiBase(): string {
-  const raw = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
-  try {
-    const parsed = new URL(raw);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return 'http://127.0.0.1:8000';
-  }
-}
-
 export default function AssessmentSelectionPage() {
   const router = useRouter();
-  const { authedFetch } = useAuthedApi();
+  const { apiFetchWithAuth } = useAuthedApi();
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,11 +26,7 @@ export default function AssessmentSelectionPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await authedFetch(`${getApiBase()}/api/kg/graph`);
-        if (!res.ok) {
-          throw new Error(`Failed to load graph (${res.status})`);
-        }
-        const data = await res.json();
+        const data = await apiFetchWithAuth<{ nodes?: GraphNode[] }>('/api/kg/graph');
         if (!cancelled) {
           setNodes(Array.isArray(data?.nodes) ? data.nodes : []);
         }
@@ -59,7 +45,7 @@ export default function AssessmentSelectionPage() {
     return () => {
       cancelled = true;
     };
-  }, [authedFetch]);
+  }, [apiFetchWithAuth]);
 
   const concepts = useMemo(
     () =>

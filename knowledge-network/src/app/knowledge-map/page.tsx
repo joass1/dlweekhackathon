@@ -25,7 +25,7 @@ interface GraphLink {
 }
 
 export default function KnowledgeMapPage() {
-  const { authedFetch } = useAuthedApi();
+  const { apiFetchWithAuth } = useAuthedApi();
   const [selectedCourse, setSelectedCourse] = useState('all');
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -33,12 +33,9 @@ export default function KnowledgeMapPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
     const loadCourses = async () => {
       try {
-        const res = await authedFetch(`${base}/api/courses`);
-        if (!res.ok) throw new Error('Failed to load courses');
-        const data = await res.json();
+        const data = await apiFetchWithAuth<{ courses?: CourseOption[] }>('/api/courses');
         const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
         setCourses([{ id: 'all', name: 'All Courses' }, ...incoming]);
       } catch {
@@ -46,20 +43,17 @@ export default function KnowledgeMapPage() {
       }
     };
     loadCourses();
-  }, [authedFetch]);
+  }, [apiFetchWithAuth]);
 
   useEffect(() => {
     const controller = new AbortController();
-    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
     const loadGraph = async () => {
       setLoading(true);
       try {
-        const res = await authedFetch(`${base}/api/kg/graph`, {
+        const data = await apiFetchWithAuth<{ nodes?: any[]; links?: any[] }>('/api/kg/graph', {
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error('Failed to load graph');
-        const data = await res.json();
 
         const safeNodes: GraphNode[] = (data.nodes ?? []).map((n: any) => ({
           id: String(n.id),
@@ -91,7 +85,7 @@ export default function KnowledgeMapPage() {
 
     loadGraph();
     return () => controller.abort();
-  }, [authedFetch]);
+  }, [apiFetchWithAuth]);
 
   const filteredNodes = useMemo(() => {
     if (selectedCourse === 'all') return nodes;

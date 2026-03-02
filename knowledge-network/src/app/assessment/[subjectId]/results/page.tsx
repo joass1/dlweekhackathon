@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { getSelfAwarenessScore } from '@/services/assessment';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface GroupMember {
   id: string;
@@ -161,6 +162,7 @@ export default function AssessmentResultsPage() {
   const router = useRouter();
   const params = useParams();
   const subjectId = params.subjectId;
+  const { getIdToken } = useAuth();
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   // Add a key state to force re-renders
   const [refreshKey, setRefreshKey] = useState(0);
@@ -196,7 +198,8 @@ export default function AssessmentResultsPage() {
           integration_actions: parsed?.classification?.integration_actions || [],
         });
         if (parsed?.studentId) {
-          getSelfAwarenessScore(parsed.studentId)
+          getIdToken()
+            .then((token) => getSelfAwarenessScore(parsed.studentId, token))
             .then((s) => setSelfAwareness(s.score))
             .catch((err) => console.error('Failed to load self-awareness:', err));
         }

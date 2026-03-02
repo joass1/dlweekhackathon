@@ -498,6 +498,8 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
 
 @app.get("/api/assessment/self-awareness/{student_id}", response_model=SelfAwarenessResponse)
 async def get_self_awareness_score(student_id: str, _uid: str = Depends(get_student_id)):
+    if student_id != _uid:
+        raise HTTPException(status_code=403, detail="Forbidden: cannot access another student's self-awareness score")
     return assessment_engine.get_self_awareness_score(student_id)
 
 

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple, Union
+from uuid import uuid4
 
 from openai import OpenAI
 
@@ -123,6 +124,22 @@ class AssessmentEngine:
             else None
         )
         self._last_quiz_generation_error: Optional[str] = None
+
+    def _assign_unique_question_ids(self, concept: str, questions: List[QuizQuestion]) -> List[QuizQuestion]:
+        """Avoid question ID collisions across multiple quiz generations."""
+        run_key = f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
+        return [
+            QuizQuestion(
+                question_id=f"{concept}-{run_key}-q{i + 1}",
+                concept=q.concept,
+                stem=q.stem,
+                options=q.options,
+                correct_answer=q.correct_answer,
+                explanation=q.explanation,
+                difficulty=q.difficulty,
+            )
+            for i, q in enumerate(questions)
+        ]
 
     def _resolve_kg_concept_id(self, concept: str) -> Optional[str]:
         if not concept:
@@ -703,6 +720,7 @@ class AssessmentEngine:
                 personalization,
             )
             generation_source = "fallback"
+        questions = self._assign_unique_question_ids(request.concept, questions)
 
         quizzes = state.setdefault("quizzes", {})
         quizzes[request.student_id] = {q.question_id: q.model_dump() for q in questions}
@@ -787,7 +805,15 @@ class AssessmentEngine:
                     model="gpt-4o-mini",
                     temperature=0,
                     messages=[
-                        {"role": "system", "content": "Classify learning mistake. Return ONLY valid JSON object."},
+                        {
+                            "role": "system",
+                            "content": (
+                                "Classify student mistakes as careless or conceptual and return ONLY valid JSON. "
+                                "Use confidence as a soft signal, not a hard rule. "
+                                "If careless, missing_concept must be null. "
+                                "If conceptual, provide the most specific missing concept."
+                            ),
+                        },
                         {"role": "user", "content": json.dumps(payload)},
                     ],
                 )
@@ -822,6 +848,11 @@ class AssessmentEngine:
         confidence_1_to_5: int,
     ) -> MistakeClassification:
         tested_concept = str(question.get("concept") or concept)
+        llm_result = self._llm_classify_ambiguous(tested_concept, question, selected_answer, confidence_1_to_5)
+        if llm_result:
+            return llm_result
+
+        # Deterministic fallback when LLM classification is unavailable.
         if confidence_1_to_5 >= 4:
             return MistakeClassification(
                 question_id=question["question_id"],
@@ -838,15 +869,12 @@ class AssessmentEngine:
                 error_span=_safe_error_span(selected_answer),
                 rationale="Low-confidence incorrect answer suggests conceptual gap.",
             )
-        llm_result = self._llm_classify_ambiguous(tested_concept, question, selected_answer, confidence_1_to_5)
-        if llm_result:
-            return llm_result
         return MistakeClassification(
             question_id=question["question_id"],
             mistake_type="conceptual",
             missing_concept=tested_concept,
             error_span=_safe_error_span(selected_answer),
-            rationale="Ambiguous case defaulted to conceptual after LLM fallback failure.",
+            rationale="Fallback classification after LLM was unavailable.",
         )
 
     def classify_mistake(self, request: QuizSubmitRequest) -> ClassifyResponse:
@@ -1010,7 +1038,7 @@ class AssessmentEngine:
     def generate_micro_checkpoint(self, student_id: str, concept: str, missing_concept: Optional[str]) -> MicroCheckpointResponse:
         target = missing_concept or concept
         question = QuizQuestion(
-            question_id=f"checkpoint-{target}-{datetime.now(timezone.utc).strftime('%H%M%S')}",
+            question_id=f"checkpoint-{target}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:6]}",
             concept=target,
             stem=f"Quick checkpoint: which statement best confirms mastery of {target}?",
             options=[

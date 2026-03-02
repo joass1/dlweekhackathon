@@ -13,21 +13,11 @@ interface ConceptDetails {
   prerequisites?: { id?: string; title?: string }[];
 }
 
-function getApiBase(): string {
-  const raw = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
-  try {
-    const parsed = new URL(raw);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return 'http://127.0.0.1:8000';
-  }
-}
-
 export default function AssessmentIntroPage() {
   const router = useRouter();
   const params = useParams();
   const subjectId = params.subjectId as string;
-  const { authedFetch } = useAuthedApi();
+  const { apiFetchWithAuth } = useAuthedApi();
   const [subject, setSubject] = useState<ConceptDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,11 +28,7 @@ export default function AssessmentIntroPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await authedFetch(`${getApiBase()}/api/kg/concepts/${encodeURIComponent(subjectId)}`);
-        if (!res.ok) {
-          throw new Error(`Concept not found (${res.status})`);
-        }
-        const data = await res.json();
+        const data = await apiFetchWithAuth<ConceptDetails>(`/api/kg/concepts/${encodeURIComponent(subjectId)}`);
         if (!cancelled) {
           setSubject(data);
         }
@@ -61,7 +47,7 @@ export default function AssessmentIntroPage() {
     return () => {
       cancelled = true;
     };
-  }, [authedFetch, subjectId]);
+  }, [apiFetchWithAuth, subjectId]);
 
   if (loading) {
     return (
