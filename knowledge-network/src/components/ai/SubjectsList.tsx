@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/services/api';
 
 interface Subject {
   id: string;
@@ -50,18 +51,12 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
   const [uploadResults, setUploadResults] = useState<UploadResult[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
-
   const fetchTopics = useCallback(async () => {
     if (!user?.uid) return;
     setIsLoadingSubjects(true);
     try {
       const token = await getIdToken();
-      const res = await fetch(`${base}/api/user-topics`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) return;
-      const { topics } = await res.json();
+      const { topics } = await apiFetch<{ topics: { id: string; courseId: string; courseName: string; conceptId: string; title: string }[] }>('/api/user-topics', undefined, token);
       const grouped: Record<string, Subject> = {};
       topics.forEach((row: { id: string; courseId: string; courseName: string; conceptId: string; title: string }) => {
         const courseId = row.courseId || 'uncategorized';
@@ -78,7 +73,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
     } finally {
       setIsLoadingSubjects(false);
     }
-  }, [user?.uid, base, getIdToken]);
+  }, [user?.uid, getIdToken]);
 
   useEffect(() => {
     fetchTopics();
@@ -96,10 +91,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
     if (!confirm('Delete this topic and all its chunks?')) return;
     const token = await getIdToken();
     try {
-      await fetch(`${base}/api/user-topics/${docId}`, {
-        method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      await apiFetch(`/api/user-topics/${docId}`, { method: 'DELETE' }, token);
       await fetchTopics();
     } catch {
       alert('Failed to delete topic.');
@@ -123,16 +115,11 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
     // Refresh from the courses API for the authoritative list
     try {
       const token = await getIdToken();
-      const res = await fetch(`${base}/api/courses`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const fetched: { id: string; name: string }[] = Array.isArray(data.courses) ? data.courses : [];
-        if (fetched.length > 0) {
-          setModalCourses(fetched);
-          setUploadCourseId(prev => (fetched.find(c => c.id === prev) ? prev : fetched[0].id));
-        }
+      const data = await apiFetch<{ courses?: { id: string; name: string }[] }>('/api/courses', undefined, token);
+      const fetched: { id: string; name: string }[] = Array.isArray(data.courses) ? data.courses : [];
+      if (fetched.length > 0) {
+        setModalCourses(fetched);
+        setUploadCourseId(prev => (fetched.find(c => c.id === prev) ? prev : fetched[0].id));
       }
     } catch {
       // subjects-derived list already set above as fallback
@@ -183,15 +170,12 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
     formData.append('course_name', effectiveCourseName);
     try {
       const token = await getIdToken();
-      const res = await fetch(`${base}/upload`, {
+      const result = await apiFetch<{ files?: { filename: string; chunks: number; status?: string; error?: string }[]; comprehensive_quiz_ticket?: string }>('/upload', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
-      });
-      if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
-      const result = await res.json();
+      }, token);
       const results: UploadResult[] = (result.files || []).map(
-        (f: { filename: string; chunks: number; status?: string; error?: string }) => ({
+        (f: { filename: string; chunks?: number; status?: string; error?: string }) => ({
           filename: f.filename,
           status: (f.status || 'success') as 'success' | 'error',
           chunks: f.chunks,

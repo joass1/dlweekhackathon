@@ -95,7 +95,7 @@ extra_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[*default_origins, *extra_origins],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$|^https://.*\.ngrok(-free)?\.app$|^https://.*\.ngrok\.io$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$|^https://.*\.ngrok(-free)?\.app$|^https://.*\.ngrok\.io$|^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
