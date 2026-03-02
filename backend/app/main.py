@@ -177,7 +177,38 @@ def _resolve_user_concept_id(raw_concept: str, nodes: List[dict]) -> Optional[st
             return node_id
     return None
 
-
+def _apply_user_kg_update(
+    student_id: str,
+    concept: str,
+    is_correct: bool,
+    mistake_type: Optional[str] = None,
+) -> Optional[dict]:
+    try:
+        user_kg_engine = _get_user_kg_engine(student_id)
+        nodes = user_kg_engine.get_graph_data().get("nodes", [])
+        concept_id = _resolve_user_concept_id(concept, nodes)
+        if not concept_id:
+            return None
+        result = user_kg_engine.update_mastery(
+            concept_id=concept_id,
+            is_correct=is_correct,
+            is_careless=(mistake_type == "careless"),
+        )
+        return {
+            "concept_id": concept_id,
+            "is_correct": is_correct,
+            "mistake_type": mistake_type,
+            "status": "updated",
+            "node": result.get("node"),
+        }
+    except Exception as e:
+        return {
+            "concept_id": concept,
+            "is_correct": is_correct,
+            "mistake_type": mistake_type,
+            "status": "failed",
+            "error": str(e),
+        }
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     loader = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
@@ -491,7 +522,35 @@ async def evaluate_answer(request: QuizSubmitRequest, student_id: str = Depends(
 async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends(get_student_id)):
     try:
         request.student_id = student_id
-        return assessment_engine.classify_mistake(request)
+        result = assessment_engine.classify_mistake(request)
+
+        # Keep user graph in sync with assessment outcomes.
+        by_question = {c.question_id: c for c in result.classifications}
+        existing_actions = list(result.integration_actions or [])
+        by_question_action = {str(a.get("question_id", "")): dict(a) for a in existing_actions}
+
+        enriched_actions = []
+        for answer in request.answers:
+            cls = by_question.get(answer.question_id)
+            is_correct = cls is None
+            mistake_type = None if is_correct else cls.mistake_type
+            kg_update = _apply_user_kg_update(
+                student_id=student_id,
+                concept=request.concept,
+                is_correct=is_correct,
+                mistake_type=mistake_type,
+            )
+            action = by_question_action.get(answer.question_id, {
+                "question_id": answer.question_id,
+                "mistake_type": mistake_type or "none",
+            })
+            action["mistake_type"] = action.get("mistake_type", mistake_type or "none")
+            if kg_update is not None:
+                action["kg_update"] = kg_update
+            enriched_actions.append(action)
+
+        result.integration_actions = enriched_actions
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -523,12 +582,19 @@ async def generate_micro_checkpoint(request: MicroCheckpointRequest, student_id:
 @app.post("/api/assessment/micro-checkpoint/submit", response_model=MicroCheckpointSubmitResponse)
 async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest, student_id: str = Depends(get_student_id)):
     try:
-        return assessment_engine.submit_micro_checkpoint(
+        response = assessment_engine.submit_micro_checkpoint(
             student_id,
             request.question_id,
             request.selected_answer,
             request.confidence_1_to_5,
         )
+        _apply_user_kg_update(
+            student_id=student_id,
+            concept=request.question_id.split("checkpoint-", 1)[-1].rsplit("-", 1)[0] if "checkpoint-" in request.question_id else request.question_id,
+            is_correct=response.is_correct,
+            mistake_type=None if response.is_correct else "conceptual",
+        )
+        return response
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

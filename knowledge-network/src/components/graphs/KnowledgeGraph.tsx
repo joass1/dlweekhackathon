@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import { useRouter } from 'next/navigation';
 
 interface Node extends d3.SimulationNodeDatum {
   id: string;
@@ -25,7 +26,9 @@ interface KnowledgeGraphProps {
 }
 
 const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
+  const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -153,6 +156,8 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
       const group = d3.select(this);
       group.select<SVGCircleElement>('.node-body').transition().duration(140).style('stroke-width', 1.6);
       tooltip.style('opacity', 0);
+    }).on('click', function(_, d) {
+      setSelectedNode(d);
     });
 
     // Drag
@@ -209,6 +214,67 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Weak</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-gray-300 inline-block" /> Not Started</div>
       </div>
+
+      {selectedNode && (
+        <div
+          className="absolute inset-0 z-20 bg-black/30 flex items-center justify-center p-4"
+          onClick={() => setSelectedNode(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white border border-gray-200 shadow-xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">Selected Topic</p>
+                <h3 className="text-lg font-semibold text-gray-900">{selectedNode.title}</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Mastery {selectedNode.mastery}% • {selectedNode.status.replace('_', ' ')}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-600"
+                onClick={() => setSelectedNode(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+                onClick={() => {
+                  const params = new URLSearchParams({
+                    topic: selectedNode.title,
+                    conceptId: selectedNode.id,
+                    subject: selectedNode.category || 'Knowledge Map',
+                  });
+                  router.push(`/ai-assistant?${params.toString()}`);
+                }}
+              >
+                Go To Socratic Tutor
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                onClick={() => {
+                  const params = new URLSearchParams({
+                    topic: selectedNode.title,
+                    conceptId: selectedNode.id,
+                    subject: selectedNode.category || 'Knowledge Map',
+                  });
+                  router.push(`/groups?${params.toString()}`);
+                }}
+              >
+                Go To Peer Hubs
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ChatInput, ChatWindow, NotesContext, SubjectsList } from '@/components/ai';
 import { ScopedTopic } from '@/components/ai/ChatInput';
 import Split from 'react-split';
+import { useSearchParams } from 'next/navigation';
 
 interface Message {
   id: string;
@@ -22,11 +23,26 @@ interface ContextItem {
 
 export default function AIAssistantPage() {
   const { getIdToken } = useAuth();
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
   const [mode, setMode] = useState<'socratic' | 'content_aware'>('socratic');
+
+  useEffect(() => {
+    const topic = (searchParams.get('topic') || '').trim();
+    if (!topic) return;
+    const conceptId = (searchParams.get('conceptId') || '').trim() || topic.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const subjectName = (searchParams.get('subject') || '').trim() || 'Knowledge Map';
+    const id = `kg-${conceptId}`;
+
+    setScopedTopics(prev =>
+      prev.some(t => t.id === id)
+        ? prev
+        : [...prev, { id, title: topic, subjectName, conceptId }]
+    );
+  }, [searchParams]);
 
   const handleTopicDrop = (topic: ScopedTopic) =>
     setScopedTopics(prev => prev.find(t => t.id === topic.id) ? prev : [...prev, topic]);

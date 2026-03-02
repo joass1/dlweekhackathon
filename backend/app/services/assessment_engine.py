@@ -116,6 +116,7 @@ class AssessmentEngine:
         self.enable_llm_generation = os.getenv("ENABLE_LLM_QUIZ_GENERATION", "true").lower() == "true"
         self.allow_rule_based_quiz_fallback = os.getenv("ALLOW_RULE_BASED_QUIZ_FALLBACK", "false").lower() == "true"
         self.enable_remote_profile = os.getenv("ENABLE_REMOTE_PROFILE_LOOKUP", "true").lower() == "true"
+        self.enable_legacy_global_kg_sync = os.getenv("ENABLE_LEGACY_GLOBAL_KG_SYNC", "false").lower() == "true"
         self.kg_timeout_s = float(os.getenv("KG_API_TIMEOUT_SECONDS", "2.0"))
         self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "35.0"))
         self.client = (
@@ -163,6 +164,8 @@ class AssessmentEngine:
         return None
 
     def _sync_kg_mastery(self, concept: str, is_correct: bool, mistake_type: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not self.enable_legacy_global_kg_sync:
+            return None
         concept_id = self._resolve_kg_concept_id(concept)
         if not concept_id:
             return None

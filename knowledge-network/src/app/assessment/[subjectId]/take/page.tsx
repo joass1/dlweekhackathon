@@ -12,7 +12,6 @@ import {
   type QuizQuestionClient,
   type ClassifyResult,
 } from '@/services/assessment';
-import { apiFetch } from '@/services/api';
 import { useStudentId } from '@/hooks/useStudentId';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -81,7 +80,7 @@ export default function AssessmentTakePage() {
     return () => {
       cancelled = true;
     };
-  }, [studentId, subjectId]);
+  }, [studentId, subjectId, getIdToken]);
 
   const handleAnswer = (questionId: string, answerIndex: number) => {
     setAnswers((prev) => ({
@@ -153,37 +152,6 @@ export default function AssessmentTakePage() {
           missing_concept: c.missing_concept,
         }));
       setPendingCheckpoints(conceptualQueue);
-
-      // Update KG mastery + BKT for each answered question
-      try {
-        for (const pq of evaluation.per_question) {
-          const cls = classification.classifications.find(c => c.question_id === pq.question_id);
-          const isCareless = cls?.mistake_type === 'careless';
-
-          // Update knowledge graph node mastery
-          await apiFetch('/api/kg/update_mastery', {
-            method: 'POST',
-            body: JSON.stringify({
-              concept_id: subjectId,
-              is_correct: pq.is_correct,
-              is_careless: isCareless,
-            }),
-          }, token);
-
-          // Update BKT state
-          await apiFetch('/api/adaptive/bkt/update', {
-            method: 'POST',
-            body: JSON.stringify({
-              concept: { concept_id: subjectId, mastery: 0.25 },
-              is_correct: pq.is_correct,
-              mistake_type: cls?.mistake_type === 'conceptual' ? 'conceptual' : cls?.mistake_type === 'careless' ? 'careless' : 'normal',
-            }),
-          }, token);
-        }
-      } catch (integrationErr) {
-        console.warn('Non-fatal: KG/BKT update failed:', integrationErr);
-      }
-
       saveRunToSession({
         studentId,
         subjectId,
@@ -233,8 +201,8 @@ export default function AssessmentTakePage() {
       return;
     }
     try {
-      const selectedAnswer = checkpoint.options[checkpointAnswer];
       const token = await getIdToken();
+      const selectedAnswer = checkpoint.options[checkpointAnswer];
       const result = await submitMicroCheckpoint(
         studentId,
         checkpoint.question_id,

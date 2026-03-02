@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { useStudentId } from '@/hooks/useStudentId';
 import { Loader2, Users } from 'lucide-react';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
+import { useSearchParams } from 'next/navigation';
 
 interface HubMember {
   student_id: string;
@@ -38,10 +39,12 @@ interface CourseOption {
 export default function GroupsPage() {
   const studentId = useStudentId();
   const { apiFetchWithAuth } = useAuthedApi();
+  const searchParams = useSearchParams();
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const topicFromGraph = (searchParams.get('topic') || '').trim();
 
   useEffect(() => {
     async function loadData() {
@@ -115,6 +118,13 @@ export default function GroupsPage() {
       <p className="text-sm text-muted-foreground mb-6">
         Balanced groups where each member&apos;s strengths complement others&apos; weaknesses.
       </p>
+      {topicFromGraph && (
+        <Card className="mb-5 p-4 bg-blue-50 border-blue-200">
+          <p className="text-sm text-blue-800">
+            Focused topic from Knowledge Map: <span className="font-semibold">{topicFromGraph}</span>
+          </p>
+        </Card>
+      )}
 
       {hubs.length === 0 ? (
         <Card className="p-8 text-center">
