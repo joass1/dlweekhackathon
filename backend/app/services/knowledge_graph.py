@@ -193,6 +193,18 @@ class KnowledgeGraphEngine:
 
         return result
 
+    def set_mastery(self, concept_id: str, mastery_score: float) -> Dict[str, Any]:
+        """Set a concept mastery score directly (0.0 to 1.0)."""
+        if concept_id not in self._graph:
+            raise KeyError(f"Concept '{concept_id}' not found in graph")
+
+        clamped = max(0.0, min(1.0, float(mastery_score)))
+        node = self._graph.nodes[concept_id]
+        node["mastery_score"] = clamped
+        node["status"] = _compute_status(clamped)
+        self._persist_concept(concept_id)
+        return self._node_dict(concept_id)
+
     def diagnose_mistake(
         self,
         concept_id: str,

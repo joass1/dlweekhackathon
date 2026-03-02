@@ -143,6 +143,28 @@ class AssessmentEngine:
             for i, q in enumerate(questions)
         ]
 
+    def _generate_per_concept_question_counts(self, concepts: List[str], total_questions: int) -> Dict[str, int]:
+        """Allocate quiz questions across concepts with at least one per concept when possible."""
+        clean = [c for c in concepts if str(c).strip()]
+        if not clean:
+            return {}
+        if total_questions <= 0:
+            return {}
+
+        # If concepts exceed budget, keep first N concepts.
+        if len(clean) > total_questions:
+            clean = clean[:total_questions]
+
+        counts = {c: 1 for c in clean}
+        remaining = total_questions - len(clean)
+        idx = 0
+        while remaining > 0:
+            concept = clean[idx % len(clean)]
+            counts[concept] += 1
+            idx += 1
+            remaining -= 1
+        return counts
+
     def _resolve_kg_concept_id(self, concept: str) -> Optional[str]:
         if not concept:
             return None
@@ -743,6 +765,89 @@ class AssessmentEngine:
         return result
 
     def generate_quiz(self, request: QuizGenerateRequest) -> Dict[str, Any]:
+        request.num_questions = max(1, min(int(request.num_questions), 20))
+        requested_concepts = [
+            str(c).strip() for c in (request.concepts or []) if str(c).strip()
+        ]
+        is_comprehensive = bool(requested_concepts)
+
+        if is_comprehensive:
+            state, commit = self.store.transaction(request.student_id)
+            per_concept_counts = self._generate_per_concept_question_counts(
+                requested_concepts,
+                request.num_questions,
+            )
+            questions: List[QuizQuestion] = []
+            generation_sources: List[str] = []
+
+            for concept_id, count in per_concept_counts.items():
+                kg_context = self._fetch_kg_context(concept_id)
+                normalized_prereqs = self._normalize_prerequisites(kg_context.get("prerequisites", []))
+                user_graph_context = self._fetch_user_graph_context(
+                    request.student_id,
+                    concept_id,
+                    normalized_prereqs,
+                )
+                personalization = self._build_personalization_profile(
+                    state=state,
+                    student_id=request.student_id,
+                    concept=concept_id,
+                    user_graph_context=user_graph_context,
+                )
+
+                local_questions = self._llm_generate_questions(
+                    concept_id,
+                    count,
+                    kg_context,
+                    personalization,
+                )
+                source = "llm"
+                if not local_questions:
+                    if not self.allow_rule_based_quiz_fallback:
+                        raise ValueError(
+                            "LLM quiz generation failed or is unavailable. "
+                            "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
+                            f"Details: {self._last_quiz_generation_error or 'unknown'}"
+                        )
+                    local_questions = self._fallback_generate_questions(
+                        concept_id,
+                        count,
+                        personalization,
+                    )
+                    source = "fallback"
+                generation_sources.append(source)
+                questions.extend(local_questions)
+
+            questions = self._assign_unique_question_ids("all-concepts", questions[: request.num_questions])
+            quizzes = state.setdefault("quizzes", {})
+            quizzes[request.student_id] = {q.question_id: q.model_dump() for q in questions}
+            commit(state)
+
+            return {
+                "questions": [
+                    {
+                        "question_id": q.question_id,
+                        "concept": q.concept,
+                        "stem": q.stem,
+                        "options": q.options,
+                        "difficulty": q.difficulty,
+                    }
+                    for q in questions
+                ],
+                "generation_source": "mixed" if len(set(generation_sources)) > 1 else (generation_sources[0] if generation_sources else "llm"),
+                "kg_context": {
+                    "concept": "all-concepts",
+                    "prerequisites": [],
+                },
+                "personalization": {
+                    "target_mastery": None,
+                    "focus_concepts": list(per_concept_counts.keys()),
+                    "target_decay_risk": None,
+                    "target_careless_rate": None,
+                    "target_conceptual_rate": None,
+                },
+            }
+
         kg_context = self._fetch_kg_context(request.concept)
         normalized_prereqs = self._normalize_prerequisites(kg_context.get("prerequisites", []))
         user_graph_context = self._fetch_user_graph_context(
@@ -997,6 +1102,7 @@ class AssessmentEngine:
                         {
                             "question_id": answer.question_id,
                             "mistake_type": "none",
+                            "concept": question.get("concept", request.concept),
                             "kg_update": kg_sync,
                         }
                     )
@@ -1045,13 +1151,14 @@ class AssessmentEngine:
                 {
                     "question_id": answer.question_id,
                     "mistake_type": classification.mistake_type,
+                    "concept": question.get("concept", request.concept),
                     "rpkt_probe": {
-                        "concept": request.concept,
+                        "concept": question.get("concept", request.concept),
                         "missing_concept": classification.missing_concept,
                     },
                     "intervention": {
                         "mistake_type": classification.mistake_type,
-                        "concept": request.concept,
+                        "concept": question.get("concept", request.concept),
                         "missing_concept": classification.missing_concept,
                     },
                 }

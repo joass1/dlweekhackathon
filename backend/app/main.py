@@ -1,7 +1,8 @@
 import os
 import pathlib
 from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import timedelta
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -143,6 +144,8 @@ if not openai_api_key:
 _openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 tutor_service = TutorService(db, _openai_client)
 peer_session_service = PeerSessionService(db, _openai_client)
+_comprehensive_quiz_unlocks: Dict[str, datetime] = {}
+COMPREHENSIVE_QUIZ_UNLOCK_MINUTES = 15
 
 
 def _courses_collection(student_id: str):
@@ -330,6 +333,7 @@ async def upload_files(
 
     uploaded_files = []
     kg_concepts_added = 0
+    successful_uploads = 0
     user_kg_engine = _get_user_kg_engine(student_id)
     suggested_quiz_concept: Optional[str] = None
 
@@ -417,6 +421,7 @@ async def upload_files(
                 print(f"Warning: KG build failed for {safe_name}: {e}")
 
             uploaded_files.append({"filename": safe_name, "chunks": len(text_chunks), "status": "success"})
+            successful_uploads += 1
 
         except Exception as e:
             import traceback
@@ -425,6 +430,11 @@ async def upload_files(
         finally:
             if file_path.exists():
                 file_path.unlink()
+
+    if successful_uploads > 0:
+        _comprehensive_quiz_unlocks[student_id] = datetime.now(timezone.utc) + timedelta(
+            minutes=COMPREHENSIVE_QUIZ_UNLOCK_MINUTES
+        )
 
     return {
         "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
@@ -457,16 +467,45 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
             detail="No knowledge-map concepts found for this student. Upload study materials first.",
         )
 
-    concept_id = _resolve_user_concept_id(request.concept, nodes)
-    if not concept_id:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Concept '{request.concept}' not found in your knowledge map.",
-        )
-
     try:
         request.student_id = student_id
-        request.concept = concept_id
+        request.num_questions = max(1, min(int(request.num_questions), 20))
+        requested = (request.concept or "").strip().lower()
+        all_aliases = {"all", "all-concepts", "all_concepts", "__all__", "comprehensive"}
+        if requested in all_aliases:
+            unlock_until = _comprehensive_quiz_unlocks.get(student_id)
+            now = datetime.now(timezone.utc)
+            if unlock_until is None or unlock_until < now:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Comprehensive quiz can only be generated right after a successful material upload.",
+                )
+            sorted_nodes = sorted(
+                nodes,
+                key=lambda n: (
+                    float(n.get("mastery", 0.0)),
+                    str(n.get("id", "")),
+                ),
+            )
+            concept_ids = [str(n.get("id")) for n in sorted_nodes if str(n.get("id", "")).strip()]
+            if not concept_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No concepts available for comprehensive quiz generation.",
+                )
+            request.concept = "all-concepts"
+            request.concepts = concept_ids
+            request.num_questions = 20
+            # One-time unlock; next comprehensive run requires a fresh upload.
+            _comprehensive_quiz_unlocks.pop(student_id, None)
+        else:
+            concept_id = _resolve_user_concept_id(request.concept, nodes)
+            if not concept_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Concept '{request.concept}' not found in your knowledge map.",
+                )
+            request.concept = concept_id
         return assessment_engine.generate_quiz(request)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -499,16 +538,17 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
             cls = by_question.get(answer.question_id)
             is_correct = cls is None
             mistake_type = None if is_correct else cls.mistake_type
-            kg_update = _apply_user_kg_update(
-                student_id=student_id,
-                concept=request.concept,
-                is_correct=is_correct,
-                mistake_type=mistake_type,
-            )
             action = by_question_action.get(answer.question_id, {
                 "question_id": answer.question_id,
                 "mistake_type": mistake_type or "none",
             })
+            concept_for_update = str(action.get("concept") or request.concept)
+            kg_update = _apply_user_kg_update(
+                student_id=student_id,
+                concept=concept_for_update,
+                is_correct=is_correct,
+                mistake_type=mistake_type,
+            )
             action["mistake_type"] = action.get("mistake_type", mistake_type or "none")
             if kg_update is not None:
                 action["kg_update"] = kg_update
@@ -732,6 +772,10 @@ class UpdateMasteryRequest(BaseModel):
     is_correct: bool
     is_careless: Optional[bool] = False
 
+class SetMasteryRequest(BaseModel):
+    concept_id: str
+    mastery_percent: float
+
 
 class DiagnoseMistakeRequest(BaseModel):
     concept_id: str
@@ -772,6 +816,21 @@ async def kg_update_mastery(req: UpdateMasteryRequest, student_id: str = Depends
             is_careless=req.is_careless or False,
         )
         return {"status": "ok", **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/kg/set_mastery")
+async def kg_set_mastery(req: SetMasteryRequest, student_id: str = Depends(get_student_id)):
+    try:
+        user_kg_engine = _get_user_kg_engine(student_id)
+        mastery_percent = max(0.0, min(100.0, float(req.mastery_percent)))
+        node = user_kg_engine.set_mastery(
+            concept_id=req.concept_id,
+            mastery_score=mastery_percent / 100.0,
+        )
+        return {"status": "ok", "node": node}
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

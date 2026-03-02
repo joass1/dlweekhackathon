@@ -7,6 +7,7 @@ import {
   Upload, GripVertical, Trash2, CheckCircle, AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
 
 interface Subject {
   id: string;
@@ -33,6 +34,7 @@ interface UploadResult {
 
 export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
   const { user, getIdToken } = useAuth();
+  const router = useRouter();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [isLoadingSubjects, setIsLoadingSubjects] = useState(true);
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());

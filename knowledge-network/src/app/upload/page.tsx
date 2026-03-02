@@ -51,7 +51,6 @@ export default function UploadPage() {
     try {
       const result = await apiFetchWithAuth<{
         files?: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }[];
-        suggested_quiz_concept?: string;
       }>('/upload', {
         method: 'POST',
         body: formData,
@@ -68,16 +67,10 @@ export default function UploadPage() {
 
       const hasSuccess = normalized.some(file => file.status === 'success');
       if (hasSuccess) {
-        const quizConcept =
-          typeof result?.suggested_quiz_concept === 'string' && result.suggested_quiz_concept.trim()
-            ? result.suggested_quiz_concept.trim()
-            : '';
-        if (quizConcept) {
-          setIsStartingAssessment(true);
-          setTimeout(() => {
-            router.push(`/assessment/${quizConcept}/take`);
-          }, 500);
-        }
+        setIsStartingAssessment(true);
+        setTimeout(() => {
+          router.push('/assessment/all-concepts/take');
+        }, 500);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed';
@@ -159,7 +152,7 @@ export default function UploadPage() {
           {isUploading
             ? 'Uploading & processing...'
             : isStartingAssessment
-              ? 'Upload complete. Starting assessment...'
+              ? 'Upload complete. Starting comprehensive assessment...'
               : 'Drop files here or click to upload'}
         </p>
         <p className="text-sm text-white/50 mb-4">PDF, TXT, MD supported</p>

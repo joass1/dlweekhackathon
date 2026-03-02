@@ -20,7 +20,8 @@ class SearchResult(BaseModel):
 class QuizGenerateRequest(BaseModel):
     student_id: str
     concept: str
-    num_questions: int = Field(default=5, ge=1, le=10)
+    num_questions: int = Field(default=5, ge=1, le=20)
+    concepts: Optional[List[str]] = None
 
 
 class QuizQuestion(BaseModel):

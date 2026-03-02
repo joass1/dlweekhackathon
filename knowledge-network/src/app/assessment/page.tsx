@@ -6,6 +6,8 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
+import { useAuth } from '@/contexts/AuthContext';
+import { getAssessmentHistory, type AssessmentHistoryRun } from '@/services/assessment';
 import { useStudentId } from '@/hooks/useStudentId';
 
 interface GraphNode {
@@ -20,10 +22,12 @@ interface GraphNode {
 export default function AssessmentSelectionPage() {
   const router = useRouter();
   const { apiFetchWithAuth } = useAuthedApi();
+  const { getIdToken } = useAuth();
   const studentId = useStudentId();
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
+  const [pastRuns, setPastRuns] = useState<AssessmentHistoryRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +63,23 @@ export default function AssessmentSelectionPage() {
       cancelled = true;
     };
   }, [apiFetchWithAuth]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadHistory = async () => {
+      try {
+        const token = await getIdToken();
+        const runs = await getAssessmentHistory(token, undefined, 20);
+        if (!cancelled) setPastRuns(runs);
+      } catch {
+        if (!cancelled) setPastRuns([]);
+      }
+    };
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken]);
 
 
   const concepts = useMemo(
@@ -212,29 +233,68 @@ export default function AssessmentSelectionPage() {
             ) : (
               <div className="grid md:grid-cols-3 gap-6">
                 {selectedCourseConcepts.map((concept) => (
-                  <button
+                  <div
                     key={concept.id}
-                    className="text-left bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow"
-                    onClick={() => router.push(`/assessment/${concept.id}/intro`)}
+                    className="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow"
                   >
                     <div className="p-6">
                       <h3 className="text-xl font-semibold mb-2">{concept.title}</h3>
-                      <p className="text-muted-foreground mb-4">{concept.category}</p>
+                      <p className="text-muted-foreground mb-3">{concept.category}</p>
                       <div className="flex items-center justify-between text-sm text-muted-foreground">
                         <span>5 questions</span>
                         <span>{concept.masteryPct}% mastery</span>
                       </div>
                     </div>
                     <div className="bg-[#e0f4fb] p-4 text-center">
-                      <span className="text-[#03b2e6] font-medium">Begin Assessment</span>
+                      <button
+                        type="button"
+                        className="text-[#03b2e6] font-medium"
+                        onClick={() => router.push(`/assessment/${concept.id}/intro`)}
+                      >
+                        Begin Assessment
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
           </div>
         ) : null}
 
+        {!loading && !error ? (
+          <div className="mt-10 bg-white border rounded-xl p-6">
+            <h2 className="text-xl font-semibold mb-4">Past Assessments</h2>
+            {pastRuns.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No past assessments yet. Complete one to see history.</p>
+            ) : (
+              <div className="space-y-3">
+                {pastRuns.map((run) => (
+                  <div key={run.run_id} className="rounded-lg border border-gray-200 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <p className="font-medium">{String(run.concept || '').replace(/-/g, ' ')}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {new Date(run.submitted_at).toLocaleString()} • {run.correct_count}/{run.total_questions} correct
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-semibold">{Math.round(Number(run.score || 0))}%</span>
+                      <button
+                        className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] text-sm"
+                        onClick={() =>
+                          run.concept === 'all-concepts'
+                            ? router.push('/upload')
+                            : router.push(`/assessment/${run.concept}/take?retry=${Date.now()}`)
+                        }
+                      >
+                        {run.concept === 'all-concepts' ? 'Upload To Retake' : 'Retake'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
