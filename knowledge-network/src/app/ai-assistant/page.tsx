@@ -37,7 +37,6 @@ export default function AIAssistantPage() {
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
   const [mode, setMode] = useState<'socratic' | 'content_aware'>('socratic');
-  const [selectedAssistantIndex, setSelectedAssistantIndex] = useState<number>(-1);
   const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
 
   const assistantMessages = useMemo(
@@ -45,29 +44,23 @@ export default function AIAssistantPage() {
     [messages]
   );
 
-  useEffect(() => {
-    if (assistantMessages.length === 0) {
-      setSelectedAssistantIndex(-1);
-      return;
-    }
-    setSelectedAssistantIndex(assistantMessages.length - 1);
-  }, [assistantMessages.length]);
+  const cleanedAssistantMessages = useMemo(
+    () =>
+      assistantMessages.map((m) =>
+        m.content
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/\*(.*?)\*/g, '$1')
+          .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+          .replace(/`([^`]+)`/g, '$1')
+      ),
+    [assistantMessages]
+  );
 
   const selectedAssistantSpeech = useMemo(() => {
-    if (isLoading) return 'Thinking...';
-    if (selectedAssistantIndex < 0 || selectedAssistantIndex >= assistantMessages.length) {
-      return initialSocraticPrompt;
-    }
-    const cleaned = assistantMessages[selectedAssistantIndex].content
-      .replace(/\*\*(.*?)\*\*/g, '$1')
-      .replace(/\*(.*?)\*/g, '$1')
-      .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-      .replace(/`([^`]+)`/g, '$1');
-    return cleaned;
-  }, [assistantMessages, initialSocraticPrompt, isLoading, selectedAssistantIndex]);
-
-  const canGoPreviousReply = selectedAssistantIndex > 0;
-  const canGoNextReply = selectedAssistantIndex >= 0 && selectedAssistantIndex < assistantMessages.length - 1;
+    const parts = [initialSocraticPrompt, ...cleanedAssistantMessages];
+    if (isLoading) parts.push('Thinking...');
+    return parts.join('\n\n');
+  }, [cleanedAssistantMessages, initialSocraticPrompt, isLoading]);
 
   useEffect(() => {
     const topic = (searchParams.get('topic') || '').trim();
@@ -164,14 +157,6 @@ export default function AIAssistantPage() {
           <SocraticBackground3D
             speechText={selectedAssistantSpeech}
             isSpeaking={isLoading || Boolean(selectedAssistantSpeech)}
-            canGoPrevious={canGoPreviousReply}
-            canGoNext={canGoNextReply}
-            onGoPrevious={() =>
-              setSelectedAssistantIndex((idx) => Math.max(0, idx - 1))
-            }
-            onGoNext={() =>
-              setSelectedAssistantIndex((idx) => Math.min(assistantMessages.length - 1, idx + 1))
-            }
             onCitationClick={(n) => setHighlightedSourceIndex(n)}
           />
 

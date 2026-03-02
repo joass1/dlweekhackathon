@@ -8,10 +8,6 @@ import * as THREE from 'three';
 type CharacterModelProps = {
   speechText: string;
   isSpeaking: boolean;
-  canGoPrevious: boolean;
-  canGoNext: boolean;
-  onGoPrevious: () => void;
-  onGoNext: () => void;
   onCitationClick?: (n: number) => void;
 };
 
@@ -44,10 +40,6 @@ function expandSpeechCitations(
 function CharacterModel({
   speechText,
   isSpeaking,
-  canGoPrevious,
-  canGoNext,
-  onGoPrevious,
-  onGoNext,
   onCitationClick,
 }: CharacterModelProps) {
   const gltf = useGLTF('/models/king.gltf');
@@ -113,24 +105,6 @@ function CharacterModel({
             <div className="overflow-y-auto whitespace-pre-wrap pr-0.5 touch-pan-y" style={{ maxHeight: `${bubbleMaxHeight}px` }}>
               {expandSpeechCitations(speechText, onCitationClick)}
             </div>
-            <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2">
-              <button
-                type="button"
-                onClick={onGoPrevious}
-                disabled={!canGoPrevious}
-                className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={onGoNext}
-                disabled={!canGoNext}
-                className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
           </div>
         </Html>
       ) : null}
@@ -182,18 +156,10 @@ function AnimatedAccentLight() {
 export default function SocraticBackground3D({
   speechText = '',
   isSpeaking = false,
-  canGoPrevious = false,
-  canGoNext = false,
-  onGoPrevious = () => {},
-  onGoNext = () => {},
   onCitationClick,
 }: {
   speechText?: string;
   isSpeaking?: boolean;
-  canGoPrevious?: boolean;
-  canGoNext?: boolean;
-  onGoPrevious?: () => void;
-  onGoNext?: () => void;
   onCitationClick?: (n: number) => void;
 }) {
   return (
@@ -214,10 +180,6 @@ export default function SocraticBackground3D({
             <CharacterModel
               speechText={speechText}
               isSpeaking={isSpeaking}
-              canGoPrevious={canGoPrevious}
-              canGoNext={canGoNext}
-              onGoPrevious={onGoPrevious}
-              onGoNext={onGoNext}
               onCitationClick={onCitationClick}
             />
           </Suspense>
