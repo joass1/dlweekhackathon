@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Folder, ChevronDown, ChevronRight, FileText, Upload, GripVertical, Trash2 } from 'lucide-react';
+import { Folder, ChevronDown, ChevronRight, FileText, Upload, GripVertical } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Subject {
@@ -32,24 +32,17 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
     setIsLoadingSubjects(true);
     try {
       const token = await getIdToken();
-      const res = await fetch(`${base}/api/user-topics`, {
+      const res = await fetch(`${base}/api/courses`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) return;
-      const { topics } = await res.json();
-      const grouped: Record<string, Subject> = {};
-      topics.forEach((row: { id: string; courseId: string; courseName: string; conceptId: string; title: string }) => {
-        const courseId = row.courseId || 'uncategorized';
-        if (!grouped[courseId]) {
-          grouped[courseId] = { id: courseId, name: row.courseName || courseId, notes: [] };
-        }
-        grouped[courseId].notes.push({
-          id: row.id,
-          title: row.title || row.id,
-          conceptId: row.conceptId || toConceptId(row.title || row.id),
-        });
-      });
-      setSubjects(Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name)));
+      const { courses } = await res.json();
+      const mapped: Subject[] = (courses || []).map((c: { id: string; name: string }) => ({
+        id: c.id,
+        name: c.name || c.id,
+        notes: [],
+      }));
+      setSubjects(mapped.sort((a: Subject, b: Subject) => a.name.localeCompare(b.name)));
     } finally {
       setIsLoadingSubjects(false);
     }
@@ -67,22 +60,6 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       newExpanded.add(subjectId);
     }
     setExpandedSubjects(newExpanded);
-  };
-
-  const handleDeleteTopic = async (docId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('Delete this topic and all its chunks?')) return;
-    const token = await getIdToken();
-    try {
-      await fetch(`${base}/api/user-topics/${docId}`, {
-        method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      await fetchTopics();
-    } catch (error) {
-      console.error('Delete failed:', error);
-      alert('Failed to delete topic.');
-    }
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -161,7 +138,7 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                   <span className="font-medium truncate">{subject.name}</span>
                 </button>
 
-                {expandedSubjects.has(subject.id) && (
+                {expandedSubjects.has(subject.id) && subject.notes.length > 0 && (
                   <div className="ml-6 space-y-1 mt-1">
                     {subject.notes.map((note) => (
                       <div key={note.id} className="group flex items-center">
@@ -182,13 +159,6 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
                           <GripVertical className="w-3 h-3 mr-1 text-muted-foreground flex-shrink-0" />
                           <FileText className="w-4 h-4 mr-2 flex-shrink-0" />
                           <span className="truncate">{note.title}</span>
-                        </button>
-                        <button
-                          onClick={(e) => handleDeleteTopic(note.id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-500 transition-opacity flex-shrink-0"
-                          title="Delete topic"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ))}

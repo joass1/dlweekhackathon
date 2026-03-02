@@ -5,6 +5,7 @@ from typing import List, Optional
 class EmbedContentRequest(BaseModel):
     content: str
     concept_id: str
+    course_id: Optional[str] = None
     source: Optional[str] = None
     userId: Optional[str] = None
 
@@ -16,6 +17,7 @@ class EmbedContentResponse(BaseModel):
 
 class RetrieveContextRequest(BaseModel):
     concept: str
+    course_id: Optional[str] = None
     limit: Optional[int] = 4
     userId: Optional[str] = None
 
@@ -44,6 +46,7 @@ class KnowledgeState(BaseModel):
 class TutorChatRequest(BaseModel):
     query: str
     userId: Optional[str] = None
+    course_id: Optional[str] = None
     knowledge_state: Optional[KnowledgeState] = None
     concept_ids: Optional[List[str]] = None
     mode: str = "socratic"  # "socratic" | "content_aware"

@@ -12,11 +12,12 @@ interface UploadedFile {
   filename: string;
   chunks: number;
   status: 'success' | 'error';
+  error?: string;
 }
 
 export default function UploadPage() {
   const router = useRouter();
-  const { authedFetch } = useAuthedApi();
+  const { apiFetchWithAuth } = useAuthedApi();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isStartingAssessment, setIsStartingAssessment] = useState(false);
@@ -25,23 +26,10 @@ export default function UploadPage() {
   const [selectedCourse, setSelectedCourse] = useState('');
   const [newCourseName, setNewCourseName] = useState('');
 
-  const getApiBase = () => {
-    const raw = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
-    try {
-      const parsed = new URL(raw);
-      return `${parsed.protocol}//${parsed.host}`;
-    } catch {
-      return 'http://localhost:8000';
-    }
-  };
-
   useEffect(() => {
-    const base = getApiBase();
     const load = async () => {
       try {
-        const res = await authedFetch(`${base}/api/courses`);
-        if (!res.ok) throw new Error('Failed to load courses');
-        const data = await res.json();
+        const data = await apiFetchWithAuth<{ courses?: CourseOption[] }>('/api/courses');
         const incoming: CourseOption[] = Array.isArray(data.courses) ? data.courses : DEFAULT_COURSES;
         setCourses(incoming);
         if (incoming.length > 0) setSelectedCourse(incoming[0].id);
@@ -50,11 +38,10 @@ export default function UploadPage() {
       }
     };
     load();
-  }, [authedFetch]);
+  }, [apiFetchWithAuth]);
 
   const handleUpload = async (files: FileList) => {
     setIsUploading(true);
-    const base = getApiBase();
     const formData = new FormData();
     Array.from(files).forEach(file => formData.append('files', file));
     const selected = courses.find((c) => c.id === selectedCourse);
@@ -62,17 +49,19 @@ export default function UploadPage() {
     if (selected) formData.append('course_name', selected.name);
 
     try {
-      const response = await authedFetch(`${base}/upload`, {
+      const result = await apiFetchWithAuth<{
+        files?: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }[];
+        suggested_quiz_concept?: string;
+      }>('/upload', {
         method: 'POST',
         body: formData,
       });
-      if (!response.ok) throw new Error('Upload failed');
-      const result = await response.json();
       const normalized: UploadedFile[] = (result.files || []).map(
-        (f: { filename: string; chunks: number; status?: 'success' | 'error' }) => ({
+        (f: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }) => ({
           filename: f.filename,
           chunks: f.chunks,
           status: f.status || 'success',
+          error: f.error,
         })
       );
       setUploadedFiles(prev => [...prev, ...normalized]);
@@ -86,13 +75,14 @@ export default function UploadPage() {
         if (quizConcept) {
           setIsStartingAssessment(true);
           setTimeout(() => {
-            router.push(`/assessment/${quizConcept}/take`);
+            router.push(`/assessment/${quizConcept}/take${selectedCourse ? `?courseId=${selectedCourse}` : ''}`);
           }, 500);
         }
       }
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Upload failed';
       Array.from(files).forEach(file => {
-        setUploadedFiles(prev => [...prev, { filename: file.name, chunks: 0, status: 'error' }]);
+        setUploadedFiles(prev => [...prev, { filename: file.name, chunks: 0, status: 'error', error: message }]);
       });
     } finally {
       setIsUploading(false);
@@ -102,18 +92,15 @@ export default function UploadPage() {
   const handleAddCourse = () => {
     const name = newCourseName.trim();
     if (!name) return;
-    const base = getApiBase();
     const create = async () => {
       try {
-        const res = await authedFetch(`${base}/api/courses`, {
+        const data = await apiFetchWithAuth<{ course: CourseOption }>('/api/courses', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ name }),
         });
-        if (!res.ok) throw new Error('Failed to create course');
-        const data = await res.json();
         const created: CourseOption = data.course;
         const deduped = courses.filter((c) => c.id !== created.id);
         const next = [...deduped, created];
@@ -175,9 +162,9 @@ export default function UploadPage() {
               ? 'Upload complete. Starting assessment...'
               : 'Drop files here or click to upload'}
         </p>
-        <p className="text-sm text-muted-foreground mb-4">PDF, DOCX, TXT, MD supported</p>
+        <p className="text-sm text-muted-foreground mb-4">PDF, TXT, MD supported</p>
         <input type="file" className="hidden" id="upload-input" multiple
-          accept=".pdf,.doc,.docx,.txt,.md"
+          accept=".pdf,.txt,.md"
           onChange={e => e.target.files && handleUpload(e.target.files)} />
         <label htmlFor="upload-input"
           className="inline-block px-6 py-2 bg-[#03b2e6] text-white rounded-full cursor-pointer hover:bg-[#029ad0]">
@@ -198,9 +185,12 @@ export default function UploadPage() {
                     <CheckCircle className="w-4 h-4" /> {file.chunks} chunks processed
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1 text-sm text-red-600">
-                    <AlertCircle className="w-4 h-4" /> Upload failed
-                  </span>
+                  <div className="text-right">
+                    <span className="flex items-center gap-1 text-sm text-red-600 justify-end">
+                      <AlertCircle className="w-4 h-4" /> Upload failed
+                    </span>
+                    {file.error ? <p className="text-xs text-red-500 max-w-[360px]">{file.error}</p> : null}
+                  </div>
                 )}
               </div>
             ))}

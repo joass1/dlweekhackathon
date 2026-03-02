@@ -281,6 +281,7 @@ export default function Page() {
                     category: n.category ?? 'General',
                   }))}
                   links={filteredLinks}
+                  courseId={selectedCourse !== 'all' ? selectedCourse : undefined}
                 />
               )}
             </div>

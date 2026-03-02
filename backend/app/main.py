@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -118,14 +118,12 @@ learning_groups_search = VectorSearch1(db)
 if db is not None:
     assessment_store = FirestoreAssessmentStore(db)
     concept_state_store = FirestoreConceptStateStore(db)
-    kg_store = FirestoreKnowledgeGraphStore(db)
 else:
     assessment_store = AssessmentStateStore(data_dir / "assessment_state.json")
     concept_state_store = None
-    kg_store = None
 
 assessment_engine = AssessmentEngine(assessment_store)
-kg_engine = init_kg_engine(kg_store)
+kg_engine = init_kg_engine(None)
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
@@ -137,14 +135,14 @@ tutor_service = TutorService(db, _openai_client)
 def _courses_collection(student_id: str):
     if db is None:
         return None
-    return db.collection("users").document(student_id).collection("courses")
+    return db.collection("students").document(student_id).collection("courses")
 
 
-def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
-    if db is None or FirestoreKnowledgeGraphStore is None:
+def _get_user_kg_engine(student_id: str, course_id: str = "") -> KnowledgeGraphEngine:
+    if db is None or FirestoreKnowledgeGraphStore is None or not course_id:
         return kg_engine
 
-    user_store = FirestoreKnowledgeGraphStore(db, graph_id=f"user_{student_id}")
+    user_store = FirestoreKnowledgeGraphStore(db, student_id=student_id, course_id=course_id)
     user_engine = KnowledgeGraphEngine(firestore_store=user_store)
     user_engine.load_from_firestore()
     return user_engine
@@ -177,9 +175,10 @@ def _apply_user_kg_update(
     concept: str,
     is_correct: bool,
     mistake_type: Optional[str] = None,
+    course_id: str = "",
 ) -> Optional[dict]:
     try:
-        user_kg_engine = _get_user_kg_engine(student_id)
+        user_kg_engine = _get_user_kg_engine(student_id, course_id)
         nodes = user_kg_engine.get_graph_data().get("nodes", [])
         concept_id = _resolve_user_concept_id(concept, nodes)
         if not concept_id:
@@ -206,7 +205,13 @@ def _apply_user_kg_update(
         }
 def process_file(file_path: str) -> List[str]:
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    loader = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
+    suffix = pathlib.Path(file_path).suffix.lower()
+    if suffix == ".pdf":
+        loader = PyPDFLoader(file_path)
+    elif suffix in {".txt", ".md"}:
+        loader = TextLoader(file_path)
+    else:
+        raise ValueError(f"Unsupported file type: {suffix or 'unknown'}. Supported types: .pdf, .txt, .md")
     docs = loader.load()
     full_text = "".join(doc.page_content for doc in docs).strip()
     if not full_text:
@@ -313,7 +318,8 @@ async def upload_files(
 
     uploaded_files = []
     kg_concepts_added = 0
-    user_kg_engine = _get_user_kg_engine(student_id)
+    effective_course_id = course_id or "uncategorized"
+    user_kg_engine = _get_user_kg_engine(student_id, effective_course_id)
     suggested_quiz_concept: Optional[str] = None
 
     for file in files:
@@ -352,9 +358,12 @@ async def upload_files(
                                 merge=True,
                             )
                     concept_slug = (course_id or safe_name).lower().replace(" ", "-")
+                    chunks_col = db.collection("students").document(student_id) \
+                        .collection("courses").document(effective_course_id) \
+                        .collection("chunks")
                     batch = db.batch()
                     for i, chunk in enumerate(text_chunks):
-                        doc_ref = db.collection(vector_search.collection_name).document()
+                        doc_ref = chunks_col.document()
                         batch.set(doc_ref, {
                             "text": chunk,
                             "source": safe_name,
@@ -366,18 +375,6 @@ async def upload_files(
                             "created_at": datetime.now(timezone.utc),
                         })
                     batch.commit()
-                    # Write user_topics entry for sidebar
-                    topic_title = pathlib.Path(safe_name).stem
-                    topic_ref = db.collection("user_topics").document()
-                    topic_ref.set({
-                        "userId": student_id,
-                        "courseId": course_id or "uncategorized",
-                        "courseName": course_name or "Uncategorized",
-                        "conceptId": concept_slug,
-                        "title": topic_title,
-                        "chunkCount": len(text_chunks),
-                        "createdAt": datetime.now(timezone.utc),
-                    })
                 except Exception as e:
                     print(f"Warning: Firestore storage failed for {safe_name}: {e}")
 
@@ -423,7 +420,8 @@ async def chat(request: dict, student_id: str = Depends(get_student_id)):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        hits = vector_search.search_discussions(query, 3, user_id=student_id)
+        course_id = request.get("course_id", "")
+        hits = vector_search.search_discussions(query, 3, user_id=student_id, course_id=course_id)
         unique_context = []
         seen = set()
         for hit in hits:
@@ -474,7 +472,7 @@ async def get_learning_groups(group_size: int = 4):
 
 @app.post("/api/assessment/generate-quiz")
 async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(get_student_id)):
-    user_kg_engine = _get_user_kg_engine(student_id)
+    user_kg_engine = _get_user_kg_engine(student_id, request.course_id)
     nodes = user_kg_engine.get_graph_data().get("nodes", [])
     if not nodes:
         raise HTTPException(
@@ -527,6 +525,7 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
                 concept=request.concept,
                 is_correct=is_correct,
                 mistake_type=mistake_type,
+                course_id=request.course_id,
             )
             action = by_question_action.get(answer.question_id, {
                 "question_id": answer.question_id,
@@ -553,7 +552,7 @@ async def get_self_awareness_score(student_id: str, _uid: str = Depends(get_stud
 @app.post("/api/assessment/override")
 async def override_mistake_classification(request: OverrideRequest, student_id: str = Depends(get_student_id)):
     try:
-        return assessment_engine.override_classification(student_id, request.question_id)
+        return assessment_engine.override_classification(student_id, request.question_id, course_id=request.course_id or "")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -564,6 +563,7 @@ async def generate_micro_checkpoint(request: MicroCheckpointRequest, student_id:
         student_id,
         request.concept,
         request.missing_concept,
+        course_id=request.course_id or "",
     )
 
 
@@ -575,16 +575,31 @@ async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest, student
             request.question_id,
             request.selected_answer,
             request.confidence_1_to_5,
+            course_id=request.course_id or "",
         )
         _apply_user_kg_update(
             student_id=student_id,
             concept=request.question_id.split("checkpoint-", 1)[-1].rsplit("-", 1)[0] if "checkpoint-" in request.question_id else request.question_id,
             is_correct=response.is_correct,
             mistake_type=None if response.is_correct else "conceptual",
+            course_id=request.course_id or "",
         )
         return response
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/assessment/history")
+async def get_assessment_history(
+    concept: Optional[str] = None,
+    limit: int = 20,
+    student_id: str = Depends(get_student_id),
+):
+    try:
+        runs = assessment_engine.get_assessment_history(student_id=student_id, concept=concept, limit=limit)
+        return {"runs": runs}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load assessment history: {str(exc)}") from exc
 
 
 # ── Adaptive Engine endpoints ──────────────────────────────────────────────────
@@ -719,18 +734,21 @@ class AddConceptRequest(BaseModel):
     concept_id: str
     title: str
     category: str
+    course_id: str = ""
     prerequisites: Optional[List[str]] = []
     initial_mastery: Optional[float] = 0.0
 
 
 class UpdateMasteryRequest(BaseModel):
     concept_id: str
+    course_id: str = ""
     is_correct: bool
     is_careless: Optional[bool] = False
 
 
 class DiagnoseMistakeRequest(BaseModel):
     concept_id: str
+    course_id: str = ""
     student_answer: str
     correct_answer: str
     confidence: int  # 1–5
@@ -745,7 +763,7 @@ class BuildFromMaterialRequest(BaseModel):
 @app.post("/api/kg/add_concept")
 async def add_concept(req: AddConceptRequest, student_id: str = Depends(get_student_id)):
     try:
-        user_kg_engine = _get_user_kg_engine(student_id)
+        user_kg_engine = _get_user_kg_engine(student_id, req.course_id)
         node = user_kg_engine.add_concept(
             concept_id=req.concept_id,
             title=req.title,
@@ -761,7 +779,7 @@ async def add_concept(req: AddConceptRequest, student_id: str = Depends(get_stud
 @app.post("/api/kg/update_mastery")
 async def kg_update_mastery(req: UpdateMasteryRequest, student_id: str = Depends(get_student_id)):
     try:
-        user_kg_engine = _get_user_kg_engine(student_id)
+        user_kg_engine = _get_user_kg_engine(student_id, req.course_id)
         result = user_kg_engine.update_mastery(
             concept_id=req.concept_id,
             is_correct=req.is_correct,
@@ -775,14 +793,14 @@ async def kg_update_mastery(req: UpdateMasteryRequest, student_id: str = Depends
 
 
 @app.get("/api/kg/prerequisites/{concept_id}")
-async def get_prerequisites(concept_id: str, student_id: str = Depends(get_student_id)):
-    user_kg_engine = _get_user_kg_engine(student_id)
+async def get_prerequisites(concept_id: str, course_id: str = Query(""), student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id, course_id)
     return {"concept_id": concept_id, "prerequisites": user_kg_engine.get_prerequisites(concept_id)}
 
 
 @app.get("/api/kg/concepts/{concept_id}")
-async def get_concept(concept_id: str, student_id: str = Depends(get_student_id)):
-    user_kg_engine = _get_user_kg_engine(student_id)
+async def get_concept(concept_id: str, course_id: str = Query(""), student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id, course_id)
     nodes = {node["id"]: node for node in user_kg_engine.get_graph_data().get("nodes", [])}
     node = nodes.get(concept_id)
     if not node:
@@ -800,20 +818,20 @@ async def get_concept(concept_id: str, student_id: str = Depends(get_student_id)
 
 
 @app.get("/api/kg/dependents/{concept_id}")
-async def get_dependents(concept_id: str, student_id: str = Depends(get_student_id)):
-    user_kg_engine = _get_user_kg_engine(student_id)
+async def get_dependents(concept_id: str, course_id: str = Query(""), student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id, course_id)
     return {"concept_id": concept_id, "dependents": user_kg_engine.get_dependents(concept_id)}
 
 
 @app.get("/api/kg/chain/{concept_id}")
-async def get_prerequisite_chain(concept_id: str, student_id: str = Depends(get_student_id)):
-    user_kg_engine = _get_user_kg_engine(student_id)
+async def get_prerequisite_chain(concept_id: str, course_id: str = Query(""), student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id, course_id)
     return {"concept_id": concept_id, "chain": user_kg_engine.get_prerequisite_chain(concept_id)}
 
 
 @app.get("/api/kg/graph")
-async def get_graph(student_id: str = Depends(get_student_id)):
-    user_kg_engine = _get_user_kg_engine(student_id)
+async def get_graph(course_id: str = Query(""), student_id: str = Depends(get_student_id)):
+    user_kg_engine = _get_user_kg_engine(student_id, course_id)
     return user_kg_engine.get_graph_data()
 
 
@@ -821,7 +839,7 @@ async def get_graph(student_id: str = Depends(get_student_id)):
 async def build_from_material(req: BuildFromMaterialRequest, student_id: str = Depends(get_student_id)):
     try:
         openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        user_kg_engine = _get_user_kg_engine(student_id)
+        user_kg_engine = _get_user_kg_engine(student_id, req.course_id or "")
         added = user_kg_engine.build_from_material(
             req.text,
             openai_client,
@@ -837,7 +855,7 @@ async def build_from_material(req: BuildFromMaterialRequest, student_id: str = D
 async def diagnose_mistake(req: DiagnoseMistakeRequest, student_id: str = Depends(get_student_id)):
     try:
         openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        user_kg_engine = _get_user_kg_engine(student_id)
+        user_kg_engine = _get_user_kg_engine(student_id, req.course_id)
         result = user_kg_engine.diagnose_mistake(
             concept_id=req.concept_id,
             student_answer=req.student_answer,
@@ -853,9 +871,9 @@ async def diagnose_mistake(req: DiagnoseMistakeRequest, student_id: str = Depend
 
 
 @app.get("/api/kg/render_graph", response_class=HTMLResponse)
-async def render_graph(student_id: str = Depends(get_student_id)):
+async def render_graph(course_id: str = Query(""), student_id: str = Depends(get_student_id)):
     try:
-        user_kg_engine = _get_user_kg_engine(student_id)
+        user_kg_engine = _get_user_kg_engine(student_id, course_id)
         html = user_kg_engine.render_graph()
         return HTMLResponse(content=html)
     except Exception as e:
@@ -867,7 +885,7 @@ async def render_graph(student_id: str = Depends(get_student_id)):
 @app.post("/api/tutor/embed", response_model=EmbedContentResponse)
 async def embed_content_endpoint(request: EmbedContentRequest, student_id: str = Depends(get_student_id)):
     try:
-        n = tutor_service.embed_content(request.content, request.concept_id, request.source, student_id)
+        n = tutor_service.embed_content(request.content, request.concept_id, request.source, student_id, course_id=request.course_id)
         return EmbedContentResponse(chunks_embedded=n, concept_id=request.concept_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -876,7 +894,7 @@ async def embed_content_endpoint(request: EmbedContentRequest, student_id: str =
 @app.post("/api/tutor/context")
 async def retrieve_context_endpoint(request: RetrieveContextRequest, student_id: str = Depends(get_student_id)):
     try:
-        chunks = tutor_service.retrieve_context(request.concept, request.limit, student_id)
+        chunks = tutor_service.retrieve_context(request.concept, request.limit, student_id, course_id=request.course_id)
         return {"concept": request.concept, "chunks": chunks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -887,7 +905,7 @@ async def tutor_chat_endpoint(request: TutorChatRequest, student_id: str = Depen
     try:
         if not request.query:
             raise HTTPException(status_code=400, detail="Query is required")
-        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids, request.mode)
+        return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids, request.mode, course_id=request.course_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -910,60 +928,11 @@ async def session_summary_endpoint(request: SessionData):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/user-topics")
-async def get_user_topics(student_id: str = Depends(get_student_id)):
-    if db is None:
-        return {"topics": []}
-    try:
-        docs = db.collection("user_topics").where("userId", "==", student_id).stream()
-        topics = []
-        for d in docs:
-            data = d.to_dict() or {}
-            topics.append({
-                "id": d.id,
-                "courseId": data.get("courseId", "uncategorized"),
-                "courseName": data.get("courseName", "Uncategorized"),
-                "conceptId": data.get("conceptId", ""),
-                "title": data.get("title", d.id),
-                "chunkCount": data.get("chunkCount", 0),
-            })
-        return {"topics": topics}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/user-topics/{doc_id}")
-async def delete_user_topic(doc_id: str, student_id: str = Depends(get_student_id)):
-    if db is None:
-        raise HTTPException(status_code=503, detail="Firestore unavailable")
-    ref = db.collection("user_topics").document(doc_id)
-    snap = ref.get()
-    if not snap.exists:
-        raise HTTPException(status_code=404, detail="Topic not found")
-    data = snap.to_dict() or {}
-    if data.get("userId") != student_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    concept_id = data.get("conceptId")
-    if concept_id:
-        try:
-            chunks = db.collection("knowledge_chunks") \
-                .where("userId", "==", student_id) \
-                .where("concept_id", "==", concept_id).stream()
-            batch = db.batch()
-            for c in chunks:
-                batch.delete(c.reference)
-            batch.commit()
-        except Exception as e:
-            print(f"Warning: cascade delete failed for concept_id={concept_id}: {e}")
-    ref.delete()
-    return {"status": "deleted", "doc_id": doc_id}
-
-
 # ── Student Progress endpoint ─────────────────────────────────────────────────
 
 
 @app.get("/api/students/{student_id}/progress")
-async def get_student_progress(student_id: str, current_user_id: str = Depends(get_student_id)):
+async def get_student_progress(student_id: str, course_id: str = Query(""), current_user_id: str = Depends(get_student_id)):
     """Return aggregated student progress from Firebase assessment + KG data."""
     if student_id != current_user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1034,7 +1003,7 @@ async def get_student_progress(student_id: str, current_user_id: str = Depends(g
             print(f"Warning: Could not load concept states for {student_id}: {e}")
 
     # KG-level graph stats
-    user_kg_engine = _get_user_kg_engine(student_id)
+    user_kg_engine = _get_user_kg_engine(student_id, course_id)
     graph_data = user_kg_engine.get_graph_data()
     nodes = graph_data.get("nodes", [])
     progress["kg_stats"] = {

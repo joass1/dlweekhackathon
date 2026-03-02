@@ -23,9 +23,10 @@ interface Link extends d3.SimulationLinkDatum<Node> {
 interface KnowledgeGraphProps {
   nodes?: Node[];
   links?: Link[];
+  courseId?: string;
 }
 
-const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
+const KnowledgeGraph = ({ nodes = [], links = [], courseId }: KnowledgeGraphProps) => {
   const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -252,6 +253,7 @@ const KnowledgeGraph = ({ nodes = [], links = [] }: KnowledgeGraphProps) => {
                     conceptId: selectedNode.id,
                     subject: selectedNode.category || 'Knowledge Map',
                   });
+                  if (courseId) params.set('courseId', courseId);
                   router.push(`/assessment/${encodeURIComponent(selectedNode.id)}/intro?${params.toString()}`);
                 }}
               >

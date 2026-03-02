@@ -2,14 +2,17 @@
 Firestore-backed persistence for all Mentora data domains.
 
 Collections:
-  students/{student_id}                  — profile doc (blind_spot_counts)
-  students/{student_id}/quizzes/{qid}    — active quiz questions
-  students/{student_id}/attempts/{auto}  — attempt history records
-  students/{student_id}/classifications/{qid} — mistake classifications
-  students/{student_id}/concept_states/{cid}  — BKT mastery state
+  students/{student_id}                                          — profile doc (blind_spot_counts)
+  students/{student_id}/attempts/{auto}                          — attempt history records
+  students/{student_id}/concept_states/{cid}                     — BKT mastery state
 
-  knowledge_graphs/{graph_id}/concepts/{cid}  — graph nodes
-  knowledge_graphs/{graph_id}/edges/{eid}     — graph edges
+  students/{student_id}/courses/{course_id}/quizzes/{qid}        — active quiz questions
+  students/{student_id}/courses/{course_id}/quizzes/{qid}/classification/latest — mistake classifications
+
+  students/{student_id}/courses/{course_id}/graphs/{graph_id}/concepts/{cid}   — graph nodes
+  students/{student_id}/courses/{course_id}/graphs/{graph_id}/edges/{eid}      — graph edges
+
+  students/{student_id}/courses/{course_id}/chunks/{doc_id}      — knowledge chunks
 """
 
 from __future__ import annotations
@@ -34,25 +37,30 @@ class FirestoreAssessmentStore:
     def __init__(self, db: FirestoreClient):
         self.db = db
 
+    def _course_ref(self, student_id: str, course_id: str):
+        """Return reference to students/{student_id}/courses/{course_id}."""
+        return self.db.collection("students").document(student_id) \
+            .collection("courses").document(course_id)
+
     # ── Quiz questions ────────────────────────────────────────────────────────
 
-    def save_quiz(self, student_id: str, questions: Dict[str, dict]) -> None:
+    def save_quiz(self, student_id: str, course_id: str, questions: Dict[str, dict]) -> None:
         """Save a student's active quiz questions."""
         batch = self.db.batch()
-        col = self.db.collection("students").document(student_id).collection("quizzes")
+        col = self._course_ref(student_id, course_id).collection("quizzes")
         for qid, q_data in questions.items():
             batch.set(col.document(qid), q_data)
         batch.commit()
 
-    def get_quiz(self, student_id: str) -> Dict[str, dict]:
-        """Load all active quiz questions for a student."""
-        col = self.db.collection("students").document(student_id).collection("quizzes")
+    def get_quiz(self, student_id: str, course_id: str) -> Dict[str, dict]:
+        """Load all active quiz questions for a student in a course."""
+        col = self._course_ref(student_id, course_id).collection("quizzes")
         docs = col.stream()
         return {doc.id: doc.to_dict() for doc in docs}
 
-    def save_single_question(self, student_id: str, question_id: str, q_data: dict) -> None:
+    def save_single_question(self, student_id: str, course_id: str, question_id: str, q_data: dict) -> None:
         """Save a single quiz question (e.g. micro-checkpoint)."""
-        self.db.collection("students").document(student_id) \
+        self._course_ref(student_id, course_id) \
             .collection("quizzes").document(question_id).set(q_data)
 
     # ── Attempt history ───────────────────────────────────────────────────────
@@ -70,18 +78,41 @@ class FirestoreAssessmentStore:
 
     # ── Classifications ───────────────────────────────────────────────────────
 
-    def save_classification(self, student_id: str, question_id: str, data: dict) -> None:
-        self.db.collection("students").document(student_id) \
-            .collection("classifications").document(question_id).set(data)
+    def save_classification(self, student_id: str, course_id: str, question_id: str, data: dict) -> None:
+        self._course_ref(student_id, course_id) \
+            .collection("quizzes").document(question_id) \
+            .collection("classification").document("latest").set(data)
 
-    def get_classification(self, student_id: str, question_id: str) -> Optional[dict]:
-        doc = self.db.collection("students").document(student_id) \
-            .collection("classifications").document(question_id).get()
+    def get_classification(self, student_id: str, course_id: str, question_id: str) -> Optional[dict]:
+        doc = self._course_ref(student_id, course_id) \
+            .collection("quizzes").document(question_id) \
+            .collection("classification").document("latest").get()
         return doc.to_dict() if doc.exists else None
 
-    def get_all_classifications(self, student_id: str) -> Dict[str, dict]:
-        col = self.db.collection("students").document(student_id).collection("classifications")
-        return {doc.id: doc.to_dict() for doc in col.stream()}
+    def get_all_classifications(self, student_id: str, course_id: str) -> Dict[str, dict]:
+        quizzes_col = self._course_ref(student_id, course_id).collection("quizzes")
+        result: Dict[str, dict] = {}
+        for quiz_doc in quizzes_col.stream():
+            cls_doc = quiz_doc.reference.collection("classification").document("latest").get()
+            if cls_doc.exists:
+                result[quiz_doc.id] = cls_doc.to_dict()
+        return result
+
+    # ── Assessment runs (history) ─────────────────────────────────────
+
+    def add_assessment_run(self, student_id: str, run: dict) -> None:
+        run_id = str(run.get("run_id") or "")
+        if run_id:
+            self.db.collection("students").document(student_id) \
+                .collection("assessment_runs").document(run_id).set(run)
+        else:
+            self.db.collection("students").document(student_id) \
+                .collection("assessment_runs").add(run)
+
+    def get_assessment_runs(self, student_id: str) -> List[dict]:
+        col = self.db.collection("students").document(student_id) \
+            .collection("assessment_runs").order_by("submitted_at")
+        return [doc.to_dict() for doc in col.stream()]
 
     # ── Blind spot counts ─────────────────────────────────────────────────────
 
@@ -99,23 +130,24 @@ class FirestoreAssessmentStore:
 
     # ── Transaction helper (mimics old API) ───────────────────────────────────
 
-    def transaction(self, student_id: str):
+    def transaction(self, student_id: str, course_id: str = ""):
         """
         Returns (state_dict, commit_fn) to preserve the same call pattern
         used by AssessmentEngine.  The state dict is loaded fresh from Firestore.
         """
         state = {
-            "quizzes": {student_id: self.get_quiz(student_id)},
+            "quizzes": {student_id: self.get_quiz(student_id, course_id) if course_id else {}},
             "attempt_history": {student_id: self.get_attempts(student_id)},
-            "classification_store": {student_id: self.get_all_classifications(student_id)},
+            "classification_store": {student_id: self.get_all_classifications(student_id, course_id) if course_id else {}},
             "blind_spot_counts": {student_id: self.get_blind_spots(student_id)},
+            "assessment_runs": {student_id: self.get_assessment_runs(student_id)},
         }
 
         def commit(new_state: Dict[str, Any]) -> None:
             # Save quizzes
             new_quiz = new_state.get("quizzes", {}).get(student_id, {})
-            if new_quiz:
-                self.save_quiz(student_id, new_quiz)
+            if new_quiz and course_id:
+                self.save_quiz(student_id, course_id, new_quiz)
             # Save attempt history (only new ones — compare lengths)
             new_attempts = new_state.get("attempt_history", {}).get(student_id, [])
             old_len = len(state["attempt_history"].get(student_id, []))
@@ -123,12 +155,18 @@ class FirestoreAssessmentStore:
                 self.add_attempt(student_id, attempt)
             # Save classifications
             new_cls = new_state.get("classification_store", {}).get(student_id, {})
-            for qid, cls_data in new_cls.items():
-                self.save_classification(student_id, qid, cls_data)
+            if course_id:
+                for qid, cls_data in new_cls.items():
+                    self.save_classification(student_id, course_id, qid, cls_data)
             # Save blind spots
             new_blind = new_state.get("blind_spot_counts", {}).get(student_id)
             if new_blind:
                 self.update_blind_spots(student_id, new_blind)
+            # Save assessment runs (append-only)
+            new_runs = new_state.get("assessment_runs", {}).get(student_id, [])
+            old_run_len = len(state["assessment_runs"].get(student_id, []))
+            for run in new_runs[old_run_len:]:
+                self.add_assessment_run(student_id, run)
 
         return state, commit
 
@@ -140,10 +178,12 @@ class FirestoreAssessmentStore:
 class FirestoreKnowledgeGraphStore:
     """Persist knowledge graph nodes and edges to Firestore."""
 
-    def __init__(self, db: FirestoreClient, graph_id: str = "default"):
+    def __init__(self, db: FirestoreClient, student_id: str, course_id: str, graph_id: str = "default"):
         self.db = db
         self.graph_id = graph_id
-        self._base = self.db.collection("knowledge_graphs").document(graph_id)
+        self._base = self.db.collection("students").document(student_id) \
+            .collection("courses").document(course_id) \
+            .collection("graphs").document(graph_id)
 
     def save_concept(self, concept_id: str, data: dict) -> None:
         self._base.collection("concepts").document(concept_id).set(data, merge=True)
