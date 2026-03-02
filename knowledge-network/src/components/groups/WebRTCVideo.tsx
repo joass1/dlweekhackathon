@@ -42,25 +42,42 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
+  const [debugInfo, setDebugInfo] = useState('Initializing...');
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
+  const cancelledRef = useRef(false);
 
-  // Get the WebSocket URL from the current page URL
+  // Get the WebSocket URL from the backend
   const getWsUrl = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // In dev, the backend runs on port 8000
     const host = window.location.hostname;
-    const port = process.env.NEXT_PUBLIC_API_BASE_URL
-      ? new URL(process.env.NEXT_PUBLIC_API_BASE_URL).port || '8000'
-      : '8000';
+    // Use the API base URL if set, otherwise default to port 8000
+    let port = '8000';
+    if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+      try {
+        const apiUrl = new URL(process.env.NEXT_PUBLIC_API_BASE_URL);
+        port = apiUrl.port || (apiUrl.protocol === 'https:' ? '443' : '8000');
+      } catch {
+        // keep default
+      }
+    }
     return `${protocol}//${host}:${port}/ws/peer/signal/${sessionId}`;
   }, [sessionId]);
 
   // Create a peer connection for a specific remote peer
   const createPeerConnection = useCallback((remoteStudentId: string) => {
+    console.log(`[WebRTC] Creating peer connection for ${remoteStudentId}`);
+
+    // Close existing connection if any
+    const existingPc = peerConnectionsRef.current.get(remoteStudentId);
+    if (existingPc) {
+      existingPc.close();
+      peerConnectionsRef.current.delete(remoteStudentId);
+    }
+
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
     // Add local tracks to the connection
@@ -68,10 +85,14 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
       localStreamRef.current.getTracks().forEach((track) => {
         pc.addTrack(track, localStreamRef.current!);
       });
+      console.log(`[WebRTC] Added ${localStreamRef.current.getTracks().length} local tracks`);
+    } else {
+      console.warn('[WebRTC] No local stream when creating peer connection!');
     }
 
     // Handle incoming remote tracks
     pc.ontrack = (event) => {
+      console.log(`[WebRTC] Got remote track from ${remoteStudentId}:`, event.track.kind);
       const [remoteStream] = event.streams;
       if (remoteStream) {
         setRemoteStreams((prev) => {
@@ -102,7 +123,17 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[WebRTC] ICE state for ${remoteStudentId}: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        setConnectedPeers((prev) =>
+          prev.includes(remoteStudentId) ? prev : [...prev, remoteStudentId]
+        );
+      }
+    };
+
     pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC] Connection state for ${remoteStudentId}: ${pc.connectionState}`);
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         setConnectedPeers((prev) => prev.filter((id) => id !== remoteStudentId));
       }
@@ -114,16 +145,18 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
 
   // Initialize media + WebSocket signaling
   useEffect(() => {
-    let cancelled = false;
+    cancelledRef.current = false;
 
     const init = async () => {
+      setDebugInfo('Requesting camera/mic...');
+
       // 1. Get local camera + mic
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
-        if (cancelled) {
+        if (cancelledRef.current) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
@@ -132,6 +165,8 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
+        console.log('[WebRTC] Got local stream:', stream.getTracks().map(t => t.kind).join(', '));
+        setDebugInfo('Camera OK. Connecting to signaling...');
       } catch (err) {
         console.error('Failed to get user media:', err);
         setConnectionError(
@@ -142,48 +177,64 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
 
       // 2. Connect to signaling server
       const wsUrl = getWsUrl();
+      console.log('[WebRTC] Connecting to signaling server:', wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
+        console.log('[WebRTC] WebSocket connected, joining as', studentId);
+        setDebugInfo('Connected. Joining room...');
         ws.send(JSON.stringify({ type: 'join', student_id: studentId }));
       };
 
       ws.onmessage = async (event) => {
         const msg = JSON.parse(event.data);
+        console.log('[WebRTC] Received:', msg.type, msg.from || msg.student_id || '');
 
         switch (msg.type) {
           case 'peer-joined': {
-            // When we join, server tells us about existing peers
-            // We create offers to all existing peers
-            const peers: string[] = msg.peers || [];
-            for (const peerId of peers) {
-              if (peerId !== studentId && !peerConnectionsRef.current.has(peerId)) {
-                const pc = createPeerConnection(peerId);
-                try {
-                  const offer = await pc.createOffer();
-                  await pc.setLocalDescription(offer);
-                  ws.send(
-                    JSON.stringify({
-                      type: 'offer',
-                      target: peerId,
-                      sdp: pc.localDescription,
-                    })
-                  );
-                } catch (err) {
-                  console.error('Failed to create offer:', err);
+            // Determine if WE just joined or if someone else joined
+            // If msg.student_id === our ID, this is OUR join confirmation
+            // → we should create offers to all listed peers
+            // If msg.student_id !== our ID, someone else joined
+            // → WAIT for them to send us an offer (don't create one)
+            if (msg.student_id === studentId) {
+              // We just joined — create offers to all existing peers
+              const peers: string[] = msg.peers || [];
+              setDebugInfo(`Joined! Found ${peers.length} peer(s)`);
+              console.log('[WebRTC] We joined, existing peers:', peers);
+              for (const peerId of peers) {
+                if (peerId !== studentId && !peerConnectionsRef.current.has(peerId)) {
+                  const pc = createPeerConnection(peerId);
+                  try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    ws.send(
+                      JSON.stringify({
+                        type: 'offer',
+                        target: peerId,
+                        sdp: pc.localDescription,
+                      })
+                    );
+                    console.log('[WebRTC] Sent offer to', peerId);
+                  } catch (err) {
+                    console.error('Failed to create offer:', err);
+                  }
                 }
               }
+            } else {
+              // Someone else joined — they will send us an offer, just wait
+              console.log('[WebRTC] Peer joined:', msg.student_id, '— waiting for their offer');
+              setDebugInfo(`Peer ${msg.student_id} joined, waiting for connection...`);
             }
             break;
           }
 
           case 'offer': {
             const fromId = msg.from;
-            let pc = peerConnectionsRef.current.get(fromId);
-            if (!pc) {
-              pc = createPeerConnection(fromId);
-            }
+            console.log('[WebRTC] Received offer from', fromId);
+            // Always create a fresh connection for incoming offers
+            const pc = createPeerConnection(fromId);
             try {
               await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
               const answer = await pc.createAnswer();
@@ -195,6 +246,8 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
                   sdp: pc.localDescription,
                 })
               );
+              console.log('[WebRTC] Sent answer to', fromId);
+              setDebugInfo(`Connected to peer ${fromId}`);
             } catch (err) {
               console.error('Failed to handle offer:', err);
             }
@@ -207,6 +260,8 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
             if (pc) {
               try {
                 await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                console.log('[WebRTC] Set answer from', fromId);
+                setDebugInfo(`Connected to peer ${fromId}`);
               } catch (err) {
                 console.error('Failed to set remote description:', err);
               }
@@ -221,7 +276,8 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
               } catch (err) {
-                console.error('Failed to add ICE candidate:', err);
+                // ICE candidates can arrive before remote description; this is ok
+                console.warn('Failed to add ICE candidate (may be ok):', err);
               }
             }
             break;
@@ -229,6 +285,7 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
 
           case 'peer-left': {
             const leftId = msg.student_id;
+            console.log('[WebRTC] Peer left:', leftId);
             const pc = peerConnectionsRef.current.get(leftId);
             if (pc) {
               pc.close();
@@ -241,15 +298,23 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
         }
       };
 
-      ws.onerror = () => {
+      ws.onerror = (err) => {
+        console.error('[WebRTC] WebSocket error:', err);
         setConnectionError('Signaling connection failed. Video chat unavailable.');
       };
 
       ws.onclose = () => {
+        console.log('[WebRTC] WebSocket closed');
         // Attempt reconnect after 3s if not intentionally closed
-        if (!cancelled) {
+        if (!cancelledRef.current) {
+          setDebugInfo('Disconnected. Reconnecting...');
           setTimeout(() => {
-            if (!cancelled && wsRef.current === ws) {
+            if (!cancelledRef.current) {
+              // Clean up old peer connections before reconnecting
+              peerConnectionsRef.current.forEach((pc) => pc.close());
+              peerConnectionsRef.current.clear();
+              setRemoteStreams([]);
+              setConnectedPeers([]);
               init();
             }
           }, 3000);
@@ -260,7 +325,7 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
     init();
 
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
 
       // Close WebSocket
       if (wsRef.current) {
@@ -406,6 +471,11 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
           {connectedPeers.length + 1}/{members.length} connected
         </span>
       </div>
+
+      {/* Debug info — shows connection status */}
+      {connectedPeers.length === 0 && (
+        <p className="text-xs text-center text-muted-foreground">{debugInfo}</p>
+      )}
     </div>
   );
 }

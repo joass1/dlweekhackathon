@@ -151,6 +151,29 @@ export async function endSession(
   }, token);
 }
 
+export interface SessionSummary {
+  session_id: string;
+  hub_id: string;
+  topic: string;
+  status: 'waiting' | 'active' | 'completed';
+  created_by: string;
+  created_at?: string;
+  members: SessionMember[];
+  expected_members: number;
+  question_count: number;
+}
+
+export async function getAllActiveSessions(
+  token?: string | null,
+): Promise<SessionSummary[]> {
+  const result = await apiFetch<{ sessions: SessionSummary[] }>(
+    '/api/peer/sessions/all',
+    undefined,
+    token,
+  );
+  return result.sessions || [];
+}
+
 export async function getSessionHistory(
   hubId: string,
   token?: string | null,
