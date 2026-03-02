@@ -570,6 +570,36 @@ _STUDY_MISSION_FLASHCARD_STOPWORDS = {
 }
 
 
+def _is_low_value_flashcard(front: str, back: str) -> bool:
+    front_text = re.sub(r"\s+", " ", str(front or "")).strip().lower()
+    back_text = re.sub(r"\s+", " ", str(back or "")).strip().lower()
+    if not front_text or not back_text:
+        return True
+
+    answer_text = back_text
+    if answer_text.startswith("correct answer:"):
+        answer_text = answer_text[len("correct answer:"):].strip()
+    if not answer_text or answer_text in {"not available", "n/a"}:
+        return True
+    if answer_text in front_text or front_text in answer_text:
+        return True
+
+    front_tokens = {
+        token for token in re.findall(r"[a-z0-9]{3,}", front_text)
+        if token not in _STUDY_MISSION_FLASHCARD_STOPWORDS
+    }
+    answer_tokens = {
+        token for token in re.findall(r"[a-z0-9]{3,}", answer_text)
+        if token not in _STUDY_MISSION_FLASHCARD_STOPWORDS
+    }
+    if front_tokens and answer_tokens:
+        union = front_tokens | answer_tokens
+        overlap = front_tokens & answer_tokens
+        if (len(overlap) / max(1, len(union))) >= 0.72 and len(overlap) >= 5:
+            return True
+    return False
+
+
 def _load_study_mission_chunks(
     student_id: str,
     course_id: Optional[str],
@@ -657,6 +687,106 @@ def _fallback_study_mission_flashcards(chunks: List[Dict[str, Any]], num_cards: 
     cards: List[Dict[str, Any]] = []
     seen = set()
 
+    def _truncate(text: str, max_len: int) -> str:
+        cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+        if len(cleaned) <= max_len:
+            return cleaned
+        return cleaned[: max_len - 3].rstrip() + "..."
+
+    def _format_back(answer_text: str) -> str:
+        payload = _truncate(answer_text, 203)
+        return f"Correct answer: {payload}" if payload else "Correct answer: Not available"
+
+    def _build_card_from_sentence(source_label: str, concept_id: str, sentence: str) -> Optional[Dict[str, Any]]:
+        sentence = _truncate(sentence, 200)
+        if not sentence:
+            return None
+
+        lowered = sentence.lower()
+        definition_match = re.match(
+            r'^"?([A-Za-z][A-Za-z0-9\s\-/()]{2,80}?)\s+(?:is|are|means|refers to|describes)\s+(.+)$',
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        if definition_match:
+            term = _truncate(definition_match.group(1).strip(' "'), 90)
+            explanation = _truncate(definition_match.group(2).strip(' ".'), 180)
+            return {
+                "front": _truncate(f'In {source_label}, what does "{term}" mean?', 240),
+                "back": _format_back(explanation),
+                "tags": ["definition", "Fallback"],
+                "concept_id": concept_id,
+                "source": source_label,
+            }
+
+        if " because " in lowered:
+            parts = re.split(r"\sbecause\s", sentence, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 2:
+                lhs = _truncate(parts[0].strip(' ".'), 130)
+                rhs = _truncate(parts[1].strip(' ".'), 170)
+                if lhs and rhs:
+                    return {
+                        "front": _truncate(f'In {source_label}, why does "{lhs}" occur?', 240),
+                        "back": _format_back(rhs),
+                        "tags": ["diagnostic", "Fallback"],
+                        "concept_id": concept_id,
+                        "source": source_label,
+                    }
+
+        if " therefore " in lowered or " thus " in lowered:
+            parts = re.split(r"\s(?:therefore|thus)\s", sentence, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 2:
+                premise = _truncate(parts[0].strip(' ".'), 130)
+                outcome = _truncate(parts[1].strip(' ".'), 170)
+                if premise and outcome:
+                    return {
+                        "front": _truncate(f'In {source_label}, what follows from "{premise}"?', 240),
+                        "back": _format_back(outcome),
+                        "tags": ["diagnostic", "Fallback"],
+                        "concept_id": concept_id,
+                        "source": source_label,
+                    }
+
+        conditional_match = re.match(
+            r'^\s*(if|when|unless|given)\s+(.+?),\s*(.+)$',
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        if conditional_match:
+            condition = _truncate(conditional_match.group(2).strip(' ".'), 130)
+            result = _truncate(conditional_match.group(3).strip(' ".'), 170)
+            if condition and result:
+                stem = "Under what condition does this apply"
+                if conditional_match.group(1).lower() == "unless":
+                    stem = "What exception condition applies"
+                return {
+                    "front": _truncate(f"In {source_label}, {stem}: {result}?", 240),
+                    "back": _format_back(condition),
+                    "tags": ["application", "Fallback"],
+                    "concept_id": concept_id,
+                    "source": source_label,
+                }
+
+        if any(marker in lowered for marker in [" compared to ", " unlike ", " whereas ", " vs "]):
+            return {
+                "front": _truncate(f"In {source_label}, what distinction is being made here?", 240),
+                "back": _format_back(sentence),
+                "tags": ["comparison", "Fallback"],
+                "concept_id": concept_id,
+                "source": source_label,
+            }
+
+        if any(marker in lowered for marker in [" first ", " then ", " next ", " finally ", " step "]):
+            return {
+                "front": _truncate(f"In {source_label}, what process is this sentence describing?", 240),
+                "back": "Correct answer: Identify the ordered steps stated in the source chunk.",
+                "tags": ["procedure", "Fallback"],
+                "concept_id": concept_id,
+                "source": source_label,
+            }
+
+        return None
+
     for chunk in chunks:
         chunk_text = re.sub(r"\s+", " ", str(chunk.get("text") or "")).strip()
         if not chunk_text:
@@ -667,17 +797,18 @@ def _fallback_study_mission_flashcards(chunks: List[Dict[str, Any]], num_cards: 
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", chunk_text) if s.strip()]
 
         for sentence in sentences:
-            if len(sentence) < 40 or len(sentence) > 280:
+            if "_____" in sentence or len(sentence) < 45 or len(sentence) > 260:
                 continue
-            tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", sentence)
-            tokens = [t for t in tokens if t.lower() not in _STUDY_MISSION_FLASHCARD_STOPWORDS]
-            if not tokens:
+
+            generated = _build_card_from_sentence(source_label, concept_id, sentence)
+            if not generated:
                 continue
-            keyword = max(tokens, key=len)
-            masked = re.sub(rf"\b{re.escape(keyword)}\b", "_____", sentence, count=1, flags=re.IGNORECASE)
-            if masked == sentence:
+            front = str(generated.get("front") or "").strip()
+            back = str(generated.get("back") or "").strip()
+            if not front or not back or _is_low_value_flashcard(front, back):
                 continue
-            dedupe_key = f"{masked.lower()}|{keyword.lower()}"
+
+            dedupe_key = f"{front.lower()}|{back.lower()}"
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
@@ -685,11 +816,11 @@ def _fallback_study_mission_flashcards(chunks: List[Dict[str, Any]], num_cards: 
             cards.append(
                 {
                     "id": f"fallback-{len(cards) + 1}",
-                    "concept_id": concept_id,
-                    "front": f"Fill in the blank from {source_label}:\n{masked}",
-                    "back": f"Correct answer: {keyword}",
-                    "tags": ["Chunk", "Fallback"],
-                    "source": source_label,
+                    "concept_id": str(generated.get("concept_id") or concept_id),
+                    "front": front,
+                    "back": back,
+                    "tags": list(generated.get("tags") or ["Fallback"]),
+                    "source": str(generated.get("source") or source_label),
                 }
             )
             if len(cards) >= num_cards:
@@ -705,9 +836,9 @@ def _fallback_study_mission_flashcards(chunks: List[Dict[str, Any]], num_cards: 
                 {
                     "id": f"fallback-{len(cards) + 1}",
                     "concept_id": concept_id,
-                    "front": f"State one key idea from {source_label}.",
-                    "back": "Correct answer: Review the related source chunk for this concept.",
-                    "tags": ["Chunk", "Fallback"],
+                    "front": _truncate(f"In {source_label}, what core concept should you revise next for assessment?", 240),
+                    "back": "Correct answer: Review the highest-priority concept in this source chunk and summarize it in your own words.",
+                    "tags": ["diagnostic", "Fallback"],
                     "source": source_label,
                 }
             )
@@ -831,6 +962,8 @@ def _generate_study_mission_flashcards_with_ai(chunks: List[Dict[str, Any]], num
                 back = f"Correct answer: {answer_text}" if answer_text else "Correct answer: Not available"
             if not back.lower().startswith("correct answer:"):
                 back = f"Correct answer: {back}"
+            if _is_low_value_flashcard(front, back):
+                continue
 
             dedupe_key = f"{front.lower()}|{back.lower()}"
             if dedupe_key in seen_prompts:
@@ -862,6 +995,8 @@ def _generate_study_mission_flashcards_with_ai(chunks: List[Dict[str, Any]], num
             for card in fallback_cards:
                 key = f"{str(card.get('front', '')).lower()}|{str(card.get('back', '')).lower()}"
                 if key in existing_keys:
+                    continue
+                if _is_low_value_flashcard(str(card.get("front") or ""), str(card.get("back") or "")):
                     continue
                 normalized_cards.append(card)
                 existing_keys.add(key)
