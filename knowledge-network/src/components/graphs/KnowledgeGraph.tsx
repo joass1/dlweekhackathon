@@ -42,17 +42,20 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       return { ...l, source: sourceId, target: targetId };
     });
 
-    const degreeMap = new Map<string, number>();
+    const inDegreeMap = new Map<string, number>();
+    const outDegreeMap = new Map<string, number>();
     for (const node of graphNodes) {
-      degreeMap.set(node.id, 0);
+      inDegreeMap.set(node.id, 0);
+      outDegreeMap.set(node.id, 0);
     }
     for (const link of graphLinks) {
       const sourceId = String(link.source);
       const targetId = String(link.target);
-      degreeMap.set(sourceId, (degreeMap.get(sourceId) ?? 0) + 1);
-      degreeMap.set(targetId, (degreeMap.get(targetId) ?? 0) + 1);
+      outDegreeMap.set(sourceId, (outDegreeMap.get(sourceId) ?? 0) + 1);
+      inDegreeMap.set(targetId, (inDegreeMap.get(targetId) ?? 0) + 1);
     }
-    const isEdgeNode = (d: Node) => (degreeMap.get(d.id) ?? 0) <= 1;
+    const isStartPointNode = (d: Node) =>
+      (inDegreeMap.get(d.id) ?? 0) === 0 && (outDegreeMap.get(d.id) ?? 0) > 0;
     if (graphNodes.length === 0) {
       return;
     }
@@ -107,28 +110,28 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .join('g')
       .style('cursor', 'pointer');
 
-    // Edge-node ring (leaf nodes with only one connection)
+    // Suggested start-point ring (nodes with no incoming edges)
     nodeGroup.append('circle')
       .attr('class', 'edge-node-ring')
       .attr('r', d => nodeR(d) + 4)
       .style('fill', 'none')
       .style('stroke', '#0ea5e9')
-      .style('stroke-width', d => isEdgeNode(d) ? 1.8 : 0)
+      .style('stroke-width', d => isStartPointNode(d) ? 1.8 : 0)
       .style('stroke-dasharray', '3,2')
-      .style('opacity', d => isEdgeNode(d) ? 0.95 : 0);
+      .style('opacity', d => isStartPointNode(d) ? 0.95 : 0);
 
     // Main ball body
     nodeGroup.append('circle')
       .attr('class', 'node-body')
       .attr('r', nodeR)
       .style('fill', d => (
-        isEdgeNode(d) && d.status === 'not_started' ? '#dbeafe' : ballColors[d.status].fill
+        isStartPointNode(d) && d.status === 'not_started' ? '#dbeafe' : ballColors[d.status].fill
       ))
       .style('fill-opacity', 0.78)
       .style('stroke', d => (
-        isEdgeNode(d) && d.status === 'not_started' ? '#0284c7' : ballColors[d.status].stroke
+        isStartPointNode(d) && d.status === 'not_started' ? '#0284c7' : ballColors[d.status].stroke
       ))
-      .style('stroke-width', d => isEdgeNode(d) ? 2.2 : 1.6);
+      .style('stroke-width', d => isStartPointNode(d) ? 2.2 : 1.6);
 
     // Mastery number centered
     nodeGroup.append('text')
@@ -139,7 +142,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .attr('font-weight', 'bold')
       .attr('font-family', 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial')
       .attr('fill', d => (
-        isEdgeNode(d) && d.status === 'not_started' ? '#0c4a6e' : ballColors[d.status].text
+        isStartPointNode(d) && d.status === 'not_started' ? '#0c4a6e' : ballColors[d.status].text
       ))
       .style('pointer-events', 'none');
 
@@ -173,14 +176,14 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       group.select<SVGCircleElement>('.node-body')
         .transition()
         .duration(140)
-        .style('stroke-width', isEdgeNode(d) ? 3 : 2.4);
+        .style('stroke-width', isStartPointNode(d) ? 3 : 2.4);
 
       tooltip.style('opacity', 1)
         .html(`
           <strong>${d.title}</strong><br/>
           Mastery: ${d.mastery}%<br/>
           Status: ${d.status.replace('_', ' ')}<br/>
-          ${isEdgeNode(d) ? 'Edge node (leaf)<br/>' : ''}
+          ${isStartPointNode(d) ? 'Suggested start point<br/>' : ''}
           ${d.lastReviewed ? `Last reviewed: ${d.lastReviewed}` : 'Not yet reviewed'}<br/>
           ${d.decayRate > 0 ? `Decay in: ${d.decayRate} days` : ''}
         `)
@@ -191,7 +194,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       group.select<SVGCircleElement>('.node-body')
         .transition()
         .duration(140)
-        .style('stroke-width', isEdgeNode(d) ? 2.2 : 1.6);
+        .style('stroke-width', isStartPointNode(d) ? 2.2 : 1.6);
       tooltip.style('opacity', 0);
     }).on('click', function(_, d) {
       setSelectedNode(d);
