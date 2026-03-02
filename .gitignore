@@ -44,3 +44,6 @@ backend/qdrant_db/
 dlw-project-ff79f-firebase-adminsdk-fbsvc-4b786be89b.json
 backend/app/__pycache__/main.cpython-312.pyc
 *.pyc
+*.pyc
+*.pyc
+*.pyc
