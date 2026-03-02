@@ -280,20 +280,16 @@ export default function PeerSessionPage() {
   return (
     <div className="p-4 max-w-6xl mx-auto space-y-4">
       {/* Header bar */}
-      <div className="flex items-center justify-between bg-white rounded-lg shadow-sm p-4">
-        <div className="flex items-center gap-4">
-          <h1 className="font-semibold text-lg">{session.topic}</h1>
-          <span className="text-sm text-muted-foreground">{formatTime(elapsed)}</span>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            session.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-          }`}>
-            {session.status === 'active' ? 'In Progress' : 'Waiting for members'}
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-            <Users className="w-4 h-4" />
-            {session.members.length}/{session.expected_members}
+      <div className="bg-white rounded-lg shadow-sm p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h1 className="font-semibold text-lg">{session.topic}</h1>
+            <span className="text-sm text-muted-foreground">{formatTime(elapsed)}</span>
+            <span className={`text-xs px-2 py-1 rounded-full ${
+              session.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              {session.status === 'active' ? 'In Progress' : 'Waiting for members'}
+            </span>
           </div>
           <Button
             variant="outline"
@@ -305,6 +301,28 @@ export default function PeerSessionPage() {
             {ending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4 mr-1" />}
             End
           </Button>
+        </div>
+        {/* Participants */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Users className="w-4 h-4 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">{session.members.length}/{session.expected_members}</span>
+          {session.members.map((m) => (
+            <span
+              key={m.student_id}
+              className={`text-xs px-2 py-0.5 rounded-full ${
+                m.student_id === studentId
+                  ? 'bg-[#e0f4fb] text-[#03b2e6] font-medium'
+                  : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              {m.name}{m.student_id === studentId ? ' (you)' : ''}
+            </span>
+          ))}
+          {session.members.length < session.expected_members && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-400 border border-dashed border-gray-300">
+              +{session.expected_members - session.members.length} waiting
+            </span>
+          )}
         </div>
       </div>
 

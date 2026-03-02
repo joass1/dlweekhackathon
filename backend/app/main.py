@@ -1176,6 +1176,15 @@ async def end_peer_session(
     return result
 
 
+@app.get("/api/peer/sessions/all")
+async def get_all_active_sessions(
+    student_id: str = Depends(get_student_id),
+):
+    """Get all active/waiting sessions across all hubs (for testing/browsing)."""
+    sessions = peer_session_service.get_all_active_sessions()
+    return {"sessions": sessions}
+
+
 @app.get("/api/peer/session/history/{hub_id}")
 async def get_peer_session_history(
     hub_id: str,

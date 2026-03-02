@@ -380,6 +380,34 @@ Return JSON (no markdown):
         ref.update({"status": "completed"})
         return {"status": "completed"}
 
+    def get_all_active_sessions(self) -> List[Dict[str, Any]]:
+        """Get all active or waiting sessions across all hubs (for testing/browsing)."""
+        if not self.db:
+            return []
+
+        sessions = []
+        for status in ["active", "waiting"]:
+            docs = (
+                self.db.collection(self.collection)
+                .where("status", "==", status)
+                .stream()
+            )
+            for doc in docs:
+                data = doc.to_dict()
+                # Return a summary (not full questions/answers) to keep it lightweight
+                sessions.append({
+                    "session_id": data.get("session_id"),
+                    "hub_id": data.get("hub_id"),
+                    "topic": data.get("topic"),
+                    "status": data.get("status"),
+                    "created_by": data.get("created_by"),
+                    "created_at": data.get("created_at"),
+                    "members": data.get("members", []),
+                    "expected_members": data.get("expected_members", 0),
+                    "question_count": len(data.get("questions", [])),
+                })
+        return sessions
+
     def get_hub_session_history(self, hub_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Get completed sessions for a hub (for metrics)."""
         if not self.db:
