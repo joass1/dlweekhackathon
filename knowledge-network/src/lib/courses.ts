@@ -3,11 +3,7 @@ export interface CourseOption {
   name: string;
 }
 
-export const DEFAULT_COURSES: CourseOption[] = [
-  { id: "physics-101", name: "Physics 101" },
-  { id: "data-structures", name: "Data Structures" },
-  { id: "biology-intro", name: "Introduction to Biology" },
-];
+export const DEFAULT_COURSES: CourseOption[] = [];
 
 const STORAGE_KEY = "learngraph:courses";
 
@@ -19,15 +15,15 @@ const slugify = (value: string) =>
     .replace(/^-+|-+$/g, "");
 
 export const loadCourses = (): CourseOption[] => {
-  if (typeof window === "undefined") return DEFAULT_COURSES;
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_COURSES;
+    if (!raw) return [];
     const parsed = JSON.parse(raw) as CourseOption[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_COURSES;
+    if (!Array.isArray(parsed) || parsed.length === 0) return [];
     return parsed.filter((c) => c?.id && c?.name);
   } catch {
-    return DEFAULT_COURSES;
+    return [];
   }
 };
 

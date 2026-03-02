@@ -8,20 +8,6 @@ interface Props {
 }
 
 export function PeerSessionScheduler({ groupId }: Props) {
-  // Mock data - replace with real data fetching
-  const members = [
-    {
-      id: "1",
-      name: "Alice Chen",
-      availability: ["Mon 2-4pm", "Wed 3-5pm"]
-    },
-    {
-      id: "2",
-      name: "Bob Smith",
-      availability: ["Tue 1-3pm", "Thu 4-6pm"]
-    }
-  ];
-
   return (
     <Card className="mb-6">
       <CardHeader>
@@ -31,21 +17,9 @@ export function PeerSessionScheduler({ groupId }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-6">
-          {members.map((member) => (
-            <div key={member.id} className="border rounded-lg p-4">
-              <div className="flex justify-between items-center mb-2">
-                <span className="font-medium">{member.name}</span>
-                <span className="text-sm text-muted-foreground">
-                  Available: {member.availability.join(", ")}
-                </span>
-              </div>
-              <button className="bg-[#03b2e6] text-white px-4 py-2 rounded-lg hover:bg-[#029ad0] transition-colors">
-                Schedule Session
-              </button>
-            </div>
-          ))}
-        </div>
+        <p className="text-sm text-muted-foreground">
+          No scheduled sessions yet for group <span className="font-medium">{groupId}</span>.
+        </p>
       </CardContent>
     </Card>
   );

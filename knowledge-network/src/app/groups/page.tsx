@@ -40,7 +40,6 @@ export default function GroupsPage() {
   const studentId = useStudentId();
   const { apiFetchWithAuth } = useAuthedApi();
   const searchParams = useSearchParams();
-  const [courses, setCourses] = useState<CourseOption[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,11 +48,7 @@ export default function GroupsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        // Load courses
-        const courseData = await apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses');
-        setCourses(courseData.courses ?? []);
-
-        // Load KG to build student concept profiles for hub matching
+        // Load KG to build current student's concept profile for hub matching
         const graphData = await apiFetchWithAuth<{ nodes: KGNode[] }>('/api/kg/graph');
         const nodes = graphData.nodes ?? [];
 
@@ -62,23 +57,19 @@ export default function GroupsPage() {
           return;
         }
 
-        // Build a concept profile for the current student and generate simulated peers
+        // Build a concept profile for the current student.
         const conceptProfile: Record<string, number> = {};
         nodes.forEach(n => {
           conceptProfile[n.id] = n.mastery / 100;
         });
 
-        // Create simulated peer students with varied profiles for hub matching demo
-        const simulatedStudents = [
-          { student_id: studentId, name: 'You', concept_profile: conceptProfile },
-          ...generateSimulatedPeers(nodes, 7),
-        ];
+        const students = [{ student_id: studentId, name: studentId, concept_profile: conceptProfile }];
 
         // Call hub matching API
         const hubResult = await apiFetchWithAuth<{ hubs: Hub[] }>('/api/adaptive/hubs/match', {
           method: 'POST',
           body: JSON.stringify({
-            students: simulatedStudents,
+            students,
             hub_size: 4,
           }),
         });
@@ -183,22 +174,4 @@ export default function GroupsPage() {
       )}
     </div>
   );
-}
-
-/** Generate simulated peers with inverted/varied mastery profiles. */
-function generateSimulatedPeers(
-  nodes: KGNode[],
-  count: number
-): { student_id: string; name: string; concept_profile: Record<string, number> }[] {
-  const names = ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve', 'Frank', 'Grace'];
-  return names.slice(0, count).map((name, i) => {
-    const profile: Record<string, number> = {};
-    nodes.forEach((n, j) => {
-      // Create diverse profiles: some inverse of current student, some random
-      const base = n.mastery / 100;
-      const variation = Math.sin(i * 1.5 + j * 0.7) * 0.4;
-      profile[n.id] = Math.max(0, Math.min(1, (i % 2 === 0 ? 1 - base : base) + variation));
-    });
-    return { student_id: `peer-${name.toLowerCase()}`, name, concept_profile: profile };
-  });
 }

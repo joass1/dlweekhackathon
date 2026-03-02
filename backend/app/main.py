@@ -43,7 +43,7 @@ from app.models.schemas import (
     SelfAwarenessResponse,
 )
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
-from app.services.knowledge_graph import KnowledgeGraphEngine, init_kg_engine, kg_engine, seed_demo_data
+from app.services.knowledge_graph import KnowledgeGraphEngine, init_kg_engine, kg_engine
 from app.services.vector_search import VectorSearch
 from app.services.vector_search1 import VectorSearch1
 from app.services.assessment_engine import AssessmentEngine, AssessmentStateStore
@@ -82,11 +82,7 @@ app.add_middleware(
 )
 
 adaptive_engine = AdaptiveEngine()
-DEFAULT_COURSES = [
-    {"id": "physics-101", "name": "Physics 101"},
-    {"id": "data-structures", "name": "Data Structures"},
-    {"id": "biology-intro", "name": "Introduction to Biology"},
-]
+DEFAULT_COURSES: List[dict] = []
 
 try:
     db = get_firestore_client()
@@ -130,13 +126,8 @@ kg_engine = init_kg_engine(kg_store)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     print("WARNING: OPENAI_API_KEY not set — AI tutor endpoints will fail at runtime")
-_openai_client = OpenAI(api_key=openai_api_key or "placeholder")
+_openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 tutor_service = TutorService(db, _openai_client)
-
-# Seed demo knowledge graph only when explicitly enabled.
-if os.getenv("SEED_DEMO_DATA", "false").lower() == "true":
-    if not kg_engine.get_graph_data().get("nodes"):
-        seed_demo_data()
 
 
 def _courses_collection(student_id: str):
@@ -256,11 +247,11 @@ class CourseCreateRequest(BaseModel):
 @app.get("/api/courses")
 async def get_courses(student_id: str = Depends(get_student_id)):
     if db is None:
-        return {"courses": DEFAULT_COURSES}
+        return {"courses": []}
     try:
         courses_col = _courses_collection(student_id)
         if courses_col is None:
-            return {"courses": DEFAULT_COURSES}
+            return {"courses": []}
 
         docs = courses_col.stream()
         courses = sorted(
@@ -270,13 +261,6 @@ async def get_courses(student_id: str = Depends(get_student_id)):
             ],
             key=lambda x: x["name"].lower(),
         )
-        if not courses:
-            # Seed per-user defaults once for convenience.
-            batch = db.batch()
-            for c in DEFAULT_COURSES:
-                batch.set(courses_col.document(c["id"]), {**c, "userId": student_id})
-            batch.commit()
-            courses = DEFAULT_COURSES
         return {"courses": courses}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load courses: {str(e)}")
