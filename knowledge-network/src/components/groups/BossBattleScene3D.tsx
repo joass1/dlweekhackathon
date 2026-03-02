@@ -11,6 +11,9 @@ function BossModel({ healthCurrent, healthMax }: { healthCurrent: number; health
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const prevHealthRef = useRef<number>(healthCurrent);
+  const nextAttackAtRef = useRef<number>(5);
+  const isAttackingRef = useRef<boolean>(false);
+  const activeAttackRef = useRef<string | null>(null);
   const defeated = healthCurrent <= 0;
 
   useLayoutEffect(() => {
@@ -41,6 +44,8 @@ function BossModel({ healthCurrent, healthMax }: { healthCurrent: number; health
       idle.fadeOut(0.2);
       idle.stop();
       if (death) death.stop();
+      const attackNames = ['Sword_Slash', 'Punch_Left', 'Punch_Right', 'Kick_Left', 'Kick_Right', 'Gun_Shoot', 'Run_Shoot'];
+      attackNames.forEach((name) => actions?.[name]?.stop());
     };
   }, [actions]);
 
@@ -87,6 +92,60 @@ function BossModel({ healthCurrent, healthMax }: { healthCurrent: number; health
     motionGroupRef.current.position.x = sway;
     motionGroupRef.current.position.y = bob;
     motionGroupRef.current.rotation.y = Math.sin(t * 0.35) * 0.05;
+
+    const idle = actions?.Idle_Neutral ?? actions?.Idle;
+    if (!idle) return;
+
+    if (defeated) {
+      if (activeAttackRef.current) {
+        actions?.[activeAttackRef.current]?.stop();
+        activeAttackRef.current = null;
+      }
+      isAttackingRef.current = false;
+      return;
+    }
+
+    const attackCandidates = ['Sword_Slash', 'Punch_Left', 'Punch_Right', 'Kick_Left', 'Kick_Right', 'Gun_Shoot', 'Run_Shoot']
+      .filter((name) => !!actions?.[name]);
+
+    if (attackCandidates.length === 0) return;
+
+    if (!isAttackingRef.current && t >= nextAttackAtRef.current) {
+      const idx = Math.floor(Math.random() * attackCandidates.length);
+      const attackName = attackCandidates[idx];
+      const attackAction = actions?.[attackName];
+      if (!attackAction) return;
+
+      isAttackingRef.current = true;
+      activeAttackRef.current = attackName;
+
+      idle.fadeOut(0.1);
+      attackAction.reset();
+      attackAction.setLoop(THREE.LoopOnce, 1);
+      attackAction.clampWhenFinished = true;
+      attackAction.fadeIn(0.1).play();
+      return;
+    }
+
+    if (isAttackingRef.current && activeAttackRef.current) {
+      const attackAction = actions?.[activeAttackRef.current];
+      if (!attackAction) {
+        isAttackingRef.current = false;
+        activeAttackRef.current = null;
+        nextAttackAtRef.current = t + 5;
+        return;
+      }
+
+      const duration = attackAction.getClip().duration;
+      if (attackAction.time >= duration - 0.03) {
+        attackAction.fadeOut(0.08);
+        attackAction.stop();
+        idle.reset().fadeIn(0.12).play();
+        isAttackingRef.current = false;
+        activeAttackRef.current = null;
+        nextAttackAtRef.current = t + 5;
+      }
+    }
   });
 
   return (
