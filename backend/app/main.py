@@ -83,9 +83,6 @@ app.add_middleware(
 
 adaptive_engine = AdaptiveEngine()
 DEFAULT_COURSES = [
-    {"id": "physics-101", "name": "Physics 101"},
-    {"id": "data-structures", "name": "Data Structures"},
-    {"id": "biology-intro", "name": "Introduction to Biology"},
 ]
 
 try:
