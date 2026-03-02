@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useState } from 'react';
 import Image from 'next/image';
@@ -43,50 +43,39 @@ export default function ResultsPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
+      <div className="min-h-full flex items-center justify-center">
+        <div className="text-center rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg px-8 py-10 text-slate-900">
           <div className="flex items-center justify-center">
-            <Image
-              src="/logo-images/favicon.png"
-              alt="Loading"
-              width={48}
-              height={48}
-              className="animate-bounce"
-              priority
-            />
+            <Image src="/logo-images/favicon.png" alt="Loading" width={48} height={48} className="animate-bounce" priority />
           </div>
-          <p className="mt-4 text-muted-foreground">Finding your perfect study group...</p>
+          <p className="mt-4 text-slate-700">Finding your perfect study group...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background py-12">
-      <div className="max-w-4xl mx-auto px-4">
+    <div className="min-h-full py-8">
+      <div className="max-w-4xl mx-auto px-4 text-slate-900">
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4">🎉 Group Matching Complete!</h1>
-          <p className="text-muted-foreground">
-            You've been matched with peers who complement your learning style
-          </p>
+          <h1 className="text-3xl font-bold mb-4">Group Matching Complete!</h1>
+          <p className="text-slate-700">You've been matched with peers who complement your learning style</p>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-8">
+        <div className="rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg p-6 mb-8">
           <h2 className="text-xl font-semibold mb-4">Match Details</h2>
-          <div className="prose">
-            {matchResult?.matches}
-          </div>
+          <div className="prose max-w-none text-slate-800">{matchResult?.matches}</div>
         </div>
 
         <div className="mt-12 text-center">
-          <button 
-            onClick={() => router.push('/dashboard')}
-            className="bg-blue-500 text-white px-8 py-3 rounded-lg hover:bg-blue-600"
-          >
+          <button onClick={() => router.push('/')} className="bg-[#03b2e6] text-white px-8 py-3 rounded-full hover:bg-[#029ad0]">
             Start Collaborating
           </button>
         </div>
       </div>
     </div>
   );
-} 
+}
+
+
+

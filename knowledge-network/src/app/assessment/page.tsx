@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -81,7 +81,6 @@ export default function AssessmentSelectionPage() {
     };
   }, [getIdToken]);
 
-
   const concepts = useMemo(
     () =>
       nodes.map((n) => ({
@@ -105,11 +104,7 @@ export default function AssessmentSelectionPage() {
     const categoryNorm = normalize(concept.category);
     const courseNameNorm = normalize(course.name).replace(/\b\d+\b/g, '').trim();
     if (!categoryNorm || !courseNameNorm) return false;
-    return (
-      categoryNorm === courseNameNorm ||
-      categoryNorm.includes(courseNameNorm) ||
-      courseNameNorm.includes(categoryNorm)
-    );
+    return categoryNorm === courseNameNorm || categoryNorm.includes(courseNameNorm) || courseNameNorm.includes(categoryNorm);
   };
 
   const coursesWithCounts = useMemo(
@@ -132,48 +127,38 @@ export default function AssessmentSelectionPage() {
   }, [concepts, selectedCourseMeta]);
 
   return (
-    <div className="min-h-screen bg-background py-12">
+    <div className="min-h-full py-8">
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4">Mentora Assessments</h1>
-          <p className="text-muted-foreground max-w-2xl mx-auto">
+          <h1 className="text-3xl font-bold mb-4 text-slate-900">Mentora Assessments</h1>
+          <p className="text-slate-700 max-w-2xl mx-auto">
             Assessments are generated from your uploaded materials and current knowledge map.
           </p>
         </div>
 
         {loading ? (
-          <div className="bg-white border rounded-xl p-10 text-center text-muted-foreground">
+          <div className="rounded-xl p-10 text-center text-slate-700 border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg">
             <div className="flex items-center justify-center mb-3">
-              <Image
-                src="/logo-images/favicon.png"
-                alt="Loading"
-                width={28}
-                height={28}
-                className="animate-bounce"
-                priority
-              />
+              <Image src="/logo-images/favicon.png" alt="Loading" width={28} height={28} className="animate-bounce" priority />
             </div>
             Loading concepts...
           </div>
         ) : null}
 
         {!loading && error ? (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
-            <p className="text-red-700 font-medium">Could not load assessment concepts</p>
-            <p className="text-sm text-red-600 mt-1">{error}</p>
+          <div className="rounded-xl p-6 text-center border border-red-300/50 bg-red-500/20 backdrop-blur-sm text-slate-900 shadow-lg">
+            <p className="text-red-100 font-medium">Could not load assessment concepts</p>
+            <p className="text-sm text-red-100/90 mt-1">{error}</p>
           </div>
         ) : null}
 
         {!loading && !error && concepts.length === 0 ? (
-          <div className="bg-white border rounded-xl p-10 text-center">
+          <div className="rounded-xl p-10 text-center border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg text-slate-900">
             <h2 className="text-xl font-semibold mb-2">No concepts found yet</h2>
-            <p className="text-muted-foreground mb-6">
+            <p className="text-slate-700 mb-6">
               Upload course materials first. Your assessments will only appear after concepts exist in your knowledge map.
             </p>
-            <Link
-              href="/upload"
-              className="inline-flex items-center px-5 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]"
-            >
+            <Link href="/upload" className="inline-flex items-center px-5 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0]">
               Upload Materials
             </Link>
           </div>
@@ -181,26 +166,24 @@ export default function AssessmentSelectionPage() {
 
         {!loading && !error && concepts.length > 0 && !selectedCourse ? (
           <div>
-            <h2 className="text-xl font-semibold mb-4">Select A Course</h2>
+            <h2 className="text-xl font-semibold mb-4 text-slate-900">Select A Course</h2>
             <div className="grid md:grid-cols-3 gap-6">
               {coursesWithCounts.map((course) => (
                 <button
                   key={course.id}
-                  className={`text-left bg-white rounded-xl shadow-sm overflow-hidden transition-shadow ${
-                    course.topicCount > 0 ? 'hover:shadow-md' : 'opacity-70'
+                  className={`text-left rounded-xl shadow-lg overflow-hidden transition-shadow border border-black/10 bg-white/65 backdrop-blur-sm text-slate-900 ${
+                    course.topicCount > 0 ? 'hover:shadow-xl' : 'opacity-70'
                   }`}
                   onClick={() => setSelectedCourse(course.id)}
                 >
                   <div className="p-6">
                     <h3 className="text-xl font-semibold mb-2">{course.name}</h3>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-slate-700">
                       {course.topicCount} topic{course.topicCount === 1 ? '' : 's'} ready
                     </p>
                   </div>
-                  <div className="bg-[#e0f4fb] p-4 text-center">
-                    <span className="text-[#03b2e6] font-medium">
-                      {course.topicCount > 0 ? 'View Topics' : 'No Topics Yet'}
-                    </span>
+                  <div className="bg-white/400 p-4 text-center border-t border-black/10">
+                    <span className="text-[#4cc9f0] font-medium">{course.topicCount > 0 ? 'View Topics' : 'No Topics Yet'}</span>
                   </div>
                 </button>
               ))}
@@ -212,22 +195,22 @@ export default function AssessmentSelectionPage() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-semibold">{selectedCourseMeta.name}</h2>
-                <p className="text-sm text-muted-foreground">
+                <h2 className="text-xl font-semibold text-slate-900">{selectedCourseMeta.name}</h2>
+                <p className="text-sm text-slate-700">
                   {selectedCourseConcepts.length} topic{selectedCourseConcepts.length === 1 ? '' : 's'} available
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedCourse(null)}
-                className="px-4 py-2 rounded-full border border-gray-300 text-sm hover:bg-gray-50"
+                className="px-4 py-2 rounded-full border border-black/20 text-sm text-slate-900 hover:bg-white/400"
               >
                 Back To Courses
               </button>
             </div>
 
             {selectedCourseConcepts.length === 0 ? (
-              <div className="bg-white border rounded-xl p-8 text-center text-muted-foreground">
+              <div className="rounded-xl p-8 text-center text-slate-700 border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg">
                 No topics found for this course yet.
               </div>
             ) : (
@@ -235,20 +218,20 @@ export default function AssessmentSelectionPage() {
                 {selectedCourseConcepts.map((concept) => (
                   <div
                     key={concept.id}
-                    className="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow"
+                    className="rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow border border-black/10 bg-white/65 backdrop-blur-sm text-slate-900"
                   >
                     <div className="p-6">
                       <h3 className="text-xl font-semibold mb-2">{concept.title}</h3>
-                      <p className="text-muted-foreground mb-3">{concept.category}</p>
-                      <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <p className="text-slate-700 mb-3">{concept.category}</p>
+                      <div className="flex items-center justify-between text-sm text-slate-600">
                         <span>5 questions</span>
                         <span>{concept.masteryPct}% mastery</span>
                       </div>
                     </div>
-                    <div className="bg-[#e0f4fb] p-4 text-center">
+                    <div className="bg-white/400 p-4 text-center border-t border-black/10">
                       <button
                         type="button"
-                        className="text-[#03b2e6] font-medium"
+                        className="text-[#4cc9f0] font-medium"
                         onClick={() => router.push(`/assessment/${concept.id}/intro`)}
                       >
                         Begin Assessment
@@ -262,17 +245,17 @@ export default function AssessmentSelectionPage() {
         ) : null}
 
         {!loading && !error ? (
-          <div className="mt-10 bg-white border rounded-xl p-6">
+          <div className="mt-10 border border-black/10 rounded-xl p-6 bg-white/65 backdrop-blur-sm shadow-lg text-slate-900">
             <h2 className="text-xl font-semibold mb-4">Past Assessments</h2>
             {pastRuns.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No past assessments yet. Complete one to see history.</p>
+              <p className="text-sm text-slate-700">No past assessments yet. Complete one to see history.</p>
             ) : (
               <div className="space-y-3">
                 {pastRuns.map((run) => (
-                  <div key={run.run_id} className="rounded-lg border border-gray-200 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div key={run.run_id} className="rounded-lg border border-black/10 bg-white/40 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
                       <p className="font-medium">{String(run.concept || '').replace(/-/g, ' ')}</p>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-sm text-slate-600">
                         {new Date(run.submitted_at).toLocaleString()} • {run.correct_count}/{run.total_questions} correct
                       </p>
                     </div>
@@ -295,3 +278,6 @@ export default function AssessmentSelectionPage() {
     </div>
   );
 }
+
+
+
