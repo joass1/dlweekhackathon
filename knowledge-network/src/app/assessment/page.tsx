@@ -280,13 +280,9 @@ export default function AssessmentSelectionPage() {
                       <span className="text-sm font-semibold">{Math.round(Number(run.score || 0))}%</span>
                       <button
                         className="px-4 py-2 rounded-full bg-[#03b2e6] text-white hover:bg-[#029ad0] text-sm"
-                        onClick={() =>
-                          run.concept === 'all-concepts'
-                            ? router.push('/upload')
-                            : router.push(`/assessment/${run.concept}/take?retry=${Date.now()}`)
-                        }
+                        onClick={() => router.push(`/assessment/${run.concept}/take?retry=${Date.now()}`)}
                       >
-                        {run.concept === 'all-concepts' ? 'Upload To Retake' : 'Retake'}
+                        Retake
                       </button>
                     </div>
                   </div>

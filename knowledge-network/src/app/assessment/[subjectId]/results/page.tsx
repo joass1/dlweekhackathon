@@ -229,10 +229,10 @@ export default function AssessmentResultsPage() {
             Retry This Topic
           </button>
           <button
-            onClick={() => router.push(`/assessment/${subjectId}/intro`)}
+            onClick={() => router.push('/assessment')}
             className="bg-muted text-foreground px-8 py-3 rounded-full hover:bg-accent"
           >
-            Back to Topic
+            Back to Assessments
           </button>
         </div>
       </div>

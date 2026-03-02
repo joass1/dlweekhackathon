@@ -271,6 +271,35 @@ def _courses_collection(student_id: str):
         return None
     return db.collection("users").document(student_id).collection("courses")
 
+def _collect_material_context(student_id: str, course_id: Optional[str] = None, max_chars: int = 6000) -> str:
+    """Best-effort retrieval of uploaded chunk text for quiz generation grounding."""
+    if db is None:
+        return ""
+    try:
+        col = db.collection(vector_search.collection_name)
+        query = col.where("userId", "==", student_id)
+        if course_id:
+            query = query.where("course_id", "==", course_id)
+        try:
+            docs = list(query.order_by("created_at", direction="DESCENDING").limit(30).stream())
+        except Exception:
+            docs = list(query.limit(30).stream())
+        parts: List[str] = []
+        total = 0
+        for doc in docs:
+            text = str((doc.to_dict() or {}).get("text") or "").strip()
+            if not text:
+                continue
+            remaining = max_chars - total
+            if remaining <= 0:
+                break
+            chunk = text[:remaining]
+            parts.append(chunk)
+            total += len(chunk)
+        return "\n\n".join(parts)
+    except Exception:
+        return ""
+
 
 def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
     if db is None or FirestoreKnowledgeGraphStore is None:
@@ -607,11 +636,6 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
             unlock_until = _get_comprehensive_unlock(student_id)
             now = datetime.now(timezone.utc)
             unlock_ok = unlock_until is not None and unlock_until >= now
-            if not ticket_ok and not unlock_ok:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Comprehensive quiz can only be generated right after a successful material upload.",
-                )
             if ticket_ok and ticket_concepts:
                 concept_ids = list(dict.fromkeys([c for c in ticket_concepts if c]))
             else:
@@ -631,6 +655,7 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
             request.concept = "all-concepts"
             request.concepts = concept_ids
             request.num_questions = 20
+            request.material_context = _collect_material_context(student_id)
             # One-time unlock; next comprehensive run requires a fresh upload.
             _consume_comprehensive_unlock(student_id)
         else:
@@ -640,6 +665,9 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
                     status_code=404,
                     detail=f"Concept '{request.concept}' not found in your knowledge map.",
                 )
+            node = next((n for n in nodes if str(n.get("id", "")) == concept_id), None)
+            node_course_id = str((node or {}).get("courseId") or "").strip() or None
+            request.material_context = _collect_material_context(student_id, node_course_id)
             request.concept = concept_id
         return assessment_engine.generate_quiz(request)
     except HTTPException:
@@ -664,6 +692,8 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
     try:
         request.student_id = student_id
         result = assessment_engine.classify_mistake(request)
+        state, _ = assessment_engine.store.transaction(student_id)
+        student_quiz = state.get("quizzes", {}).get(student_id, {})
 
         # Keep user graph in sync with assessment outcomes.
         by_question = {c.question_id: c for c in result.classifications}
@@ -679,7 +709,12 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
                 "question_id": answer.question_id,
                 "mistake_type": mistake_type or "none",
             })
-            concept_for_update = str(action.get("concept") or request.concept)
+            question_payload = student_quiz.get(answer.question_id, {}) if isinstance(student_quiz, dict) else {}
+            concept_for_update = str(
+                action.get("concept")
+                or question_payload.get("concept")
+                or request.concept
+            )
             kg_update = _apply_user_kg_update(
                 student_id=student_id,
                 concept=concept_for_update,

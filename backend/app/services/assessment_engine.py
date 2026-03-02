@@ -115,13 +115,15 @@ class AssessmentEngine:
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.kg_base_url = os.getenv("KG_API_BASE_URL", "").strip()
         self.enable_llm_generation = os.getenv("ENABLE_LLM_QUIZ_GENERATION", "true").lower() == "true"
-        self.allow_rule_based_quiz_fallback = os.getenv("ALLOW_RULE_BASED_QUIZ_FALLBACK", "false").lower() == "true"
+        # Disabled by design: generic fallback questions are not acceptable.
+        self.allow_rule_based_quiz_fallback = False
         self.enable_remote_profile = os.getenv("ENABLE_REMOTE_PROFILE_LOOKUP", "false").lower() == "true"
         self.enable_legacy_global_kg_sync = os.getenv("ENABLE_LEGACY_GLOBAL_KG_SYNC", "false").lower() == "true"
         self.kg_timeout_s = float(os.getenv("KG_API_TIMEOUT_SECONDS", "2.0"))
         self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "35.0"))
-        self.fast_quiz_mode = os.getenv("FAST_QUIZ_MODE", "true").lower() == "true"
-        self.use_llm_for_comprehensive = os.getenv("USE_LLM_FOR_COMPREHENSIVE", "false").lower() == "true"
+        # Disabled by design: force content-grounded LLM generation.
+        self.fast_quiz_mode = False
+        self.use_llm_for_comprehensive = True
         self.skip_llm_classification_for_long_quiz = os.getenv(
             "SKIP_LLM_CLASSIFICATION_FOR_LONG_QUIZ", "true"
         ).lower() == "true"
@@ -292,6 +294,66 @@ class AssessmentEngine:
                 "correct_answer": "Knowns/unknowns and assumptions",
                 "explanation": "Structured setup reduces careless and conceptual mistakes.",
                 "difficulty": "easy",
+            },
+            {
+                "stem": f"A student gets a {concept} question wrong with high confidence. What is the most likely issue?",
+                "options": [
+                    "A careless slip or misread condition",
+                    "No exposure to the topic at all",
+                    "The question is impossible",
+                    "Random guessing",
+                ],
+                "correct_answer": "A careless slip or misread condition",
+                "explanation": "High confidence with an error often indicates execution mistakes.",
+                "difficulty": "easy",
+            },
+            {
+                "stem": f"Which answer pattern most strongly signals a conceptual gap in {concept}?",
+                "options": [
+                    "Applying one rule in every situation without checking assumptions",
+                    "Explaining why method A and B are equivalent here",
+                    "Testing edge cases before finalizing",
+                    "Re-deriving key steps from first principles",
+                ],
+                "correct_answer": "Applying one rule in every situation without checking assumptions",
+                "explanation": "Overgeneralizing a rule beyond its conditions is a classic conceptual mistake.",
+                "difficulty": "hard",
+            },
+            {
+                "stem": f"What is the best first move before answering a mixed-topic item that may involve {concept}?",
+                "options": [
+                    "Classify the problem type and constraints first",
+                    "Choose the longest option",
+                    "Use the method from the previous question",
+                    "Answer quickly and revisit later",
+                ],
+                "correct_answer": "Classify the problem type and constraints first",
+                "explanation": "Correct method selection depends on identifying the problem structure first.",
+                "difficulty": "medium",
+            },
+            {
+                "stem": f"Which practice strategy most improves transfer for {concept}?",
+                "options": [
+                    "Spaced retrieval across varied contexts",
+                    "Reading notes repeatedly without testing",
+                    "Repeating only one familiar example",
+                    "Timing drills without feedback",
+                ],
+                "correct_answer": "Spaced retrieval across varied contexts",
+                "explanation": "Variation plus retrieval improves durable understanding and application.",
+                "difficulty": "medium",
+            },
+            {
+                "stem": f"Which response best demonstrates robust understanding of {concept}?",
+                "options": [
+                    "Justifying each step when assumptions change",
+                    "Memorizing the exact textbook wording",
+                    "Finishing fastest regardless of rationale",
+                    "Using elimination without reasoning",
+                ],
+                "correct_answer": "Justifying each step when assumptions change",
+                "explanation": "Deep understanding is shown by adaptable reasoning under changing constraints.",
+                "difficulty": "hard",
             },
         ]
         return banks.get(concept, fallback)
@@ -565,11 +627,9 @@ class AssessmentEngine:
         num_questions: int,
         kg_context: Dict[str, Any],
         personalization: Dict[str, Any],
+        material_context: Optional[str] = None,
     ) -> List[QuizQuestion]:
         self._last_quiz_generation_error = None
-        if self.fast_quiz_mode:
-            self._last_quiz_generation_error = "FAST_QUIZ_MODE enabled."
-            return []
         if not self.client:
             self._last_quiz_generation_error = "OpenAI client is unavailable."
             return []
@@ -590,6 +650,8 @@ class AssessmentEngine:
             "- Explanations should be concise (1-2 sentences) and teach WHY the answer is correct.\n"
             "- Vary question styles: definitions, applications, comparisons, scenarios, cause-effect.\n"
             "- Each question must specify which concept it tests in the `concept` field.\n"
+            "- Do NOT generate meta-learning/study-strategy questions.\n"
+            "- Questions must test actual subject content from provided material/context.\n"
             "- Return ONLY valid JSON. No markdown fences. No extra text.\n"
         )
 
@@ -600,6 +662,12 @@ class AssessmentEngine:
 
         if context_summary:
             user_prompt_parts.append(f"Course context:\n{context_summary}\n")
+
+        if material_context:
+            user_prompt_parts.append(
+                "Uploaded material excerpts (use these as primary factual source):\n"
+                f"{material_context[:6000]}"
+            )
 
         if prerequisites:
             user_prompt_parts.append(f"Prerequisite concepts: {', '.join(prerequisites)}")
@@ -735,6 +803,7 @@ class AssessmentEngine:
         self,
         concepts: List[str],
         num_questions: int,
+        material_context: Optional[str] = None,
     ) -> List[QuizQuestion]:
         self._last_quiz_generation_error = None
         if self.fast_quiz_mode or not self.use_llm_for_comprehensive:
@@ -753,14 +822,24 @@ class AssessmentEngine:
             "You generate fast, valid MCQ quizzes. "
             "Return ONLY valid JSON with key 'questions'. "
             "Each question must include: concept, stem, options(4), correct_answer, explanation, difficulty. "
-            "concept must be one of the provided concepts."
+            "concept must be one of the provided concepts. "
+            "Questions must test factual/conceptual understanding from provided material, not study advice."
         )
         user_prompt = (
             f"Generate exactly {num_questions} questions across these concepts: {concept_csv}. "
             "Distribute questions across concepts as evenly as possible. "
+            "Use a mix of question formats: definition, scenario application, misconception diagnosis, compare/contrast, "
+            "and edge-case reasoning. Do not repeat the same stem pattern. "
+            "Do NOT ask meta-learning questions (e.g., study strategy, confidence-only prompts). "
             "Output JSON: {\"questions\": [{\"concept\":\"...\",\"stem\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],"
             "\"correct_answer\":\"...\",\"explanation\":\"...\",\"difficulty\":\"easy|medium|hard\"}]}"
         )
+        if material_context:
+            user_prompt += (
+                "\nUse these uploaded material excerpts as primary source of truth. "
+                "Every question should be answerable from this content.\n"
+                f"{material_context[:4000]}"
+            )
         try:
             completion = self.client.chat.completions.create(
                 model="gpt-5.2",
@@ -840,6 +919,50 @@ class AssessmentEngine:
             self._last_quiz_generation_error = f"OpenAI multi-concept generation failed: {exc}"
             return []
 
+    def _llm_generate_comprehensive_with_retries(
+        self,
+        concepts: List[str],
+        num_questions: int,
+        material_context: Optional[str] = None,
+    ) -> List[QuizQuestion]:
+        """Generate comprehensive quiz via smaller LLM batches to avoid request timeouts."""
+        collected: List[QuizQuestion] = []
+        seen: set[tuple[str, str]] = set()
+        batch_size = min(8, max(3, num_questions))
+        attempts = 0
+
+        while len(collected) < num_questions and attempts < 6:
+            remaining = num_questions - len(collected)
+            ask = min(batch_size, remaining)
+            # Shrink context on later attempts to improve latency.
+            if material_context:
+                cap = 4000 if attempts < 2 else (2600 if attempts < 4 else 1800)
+                batch_context = material_context[:cap]
+            else:
+                batch_context = None
+
+            chunk = self._llm_generate_questions_multi_concept(
+                concepts=concepts,
+                num_questions=ask,
+                material_context=batch_context,
+            )
+            if not chunk:
+                batch_size = max(3, batch_size - 2)
+                attempts += 1
+                continue
+
+            for q in chunk:
+                key = (str(q.concept).strip().lower(), str(q.stem).strip().lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(q)
+                if len(collected) >= num_questions:
+                    break
+            attempts += 1
+
+        return collected[:num_questions]
+
     def _difficulty_for_mastery(self, mastery: Optional[float]) -> str:
         if mastery is None:
             return "medium"
@@ -860,7 +983,9 @@ class AssessmentEngine:
         for idx in range(1, num_questions + 1):
             focus = focus_concepts[(idx - 1) % max(1, len(focus_concepts))]
             bank = self._subject_bank(focus)
-            item = bank[(idx - 1) % len(bank)]
+            # Stable per-concept offset prevents repetitive first-template questions.
+            offset = sum(ord(ch) for ch in focus) % max(1, len(bank))
+            item = bank[(offset + idx - 1) % len(bank)]
             mastery_lookup = None
             if focus == concept:
                 mastery_lookup = personalization.get("target_mastery")
@@ -892,30 +1017,18 @@ class AssessmentEngine:
         if is_comprehensive:
             state, commit = self.store.transaction(request.student_id)
             per_concept_counts = self._generate_per_concept_question_counts(requested_concepts, request.num_questions)
-            questions: List[QuizQuestion] = self._llm_generate_questions_multi_concept(
+            questions: List[QuizQuestion] = self._llm_generate_comprehensive_with_retries(
                 list(per_concept_counts.keys()),
                 request.num_questions,
+                request.material_context,
             )
             generation_source = "llm"
             if not questions:
-                # Comprehensive upload-triggered quizzes must always continue,
-                # even if LLM generation times out.
-                for concept_id, count in per_concept_counts.items():
-                    bank = self._subject_bank(concept_id)
-                    for i in range(count):
-                        item = bank[i % len(bank)]
-                        questions.append(
-                            QuizQuestion(
-                                question_id=f"all-concepts-q{len(questions) + 1}",
-                                concept=concept_id,
-                                stem=item["stem"],
-                                options=item["options"],
-                                correct_answer=item["correct_answer"],
-                                explanation=item.get("explanation"),
-                                difficulty=item.get("difficulty", "medium"),
-                            )
-                        )
-                generation_source = "fallback"
+                raise ValueError(
+                    "LLM comprehensive quiz generation failed or is unavailable. "
+                    "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
+                    f"Details: {self._last_quiz_generation_error or 'unknown'}"
+                )
 
             questions = self._assign_unique_question_ids("all-concepts", questions[: request.num_questions])
             quizzes = state.setdefault("quizzes", {})
@@ -968,21 +1081,15 @@ class AssessmentEngine:
             request.num_questions,
             kg_context,
             personalization,
+            request.material_context,
         )
         generation_source = "llm"
         if not questions:
-            if not self.allow_rule_based_quiz_fallback:
-                raise ValueError(
-                    "LLM quiz generation failed or is unavailable. "
-                    "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
-                    f"Details: {self._last_quiz_generation_error or 'unknown'}"
-                )
-            questions = self._fallback_generate_questions(
-                request.concept,
-                request.num_questions,
-                personalization,
+            raise ValueError(
+                "LLM quiz generation failed or is unavailable. "
+                "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
+                f"Details: {self._last_quiz_generation_error or 'unknown'}"
             )
-            generation_source = "fallback"
         questions = self._assign_unique_question_ids(request.concept, questions)
 
         quizzes = state.setdefault("quizzes", {})

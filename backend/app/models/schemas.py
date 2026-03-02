@@ -23,6 +23,7 @@ class QuizGenerateRequest(BaseModel):
     num_questions: int = Field(default=5, ge=1, le=20)
     concepts: Optional[List[str]] = None
     upload_ticket: Optional[str] = None
+    material_context: Optional[str] = None
 
 
 class QuizQuestion(BaseModel):

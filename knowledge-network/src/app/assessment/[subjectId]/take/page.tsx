@@ -103,17 +103,11 @@ export default function AssessmentTakePage() {
             msg.includes('not found in your knowledge map') ||
             msg.includes('API 400') ||
             msg.includes('API 404');
-          const isUploadRequiredForComprehensive =
-            isComprehensive &&
-            (msg.includes('API 403') || msg.includes('Comprehensive quiz can only be generated right after'));
 
           if (isNoConceptState) {
             setQuestions([]);
             setIsEmptyAssessment(true);
             setLoadError(null);
-          } else if (isUploadRequiredForComprehensive) {
-            setLoadError('Please upload materials to start a new comprehensive quiz.');
-            setTimeout(() => router.push('/upload'), 700);
           } else {
             setLoadError(msg || 'Could not generate the quiz. Please retry.');
           }
