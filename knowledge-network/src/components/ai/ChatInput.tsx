@@ -186,7 +186,13 @@ export function ChatInput({ onSendMessage, isLoading, placeholder, scopedTopics,
           variant="outline"
           size="icon"
           onClick={isListening ? stopListening : startListening}
-          className={isListening ? 'bg-red-100' : ''}
+          className={`border-2 ${
+            isListening
+              ? 'bg-red-100 border-red-300 text-red-700 hover:bg-red-200'
+              : 'bg-white/90 border-slate-400 text-slate-800 hover:bg-white'
+          }`}
+          aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+          title={isListening ? 'Stop voice input' : 'Start voice input'}
         >
           {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
         </Button>

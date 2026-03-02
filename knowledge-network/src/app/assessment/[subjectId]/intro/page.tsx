@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { useAuth } from '@/contexts/AuthContext';
@@ -77,7 +78,19 @@ export default function AssessmentIntroPage() {
     return (
       <div className="min-h-screen bg-background py-12">
         <div className="max-w-4xl mx-auto px-4">
-          <div className="bg-white rounded-xl shadow-sm p-8 text-center text-muted-foreground">Loading concept...</div>
+          <div className="bg-white rounded-xl shadow-sm p-8 text-center text-muted-foreground">
+            <div className="flex items-center justify-center mb-3">
+              <Image
+                src="/logo-images/favicon.png"
+                alt="Loading"
+                width={28}
+                height={28}
+                className="animate-bounce"
+                priority
+              />
+            </div>
+            Loading concept...
+          </div>
         </div>
       </div>
     );
@@ -113,7 +126,7 @@ export default function AssessmentIntroPage() {
       <div className="max-w-4xl mx-auto px-4">
         <div className="bg-white rounded-xl shadow-sm p-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold mb-3">LearnGraph: {subject.title || subject.concept}</h1>
+            <h1 className="text-3xl font-bold mb-3">Mentora: {subject.title || subject.concept}</h1>
             <p className="text-muted-foreground max-w-2xl mx-auto">
               {subject.summary || `Assess your current mastery for ${subject.title || subject.concept}.`}
             </p>

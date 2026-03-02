@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import Image from 'next/image';
 import { useRouter, useParams } from 'next/navigation';
 
 export default function MatchingPage() {
@@ -21,7 +22,16 @@ export default function MatchingPage() {
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="text-center px-4">
         <div className="mb-8">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-[#03b2e6] mx-auto"></div>
+          <div className="flex items-center justify-center">
+            <Image
+              src="/logo-images/favicon.png"
+              alt="Loading"
+              width={56}
+              height={56}
+              className="animate-bounce"
+              priority
+            />
+          </div>
         </div>
 
         <h2 className="text-2xl font-bold mb-4">Analyzing Your Knowledge Graph</h2>

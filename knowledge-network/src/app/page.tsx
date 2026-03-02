@@ -2,8 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, Loader2, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles } from 'lucide-react';
+import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
 import { useStudentId } from '@/hooks/useStudentId';
 import { useAuth } from '@/contexts/AuthContext';
@@ -150,6 +151,16 @@ export default function Page() {
 
   const faded = 'opacity-0 pointer-events-none';
   const visible = 'opacity-100';
+  const BounceLoader = ({ size = 20 }: { size?: number }) => (
+    <Image
+      src="/logo-images/favicon.png"
+      alt="Loading"
+      width={size}
+      height={size}
+      className="animate-bounce"
+      priority
+    />
+  );
 
   useEffect(() => {
     if (!isNeedsAttentionOpen && !isActivityOpen) return;
@@ -181,7 +192,7 @@ export default function Page() {
               </p>
               {loading ? (
                 <div className="flex items-center text-sm text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span className="mr-2 inline-flex"><BounceLoader size={16} /></span>
                   Preparing your focus queue...
                 </div>
               ) : attentionTotal === 0 ? (
@@ -223,7 +234,7 @@ export default function Page() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
                 {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
+                  <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
                 ) : (
                   <>
                     <p className="text-3xl font-bold mt-2">{masteryRate}%</p>
@@ -248,7 +259,7 @@ export default function Page() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Needs Attention</p>
                   {loading ? (
-                    <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
+                    <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
                   ) : (
                     <>
                       <p className="text-3xl font-bold mt-2 text-yellow-600">{attentionTotal}</p>
@@ -274,7 +285,7 @@ export default function Page() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Activity</p>
                   {loading ? (
-                    <Loader2 className="w-5 h-5 animate-spin mt-3 text-muted-foreground" />
+                    <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
                   ) : (
                     <>
                       <p className="text-3xl font-bold mt-2">{totalAttempts}</p>
@@ -336,7 +347,7 @@ export default function Page() {
             <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[680px]'}`}>
               {loading ? (
                 <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading knowledge graph...
+                  <span className="mr-2 inline-flex"><BounceLoader size={20} /></span> Loading knowledge graph...
                 </div>
               ) : (
                 <KnowledgeGraph
@@ -389,7 +400,7 @@ export default function Page() {
             <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
                 <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  <span className="mr-2 inline-flex"><BounceLoader size={20} /></span>
                   Loading concepts...
                 </div>
               ) : attentionConcepts.length === 0 ? (
@@ -456,7 +467,7 @@ export default function Page() {
             <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
                 <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  <span className="mr-2 inline-flex"><BounceLoader size={20} /></span>
                   Loading activity...
                 </div>
               ) : recentAttempts.length === 0 ? (

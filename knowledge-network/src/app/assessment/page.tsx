@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
@@ -113,14 +114,26 @@ export default function AssessmentSelectionPage() {
     <div className="min-h-screen bg-background py-12">
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4">LearnGraph Assessments</h1>
+          <h1 className="text-3xl font-bold mb-4">Mentora Assessments</h1>
           <p className="text-muted-foreground max-w-2xl mx-auto">
             Assessments are generated from your uploaded materials and current knowledge map.
           </p>
         </div>
 
         {loading ? (
-          <div className="bg-white border rounded-xl p-10 text-center text-muted-foreground">Loading concepts...</div>
+          <div className="bg-white border rounded-xl p-10 text-center text-muted-foreground">
+            <div className="flex items-center justify-center mb-3">
+              <Image
+                src="/logo-images/favicon.png"
+                alt="Loading"
+                width={28}
+                height={28}
+                className="animate-bounce"
+                priority
+              />
+            </div>
+            Loading concepts...
+          </div>
         ) : null}
 
         {!loading && error ? (
