@@ -19,28 +19,32 @@ Mentora does all three.
 
 ## How It Works
 
+The knowledge graph is the central data structure. Every feature reads from it and writes back to it, so the student's map is always a live, accurate reflection of their understanding.
+
 ### 1. Upload → Knowledge Graph
 Upload course material (PDF, TXT, MD). An LLM parses it and constructs a **directed knowledge graph**: concepts and their prerequisite relationships. This becomes the student's living learning map, visualized as an interactive D3 force graph with nodes color-coded by mastery (green/amber/red/gray) and animated prerequisite edges.
 
 ### 2. Assessment → Careless vs Conceptual Classification
 AI generates diagnostic quizzes **grounded in the student's own material** via RAG retrieval. Before each answer is revealed, students rate their **confidence (1-5)**. An LLM then classifies every wrong answer:
-- **Careless** → warning badge, mastery preserved
-- **Conceptual** → mastery drops, triggers RPKT
+- **Careless** → warning badge on the graph node, mastery preserved
+- **Conceptual** → graph node mastery drops, triggers RPKT
+
+Every answer updates the corresponding node on the knowledge graph in real time.
 
 ### 3. Recursive Prerequisite Knowledge Tracing (RPKT)
-When a conceptual gap is detected, the system walks **backward through the prerequisite chain**, probing at each level until it finds the **knowledge boundary**: the deepest concept where all prerequisites pass but the concept itself fails. These are the student's **unknown unknowns**.
+When a conceptual gap is detected, the system walks **backward through the prerequisite chain** on the knowledge graph, probing at each level until it finds the **knowledge boundary**: the deepest concept where all prerequisites pass but the concept itself fails. These are the student's **unknown unknowns**. The identified root-gap nodes are flagged on the graph for targeted remediation.
 
 ### 4. Study Missions
-Enter a time budget (e.g. 25 minutes). The system generates an optimized study queue using a scoring formula:
+Enter a time budget (e.g. 25 minutes). The system reads the knowledge graph to generate an optimized study queue using a scoring formula:
 
 ```
 score = gap_severity × prereq_depth × decay_risk × careless_frequency
 ```
 
-Concepts are filled greedily into the time budget. Each comes with **AI-generated flashcards** from uploaded material. A **Socratic tutor** guides the student through each concept with **micro-checkpoints** every few messages that update mastery in real time.
+Concepts are filled greedily into the time budget. Each comes with **AI-generated flashcards** from uploaded material. A **Socratic tutor** guides the student through each concept with **micro-checkpoints** every few messages. Pass a checkpoint and the graph node's mastery updates live.
 
 ### 5. Peer Learning Hubs + Boss Battle
-A matching algorithm groups students into **balanced peer hubs** where each member's strengths complement others' weaknesses (4-tier snake distribution with complementarity scoring). In a live **video session** (Twilio WebRTC), AI generates one question per member targeting their weakest concept. The weakest student leads first (**protégé effect**). Correct answers deal damage to a **shared 3D boss**. All players see the boss HP drop in real time. The session ends when the team defeats it together.
+A matching algorithm reads each student's knowledge graph to group them into **balanced peer hubs** where each member's strengths complement others' weaknesses (4-tier snake distribution with complementarity scoring). In a live **video session** (Twilio WebRTC), AI generates one question per member targeting their weakest graph node. The weakest student leads first (**protégé effect**). Correct answers deal damage to a **shared 3D boss** and update mastery on each participant's knowledge graph. All players see the boss HP drop in real time. The session ends when the team defeats it together.
 
 ---
 
