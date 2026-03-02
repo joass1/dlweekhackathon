@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -148,6 +148,8 @@ export default function SocraticBackground3D({
   isSpeaking?: boolean;
   onCitationClick?: (n: number) => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   const bubbleMaxHeight = useMemo(() => {
     const words = speechText.trim() ? speechText.trim().split(/\s+/).length : 0;
     const base = 240;
@@ -155,9 +157,33 @@ export default function SocraticBackground3D({
     return Math.round(base * (1 + growth));
   }, [speechText]);
 
+  // Attach a non-passive native wheel listener so we can stopPropagation
+  // and guarantee the scroll container scrolls on every browser/OS.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      const hasOverflow = scrollHeight > clientHeight;
+      if (!hasOverflow) return;
+
+      const atTop = scrollTop <= 0 && e.deltaY < 0;
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 1 && e.deltaY > 0;
+
+      if (!atTop && !atBottom) {
+        e.stopPropagation();
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [speechText]); // re-attach when content changes
+
   return (
     <BackgroundErrorBoundary>
-      <div className="absolute inset-0" aria-hidden>
+      {/* Canvas wrapper — pointer-events-none so it never steals events */}
+      <div className="absolute inset-0 pointer-events-none" aria-hidden>
         <Canvas
           dpr={[1, 1.5]}
           gl={{ alpha: true }}
@@ -175,14 +201,20 @@ export default function SocraticBackground3D({
         </Canvas>
       </div>
 
-      {/* Speech bubble rendered as plain HTML outside Canvas — no portal issues */}
+      {/* Speech bubble — plain HTML, z-20 to sit above all z-10 siblings in parent */}
       {speechText ? (
-        <div className="absolute left-1/2 top-[18%] -translate-x-1/2 z-10 pointer-events-auto">
+        <div className="absolute left-1/2 top-[18%] -translate-x-1/2 z-20 pointer-events-auto">
           <div className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm">
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
             <div
-              className="overflow-y-auto whitespace-pre-wrap pr-0.5"
-              style={{ maxHeight: `${bubbleMaxHeight}px`, overscrollBehavior: 'contain' }}
+              ref={scrollRef}
+              className="overflow-y-auto whitespace-pre-wrap pr-1"
+              style={{
+                maxHeight: `${bubbleMaxHeight}px`,
+                overscrollBehavior: 'contain',
+                WebkitOverflowScrolling: 'touch',  /* iOS Safari smooth scroll */
+                touchAction: 'pan-y',               /* touch devices: allow vertical pan */
+              }}
             >
               {expandSpeechCitations(speechText, onCitationClick)}
             </div>
