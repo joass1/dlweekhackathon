@@ -1326,6 +1326,7 @@ async def create_peer_session(
     result = peer_session_service.create_session(
         hub_id=req.hub_id,
         topic=req.topic,
+        concept_id=req.concept_id,
         member_profiles=member_profiles,
         created_by=student_id,
     )
@@ -1385,6 +1386,7 @@ async def submit_peer_answer(
         question_id=req.question_id,
         answer_text=req.answer_text,
         student_id=student_id,
+        concept_id=req.concept_id,
     )
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])

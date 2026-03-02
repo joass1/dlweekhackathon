@@ -55,7 +55,10 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
     setCreating(true);
     try {
       const token = await getIdToken();
-      const result = await createSession(groupId, selectedTopic, memberProfiles, token);
+      const selectedConcept = concepts.find((c) => c.id === selectedTopic);
+      const conceptId = selectedConcept ? selectedConcept.id : null;
+      const topicLabel = selectedConcept ? (selectedConcept.title || selectedConcept.id) : selectedTopic;
+      const result = await createSession(groupId, topicLabel, conceptId, memberProfiles, token);
       router.push(`/groups/${groupId}/session?id=${result.session_id}`);
     } catch (err) {
       console.error('Failed to create session:', err);
@@ -157,7 +160,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
             >
               <option value="">Choose a topic...</option>
               {concepts.map((c) => (
-                <option key={c.id} value={c.title || c.id}>
+                <option key={c.id} value={c.id}>
                   {c.title || c.id}
                 </option>
               ))}

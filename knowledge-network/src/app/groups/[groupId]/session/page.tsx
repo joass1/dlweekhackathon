@@ -13,6 +13,7 @@ import {
   type PeerQuestion,
   type SubmitAnswerResponse,
 } from '@/services/peer';
+import { apiFetch } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +30,11 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { WebRTCVideo } from '@/components/groups/WebRTCVideo';
+
+interface KGNodeOption {
+  id: string;
+  title: string;
+}
 
 // ── Question type icon helper ─────────────────────────────────────────────
 
@@ -61,6 +67,9 @@ export default function PeerSessionPage() {
   const [advancing, setAdvancing] = useState(false);
   const [ending, setEnding] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [conceptOptions, setConceptOptions] = useState<KGNodeOption[]>([]);
+  const [selectedConceptId, setSelectedConceptId] = useState('');
+  const [advanceError, setAdvanceError] = useState<string | null>(null);
 
   // ── Poll session state every 3s ──────────────────────────────────────
 
@@ -93,6 +102,25 @@ export default function PeerSessionPage() {
     };
   }, [fetchSession]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadConceptOptions = async () => {
+      try {
+        const token = await getIdToken();
+        const graph = await apiFetch<{ nodes: { id: string; title: string }[] }>('/api/kg/graph', undefined, token);
+        if (cancelled) return;
+        const nodes = graph.nodes ?? [];
+        setConceptOptions(nodes.map((n) => ({ id: n.id, title: n.title || n.id })));
+      } catch (err) {
+        console.error('Failed to load concept options:', err);
+      }
+    };
+    loadConceptOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken]);
+
   // ── Session timer ─────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -117,10 +145,24 @@ export default function PeerSessionPage() {
   const currentQuestion: PeerQuestion | null =
     session?.questions?.[session.current_question_index] ?? null;
 
-  // Check if this question already has an answer
-  const existingAnswer = session?.answers?.find(
-    (a) => a.question_id === currentQuestion?.question_id
-  );
+  const answersForCurrentQuestion = currentQuestion
+    ? (session?.answers?.filter((a) => a.question_id === currentQuestion.question_id) ?? [])
+    : [];
+  const existingAnswer = answersForCurrentQuestion.find((a) => a.submitted_by === studentId);
+  const answeredMemberIds = new Set(answersForCurrentQuestion.map((a) => a.submitted_by));
+  const waitingMembers = (session?.members ?? []).filter((m) => !answeredMemberIds.has(m.student_id));
+  const allMembersAnswered = waitingMembers.length === 0 && (session?.members?.length ?? 0) > 0;
+
+  useEffect(() => {
+    const defaultConcept =
+      currentQuestion?.concept_id ||
+      currentQuestion?.weak_concept ||
+      session?.selected_concept_id ||
+      '';
+    if (defaultConcept) {
+      setSelectedConceptId(defaultConcept);
+    }
+  }, [currentQuestion?.question_id, currentQuestion?.concept_id, currentQuestion?.weak_concept, session?.selected_concept_id]);
 
   const handleSubmitAnswer = async () => {
     if (!session || !currentQuestion) return;
@@ -132,7 +174,13 @@ export default function PeerSessionPage() {
     setSubmitting(true);
     try {
       const token = await getIdToken();
-      const result = await submitAnswer(session.session_id, currentQuestion.question_id, text, token);
+      const result = await submitAnswer(
+        session.session_id,
+        currentQuestion.question_id,
+        text,
+        selectedConceptId || currentQuestion.concept_id || session.selected_concept_id || null,
+        token,
+      );
       setFeedback(result);
       await fetchSession();
     } catch (err) {
@@ -145,12 +193,14 @@ export default function PeerSessionPage() {
   const handleAdvance = async () => {
     if (!session) return;
     setAdvancing(true);
+    setAdvanceError(null);
     try {
       const token = await getIdToken();
       await advanceQuestion(session.session_id, token);
       await fetchSession();
     } catch (err) {
       console.error('Failed to advance question:', err);
+      setAdvanceError(err instanceof Error ? err.message : 'Could not advance yet.');
     } finally {
       setAdvancing(false);
     }
@@ -382,6 +432,22 @@ export default function PeerSessionPage() {
                 {/* Answer area — depends on question type */}
                 {!existingAnswer && !(feedback) ? (
                   <>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Knowledge node to update</label>
+                      <select
+                        value={selectedConceptId}
+                        onChange={(e) => setSelectedConceptId(e.target.value)}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+                      >
+                        <option value="">Use question concept ({currentQuestion.concept_id || currentQuestion.weak_concept})</option>
+                        {conceptOptions.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.title} ({opt.id})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     {currentQuestion.type === 'mcq' && currentQuestion.options ? (
                       <div className="space-y-2">
                         {currentQuestion.options.map((opt, idx) => (
@@ -473,11 +539,43 @@ export default function PeerSessionPage() {
                         {feedback.explanation}
                       </p>
                     )}
+                    {(feedback?.updated_mastery !== undefined || existingAnswer?.updated_mastery !== undefined) && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Updated mastery: {Math.round((feedback?.updated_mastery ?? existingAnswer?.updated_mastery ?? 0) * 100)}% ({feedback?.mastery_status || existingAnswer?.mastery_status || 'learning'})
+                      </p>
+                    )}
                   </div>
                 )}
 
+                <div className="rounded-lg border bg-accent/40 p-3">
+                  <p className="text-xs font-medium mb-2">Round answers</p>
+                  <div className="space-y-1">
+                    {session.members.map((m) => {
+                      const memberAnswer = answersForCurrentQuestion.find((a) => a.submitted_by === m.student_id);
+                      return (
+                        <div key={m.student_id} className="flex items-center justify-between text-xs">
+                          <span>{m.name}{m.student_id === studentId ? ' (you)' : ''}</span>
+                          {memberAnswer ? (
+                            <span className={memberAnswer.is_correct ? 'text-green-700' : 'text-red-700'}>
+                              Submitted • {Math.round(memberAnswer.score * 100)}%
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">Waiting</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {(existingAnswer || feedback) && !allMembersAnswered && (
+                  <p className="text-xs text-amber-700">
+                    Waiting for: {waitingMembers.map((m) => m.name).join(', ')}
+                  </p>
+                )}
+
                 {/* Next question button */}
-                {(feedback || existingAnswer) && session.current_question_index < session.questions.length - 1 && (
+                {allMembersAnswered && session.current_question_index < session.questions.length - 1 && (
                   <Button
                     onClick={handleAdvance}
                     disabled={advancing}
@@ -492,9 +590,12 @@ export default function PeerSessionPage() {
                     Next Question
                   </Button>
                 )}
+                {advanceError && (
+                  <p className="text-xs text-red-600">{advanceError}</p>
+                )}
 
                 {/* Complete session if last question answered */}
-                {(feedback || existingAnswer) && session.current_question_index >= session.questions.length - 1 && (
+                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && (
                   <Button
                     onClick={handleEndSession}
                     disabled={ending}

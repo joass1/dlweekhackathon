@@ -18,6 +18,7 @@ export interface PeerQuestion {
   question_id: string;
   target_member: string;
   target_member_name: string;
+  concept_id: string;
   weak_concept: string;
   stem: string;
   type: 'open' | 'code' | 'math' | 'mcq';
@@ -30,16 +31,21 @@ export interface SubmittedAnswer {
   question_id: string;
   submitted_by: string;
   answer_text: string;
+  concept_id: string;
+  mistake_type: string;
   is_correct: boolean;
   score: number;
   ai_feedback: string;
   hint: string;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
 }
 
 export interface SessionState {
   session_id: string;
   hub_id: string;
   topic: string;
+  selected_concept_id?: string | null;
   status: 'waiting' | 'active' | 'completed';
   created_by: string;
   created_at?: string;
@@ -57,11 +63,16 @@ export interface CreateSessionResponse {
 
 export interface SubmitAnswerResponse {
   question_id: string;
+  submitted_by: string;
+  concept_id: string;
+  mistake_type: string;
   is_correct: boolean;
   score: number;
   ai_feedback: string;
   hint: string;
   explanation: string;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
 }
 
 export interface TwilioVideoTokenResponse {
@@ -76,6 +87,7 @@ export interface TwilioVideoTokenResponse {
 export async function createSession(
   hubId: string,
   topic: string,
+  conceptId: string | null,
   memberProfiles: MemberProfile[],
   token?: string | null,
 ): Promise<CreateSessionResponse> {
@@ -84,6 +96,7 @@ export async function createSession(
     body: JSON.stringify({
       hub_id: hubId,
       topic,
+      concept_id: conceptId,
       member_profiles: memberProfiles,
     }),
   }, token);
@@ -128,6 +141,7 @@ export async function submitAnswer(
   sessionId: string,
   questionId: string,
   answerText: string,
+  conceptId: string | null,
   token?: string | null,
 ): Promise<SubmitAnswerResponse> {
   return apiFetch<SubmitAnswerResponse>('/api/peer/session/answer', {
@@ -136,6 +150,7 @@ export async function submitAnswer(
       session_id: sessionId,
       question_id: questionId,
       answer_text: answerText,
+      concept_id: conceptId,
     }),
   }, token);
 }
@@ -143,7 +158,7 @@ export async function submitAnswer(
 export async function advanceQuestion(
   sessionId: string,
   token?: string | null,
-): Promise<{ status: string; current_question_index: number }> {
+): Promise<{ status: string; current_question_index: number; at_last_question?: boolean }> {
   return apiFetch(`/api/peer/session/${encodeURIComponent(sessionId)}/advance`, {
     method: 'POST',
   }, token);
