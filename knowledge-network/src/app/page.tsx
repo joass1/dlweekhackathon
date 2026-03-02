@@ -177,14 +177,18 @@ export default function Page() {
   }, [isNeedsAttentionOpen, isActivityOpen]);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto relative">
+    <div
+      className="min-h-full bg-cover bg-center bg-no-repeat bg-fixed"
+      style={{ backgroundImage: "url('/backgrounds/dashboardback2.png')" }}
+    >
+      <div className="p-6 max-w-7xl mx-auto overflow-x-hidden">
       <div className={`space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
         <section>
-          <h1 className="text-3xl font-bold">Welcome back, {displayName}</h1>
-          <p className="text-muted-foreground mt-1">Here&apos;s your learning overview</p>
+          <h1 className="text-3xl font-bold text-white drop-shadow-sm">Welcome back, {displayName}</h1>
+          <p className="text-white/80 mt-1">Here&apos;s your learning overview</p>
         </section>
 
-        <Card className="border-[#03b2e6]/30 bg-gradient-to-r from-[#03b2e6]/10 via-card to-card">
+        <Card className="border-white/30 bg-white/70 backdrop-blur-md shadow-lg">
           <div className="p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#0289b9] flex items-center gap-2">
@@ -213,7 +217,7 @@ export default function Page() {
               <button
                 type="button"
                 onClick={() => setIsNeedsAttentionOpen(true)}
-                className="px-4 py-2 text-sm rounded-full border hover:bg-accent transition-colors"
+                className="px-4 py-2 text-sm rounded-full border border-white/40 bg-white/30 hover:bg-white/50 transition-colors backdrop-blur-sm"
               >
                 View Attention List
               </button>
@@ -229,7 +233,7 @@ export default function Page() {
         </Card>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
-          <Card className="p-5 h-full min-h-[140px]">
+          <Card className="p-5 h-full min-h-[140px] bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
@@ -242,7 +246,7 @@ export default function Page() {
                   </>
                 )}
               </div>
-              <div className="p-2.5 rounded-xl bg-green-50">
+              <div className="p-2.5 rounded-xl bg-green-500/15">
                 <BookOpen className="h-5 w-5 text-green-500" />
               </div>
             </div>
@@ -254,7 +258,7 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open needs attention details"
           >
-            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md">
+            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
               <div className="flex justify-between items-start">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Needs Attention</p>
@@ -267,7 +271,7 @@ export default function Page() {
                     </>
                   )}
                 </div>
-                <div className="p-2.5 rounded-xl bg-yellow-50">
+                <div className="p-2.5 rounded-xl bg-yellow-500/15">
                   <AlertTriangle className="h-5 w-5 text-yellow-500" />
                 </div>
               </div>
@@ -280,7 +284,7 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open activity history"
           >
-            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md">
+            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
               <div className="flex justify-between items-start">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Activity</p>
@@ -293,7 +297,7 @@ export default function Page() {
                     </>
                   )}
                 </div>
-                <div className="p-2.5 rounded-xl bg-blue-50">
+                <div className="p-2.5 rounded-xl bg-blue-500/15">
                   <Target className="h-5 w-5 text-blue-500" />
                 </div>
               </div>
@@ -308,7 +312,7 @@ export default function Page() {
             isKGExpanded ? 'fixed inset-8 z-40' : ''
           }`}
         >
-          <Card className="overflow-hidden h-full flex flex-col">
+          <Card className="overflow-hidden h-full flex flex-col bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
             <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h3 className="font-semibold">Knowledge Map</h3>
@@ -318,7 +322,7 @@ export default function Page() {
                 <select
                   value={selectedCourse}
                   onChange={e => setSelectedCourse(e.target.value)}
-                  className="text-sm p-1.5 border rounded-lg bg-card"
+                  className="text-sm p-1.5 border border-white/40 rounded-lg bg-white/50"
                 >
                   {courses.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
@@ -496,6 +500,7 @@ export default function Page() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
