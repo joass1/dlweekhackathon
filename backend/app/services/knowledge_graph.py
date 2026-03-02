@@ -177,6 +177,14 @@ class KnowledgeGraphEngine:
                 root_gap = prerequisite_gaps[-1]  # deepest ancestor = root cause
 
         node["status"] = _compute_status(node["mastery_score"])
+        # Single-question-friendly status rules:
+        # - correct -> at least learning
+        # - wrong   -> weak
+        if is_correct:
+            if node["status"] in {"not_started", "weak"}:
+                node["status"] = "learning"
+        else:
+            node["status"] = "weak"
         self._persist_concept(concept_id)
 
         # Collect downstream dependents (for chain-green cascade detection)

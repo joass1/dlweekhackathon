@@ -147,6 +147,7 @@ tutor_service = TutorService(db, _openai_client)
 peer_session_service = PeerSessionService(db, _openai_client)
 _comprehensive_quiz_unlocks: Dict[str, datetime] = {}
 _comprehensive_quiz_tickets: Dict[str, str] = {}
+_comprehensive_quiz_ticket_concepts: Dict[str, List[str]] = {}
 COMPREHENSIVE_QUIZ_UNLOCK_MINUTES = 15
 
 
@@ -202,8 +203,9 @@ def _consume_comprehensive_unlock(student_id: str) -> None:
         pass
 
 
-def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime) -> None:
+def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime, concepts: Optional[List[str]] = None) -> None:
     _comprehensive_quiz_tickets[student_id] = ticket
+    _comprehensive_quiz_ticket_concepts[student_id] = list(dict.fromkeys([c for c in (concepts or []) if c]))
     if db is None:
         return
     try:
@@ -211,6 +213,7 @@ def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime
             {
                 "comprehensive_quiz_ticket": ticket,
                 "comprehensive_quiz_ticket_expires_at": expires_at.isoformat(),
+                "comprehensive_quiz_ticket_concepts": _comprehensive_quiz_ticket_concepts.get(student_id, []),
             },
             merge=True,
         )
@@ -218,43 +221,49 @@ def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime
         pass
 
 
-def _validate_and_consume_comprehensive_ticket(student_id: str, ticket: str) -> bool:
+def _validate_and_consume_comprehensive_ticket(student_id: str, ticket: str) -> tuple[bool, List[str]]:
     if not ticket:
-        return False
+        return False, []
     in_memory = _comprehensive_quiz_tickets.get(student_id)
     if in_memory and in_memory == ticket:
         _comprehensive_quiz_tickets.pop(student_id, None)
-        return True
+        concepts = _comprehensive_quiz_ticket_concepts.pop(student_id, [])
+        return True, concepts
     if db is None:
-        return False
+        return False, []
     try:
         doc_ref = db.collection("students").document(student_id)
         doc = doc_ref.get()
         if not doc.exists:
-            return False
+            return False, []
         data = doc.to_dict() or {}
         stored = str(data.get("comprehensive_quiz_ticket") or "")
         if stored != ticket:
-            return False
+            return False, []
         raw_exp = data.get("comprehensive_quiz_ticket_expires_at")
         if not isinstance(raw_exp, str) or not raw_exp.strip():
-            return False
+            return False, []
         exp = datetime.fromisoformat(raw_exp.replace("Z", "+00:00"))
         if exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
         if exp < datetime.now(timezone.utc):
-            return False
+            return False, []
+        concepts = data.get("comprehensive_quiz_ticket_concepts") or []
+        if not isinstance(concepts, list):
+            concepts = []
         doc_ref.set(
             {
                 "comprehensive_quiz_ticket": None,
                 "comprehensive_quiz_ticket_expires_at": None,
+                "comprehensive_quiz_ticket_concepts": [],
             },
             merge=True,
         )
         _comprehensive_quiz_tickets.pop(student_id, None)
-        return True
+        _comprehensive_quiz_ticket_concepts.pop(student_id, None)
+        return True, [str(c) for c in concepts if str(c).strip()]
     except Exception:
-        return False
+        return False, []
 
 
 def _courses_collection(student_id: str):
@@ -443,6 +452,7 @@ async def upload_files(
     uploaded_files = []
     kg_concepts_added = 0
     successful_uploads = 0
+    uploaded_concept_ids: List[str] = []
     user_kg_engine = _get_user_kg_engine(student_id)
     suggested_quiz_concept: Optional[str] = None
 
@@ -523,6 +533,10 @@ async def upload_files(
                     course_name=course_name or None,
                 )
                 kg_concepts_added += len(added)
+                for node in added:
+                    cid = str((node or {}).get("id") or "").strip()
+                    if cid:
+                        uploaded_concept_ids.append(cid)
                 if not suggested_quiz_concept and added:
                     first_id = added[0].get("id")
                     if isinstance(first_id, str) and first_id.strip():
@@ -545,7 +559,7 @@ async def upload_files(
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=COMPREHENSIVE_QUIZ_UNLOCK_MINUTES)
         ticket = uuid4().hex
         _set_comprehensive_unlock(student_id, expires_at)
-        _set_comprehensive_ticket(student_id, ticket, expires_at)
+        _set_comprehensive_ticket(student_id, ticket, expires_at, uploaded_concept_ids)
     else:
         ticket = None
 
@@ -587,7 +601,9 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
         requested = (request.concept or "").strip().lower()
         all_aliases = {"all", "all-concepts", "all_concepts", "__all__", "comprehensive"}
         if requested in all_aliases:
-            ticket_ok = _validate_and_consume_comprehensive_ticket(student_id, str(request.upload_ticket or ""))
+            ticket_ok, ticket_concepts = _validate_and_consume_comprehensive_ticket(
+                student_id, str(request.upload_ticket or "")
+            )
             unlock_until = _get_comprehensive_unlock(student_id)
             now = datetime.now(timezone.utc)
             unlock_ok = unlock_until is not None and unlock_until >= now
@@ -596,14 +612,17 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
                     status_code=403,
                     detail="Comprehensive quiz can only be generated right after a successful material upload.",
                 )
-            sorted_nodes = sorted(
-                nodes,
-                key=lambda n: (
-                    float(n.get("mastery", 0.0)),
-                    str(n.get("id", "")),
-                ),
-            )
-            concept_ids = [str(n.get("id")) for n in sorted_nodes if str(n.get("id", "")).strip()]
+            if ticket_ok and ticket_concepts:
+                concept_ids = list(dict.fromkeys([c for c in ticket_concepts if c]))
+            else:
+                sorted_nodes = sorted(
+                    nodes,
+                    key=lambda n: (
+                        float(n.get("mastery", 0.0)),
+                        str(n.get("id", "")),
+                    ),
+                )
+                concept_ids = [str(n.get("id")) for n in sorted_nodes if str(n.get("id", "")).strip()]
             if not concept_ids:
                 raise HTTPException(
                     status_code=400,

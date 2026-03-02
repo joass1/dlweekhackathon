@@ -38,6 +38,12 @@ export interface ClassifyResult {
   classifications: MistakeClassificationClient[];
   blind_spot_found_count: number;
   blind_spot_resolved_count: number;
+  score?: number;
+  per_question?: {
+    question_id: string;
+    is_correct: boolean;
+    correct_answer: string;
+  }[];
   integration_actions?: {
     question_id: string;
     mistake_type: 'careless' | 'conceptual';

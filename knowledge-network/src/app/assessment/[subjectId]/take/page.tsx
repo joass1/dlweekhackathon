@@ -187,6 +187,7 @@ export default function AssessmentTakePage() {
             per_question: classification.per_question,
           }
         : await evaluateAnswer(studentId, subjectId, answerPayload, token);
+      // Backend classify endpoint already performs integration updates (KG + tracking).
 
       saveRunToSession({
         studentId,

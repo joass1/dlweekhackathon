@@ -116,14 +116,16 @@ class AssessmentEngine:
         self.kg_base_url = os.getenv("KG_API_BASE_URL", "").strip()
         self.enable_llm_generation = os.getenv("ENABLE_LLM_QUIZ_GENERATION", "true").lower() == "true"
         self.allow_rule_based_quiz_fallback = os.getenv("ALLOW_RULE_BASED_QUIZ_FALLBACK", "false").lower() == "true"
-        self.enable_remote_profile = os.getenv("ENABLE_REMOTE_PROFILE_LOOKUP", "true").lower() == "true"
+        self.enable_remote_profile = os.getenv("ENABLE_REMOTE_PROFILE_LOOKUP", "false").lower() == "true"
         self.enable_legacy_global_kg_sync = os.getenv("ENABLE_LEGACY_GLOBAL_KG_SYNC", "false").lower() == "true"
         self.kg_timeout_s = float(os.getenv("KG_API_TIMEOUT_SECONDS", "2.0"))
         self.llm_timeout_s = float(os.getenv("LLM_TIMEOUT_SECONDS", "35.0"))
+        self.fast_quiz_mode = os.getenv("FAST_QUIZ_MODE", "true").lower() == "true"
+        self.use_llm_for_comprehensive = os.getenv("USE_LLM_FOR_COMPREHENSIVE", "false").lower() == "true"
         self.skip_llm_classification_for_long_quiz = os.getenv(
             "SKIP_LLM_CLASSIFICATION_FOR_LONG_QUIZ", "true"
         ).lower() == "true"
-        self.long_quiz_threshold = int(os.getenv("LONG_QUIZ_THRESHOLD", "10"))
+        self.long_quiz_threshold = int(os.getenv("LONG_QUIZ_THRESHOLD", "1"))
         self.client = (
             OpenAI(api_key=self.openai_key, timeout=self.llm_timeout_s)
             if self.openai_key and self.enable_llm_generation
@@ -565,6 +567,9 @@ class AssessmentEngine:
         personalization: Dict[str, Any],
     ) -> List[QuizQuestion]:
         self._last_quiz_generation_error = None
+        if self.fast_quiz_mode:
+            self._last_quiz_generation_error = "FAST_QUIZ_MODE enabled."
+            return []
         if not self.client:
             self._last_quiz_generation_error = "OpenAI client is unavailable."
             return []
@@ -732,6 +737,9 @@ class AssessmentEngine:
         num_questions: int,
     ) -> List[QuizQuestion]:
         self._last_quiz_generation_error = None
+        if self.fast_quiz_mode or not self.use_llm_for_comprehensive:
+            self._last_quiz_generation_error = "Comprehensive LLM generation disabled."
+            return []
         if not self.client:
             self._last_quiz_generation_error = "OpenAI client is unavailable."
             return []
@@ -804,6 +812,29 @@ class AssessmentEngine:
                 idx += 1
                 if len(validated) >= num_questions:
                     break
+            # Ensure broad node coverage: for <= num_questions concepts, guarantee at least
+            # one question per concept by filling missing concepts via deterministic fallback.
+            covered = {q.concept for q in validated}
+            if len(concept_list) <= num_questions:
+                for concept_id in concept_list:
+                    if concept_id in covered:
+                        continue
+                    bank = self._subject_bank(concept_id)
+                    item = bank[0]
+                    validated.append(
+                        QuizQuestion(
+                            question_id=f"all-concepts-q{len(validated) + 1}",
+                            concept=concept_id,
+                            stem=item["stem"],
+                            options=item["options"],
+                            correct_answer=item["correct_answer"],
+                            explanation=item.get("explanation"),
+                            difficulty=item.get("difficulty", "medium"),
+                        )
+                    )
+                    covered.add(concept_id)
+                    if len(validated) >= num_questions:
+                        break
             return validated[:num_questions]
         except Exception as exc:
             self._last_quiz_generation_error = f"OpenAI multi-concept generation failed: {exc}"
@@ -867,12 +898,8 @@ class AssessmentEngine:
             )
             generation_source = "llm"
             if not questions:
-                if not self.allow_rule_based_quiz_fallback:
-                    raise ValueError(
-                        "LLM quiz generation failed or is unavailable. "
-                        "Set OPENAI_API_KEY and ENABLE_LLM_QUIZ_GENERATION=true. "
-                        f"Details: {self._last_quiz_generation_error or 'unknown'}"
-                    )
+                # Comprehensive upload-triggered quizzes must always continue,
+                # even if LLM generation times out.
                 for concept_id, count in per_concept_counts.items():
                     bank = self._subject_bank(concept_id)
                     for i in range(count):
@@ -1090,7 +1117,7 @@ class AssessmentEngine:
         allow_llm: bool = True,
     ) -> MistakeClassification:
         tested_concept = str(question.get("concept") or concept)
-        if allow_llm:
+        if allow_llm and not self.fast_quiz_mode:
             llm_result = self._llm_classify_ambiguous(tested_concept, question, selected_answer, confidence_1_to_5)
             if llm_result:
                 return llm_result
@@ -1139,6 +1166,7 @@ class AssessmentEngine:
         classifications: List[MistakeClassification] = []
         integration_actions: List[Dict[str, Any]] = []
         review_items: List[Dict[str, Any]] = []
+        per_question: List[EvaluatedAnswer] = []
         correct_count = 0
 
         for answer in request.answers:
@@ -1146,6 +1174,13 @@ class AssessmentEngine:
             if not question:
                 raise ValueError(f"Unknown question_id: {answer.question_id}")
             is_correct = answer.selected_answer == question["correct_answer"]
+            per_question.append(
+                EvaluatedAnswer(
+                    question_id=answer.question_id,
+                    is_correct=is_correct,
+                    correct_answer=question["correct_answer"],
+                )
+            )
             if is_correct:
                 correct_count += 1
                 previous = student_cls.get(answer.question_id)
@@ -1284,11 +1319,14 @@ class AssessmentEngine:
             del student_runs[:-100]
 
         commit(state)
+        score = round((correct_count / len(request.answers)) * 100, 2) if request.answers else 0.0
         return ClassifyResponse(
             classifications=classifications,
             blind_spot_found_count=student_blind["found"],
             blind_spot_resolved_count=student_blind["resolved"],
             integration_actions=integration_actions,
+            score=score,
+            per_question=per_question,
         )
 
     @staticmethod
