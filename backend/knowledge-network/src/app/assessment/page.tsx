@@ -1,8 +1,18 @@
-// src/app/assessment/page.tsx
 'use client';
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
+import type { LucideIcon } from 'lucide-react';
+import { Atom, Gauge, Orbit } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 
 interface Subject {
   id: string;
@@ -10,72 +20,78 @@ interface Subject {
   description: string;
   totalQuestions: number;
   timeEstimate: string;
-  icon: string;
+  icon: LucideIcon;
 }
 
 const subjects: Subject[] = [
   {
     id: 'newtons-laws',
     title: "Newton's Laws of Motion",
-    description: "Test your understanding of the fundamental principles of motion and forces.",
+    description: 'Test your understanding of the fundamental principles of motion and forces.',
     totalQuestions: 5,
-    timeEstimate: "10-15 minutes",
-    icon: "🎯"
+    timeEstimate: '10-15 minutes',
+    icon: Atom,
   },
   {
     id: 'energy-work',
-    title: "Energy and Work",
-    description: "Assess your knowledge of energy conservation, work, and power.",
+    title: 'Energy and Work',
+    description: 'Assess your knowledge of energy conservation, work, and power.',
     totalQuestions: 5,
-    timeEstimate: "10-15 minutes",
-    icon: "⚡"
+    timeEstimate: '10-15 minutes',
+    icon: Gauge,
   },
   {
     id: 'momentum',
-    title: "Momentum and Collisions",
-    description: "Evaluate your grasp of momentum conservation and collision analysis.",
+    title: 'Momentum and Collisions',
+    description: 'Evaluate your grasp of momentum conservation and collision analysis.',
     totalQuestions: 5,
-    timeEstimate: "10-15 minutes",
-    icon: "🎱"
-  }
+    timeEstimate: '10-15 minutes',
+    icon: Orbit,
+  },
 ];
 
 export default function AssessmentSelectionPage() {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
-      <div className="max-w-6xl mx-auto px-4">
-        <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold mb-4">Knowledge Assessments</h1>
-          <p className="text-gray-600 max-w-2xl mx-auto">
-            Choose a subject to assess your understanding and get matched with study partners 
-            who complement your learning style.
-          </p>
-        </div>
+    <div className="p-6">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold">Knowledge Assessments</h1>
+        <p className="mt-2 max-w-3xl text-muted-foreground">
+          Choose a subject to assess your understanding and get matched with study partners who complement your learning
+          style.
+        </p>
+      </div>
 
-        <div className="grid md:grid-cols-3 gap-6">
-          {subjects.map((subject) => (
-            <div 
-              key={subject.id}
-              className="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => router.push(`/assessment/${subject.id}/intro`)}
-            >
-              <div className="p-6">
-                <div className="text-4xl mb-4">{subject.icon}</div>
-                <h2 className="text-xl font-semibold mb-2">{subject.title}</h2>
-                <p className="text-gray-600 mb-4">{subject.description}</p>
-                <div className="flex items-center justify-between text-sm text-gray-500">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+        {subjects.map((subject) => {
+          const Icon = subject.icon;
+
+          return (
+            <Card key={subject.id} className="flex h-full flex-col justify-between transition-shadow hover:shadow-lg">
+              <CardHeader className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle>{subject.title}</CardTitle>
+                  <Icon className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <CardDescription>{subject.description}</CardDescription>
+              </CardHeader>
+
+              <CardContent className="pb-0">
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
                   <span>{subject.totalQuestions} questions</span>
                   <span>{subject.timeEstimate}</span>
                 </div>
-              </div>
-              <div className="bg-blue-50 p-4 text-center">
-                <span className="text-blue-600 font-medium">Start Assessment →</span>
-              </div>
-            </div>
-          ))}
-        </div>
+              </CardContent>
+
+              <CardFooter>
+                <Button className="w-full" onClick={() => router.push(`/assessment/${subject.id}/intro`)}>
+                  Start Assessment
+                </Button>
+              </CardFooter>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

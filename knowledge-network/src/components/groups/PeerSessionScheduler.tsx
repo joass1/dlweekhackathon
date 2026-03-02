@@ -7,6 +7,7 @@ import { Video, Users, Loader2, Play } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useStudentId } from '@/hooks/useStudentId';
+import { apiFetch } from '@/services/api';
 import {
   getActiveSession,
   createSession,
@@ -18,7 +19,7 @@ import {
 interface Props {
   groupId: string;
   memberProfiles?: MemberProfile[];
-  concepts?: { id: string; title: string }[];
+  concepts?: { id: string; title: string; courseId?: string }[];
 }
 
 export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = [] }: Props) {
@@ -31,6 +32,9 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [selectedTopic, setSelectedTopic] = useState('');
+  const [courses, setCourses] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedCourse, setSelectedCourse] = useState('');
+  const [startError, setStartError] = useState<string | null>(null);
 
   // Check for existing active session
   useEffect(() => {
@@ -50,15 +54,62 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
     return () => { cancelled = true; };
   }, [groupId, getIdToken]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadCourses = async () => {
+      try {
+        const token = await getIdToken();
+        const result = await apiFetch<{ courses?: Array<{ id: string; name: string }> }>('/api/courses', undefined, token);
+        if (cancelled) return;
+        const list = Array.isArray(result.courses) ? result.courses : [];
+        setCourses(list);
+        if (!selectedCourse && list.length > 0) {
+          setSelectedCourse(list[0].id);
+        }
+      } catch {
+        if (!cancelled) setCourses([]);
+      }
+    };
+    loadCourses();
+    return () => { cancelled = true; };
+  }, [getIdToken]);
+
+  const filteredConcepts = selectedCourse
+    ? concepts.filter((c) => !c.courseId || c.courseId === selectedCourse)
+    : concepts;
+
+  useEffect(() => {
+    if (!selectedTopic) return;
+    if (concepts.length === 0) return;
+    const exists = filteredConcepts.some((c) => c.id === selectedTopic);
+    if (!exists) setSelectedTopic('');
+  }, [selectedCourse, selectedTopic, concepts.length, filteredConcepts]);
+
   const handleStartSession = async () => {
-    if (!selectedTopic || memberProfiles.length === 0) return;
+    if (memberProfiles.length === 0) return;
+    setStartError(null);
     setCreating(true);
     try {
       const token = await getIdToken();
-      const result = await createSession(groupId, selectedTopic, memberProfiles, token);
+      const selectedConcept = concepts.find((c) => c.id === selectedTopic);
+      const conceptId = selectedConcept ? selectedConcept.id : null;
+      const selectedCourseRow = courses.find((c) => c.id === selectedCourse);
+      const topicLabel = selectedConcept
+        ? (selectedConcept.title || selectedConcept.id)
+        : (selectedTopic.trim() || selectedCourseRow?.name || '');
+      const result = await createSession(
+        groupId,
+        topicLabel,
+        conceptId,
+        selectedCourse || null,
+        selectedCourseRow?.name || null,
+        memberProfiles,
+        token,
+      );
       router.push(`/groups/${groupId}/session?id=${result.session_id}`);
     } catch (err) {
       console.error('Failed to create session:', err);
+      setStartError(err instanceof Error ? err.message : 'Failed to create session');
       setCreating(false);
     }
   };
@@ -103,6 +154,11 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         <CardContent className="space-y-4">
           <div className="text-sm">
             <p><span className="font-medium">Topic:</span> {activeSession.topic}</p>
+            {(activeSession.course_name || activeSession.course_id) && (
+              <p className="text-muted-foreground mt-1">
+                <span className="font-medium">Course:</span> {activeSession.course_name || activeSession.course_id}
+              </p>
+            )}
             <p className="text-muted-foreground mt-1">
               <Users className="w-3 h-3 inline mr-1" />
               {activeSession.members.length}/{activeSession.expected_members} members joined
@@ -147,7 +203,24 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
           Start a collaborative session with your hub. AI will generate round-robin questions targeting each member&apos;s weak areas.
         </p>
 
-        {concepts.length > 0 ? (
+        {courses.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-2">Select course:</label>
+            <select
+              value={selectedCourse}
+              onChange={(e) => setSelectedCourse(e.target.value)}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+            >
+              {courses.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {filteredConcepts.length > 0 ? (
           <div>
             <label className="text-sm font-medium block mb-2">Select a topic to study together:</label>
             <select
@@ -155,9 +228,9 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
               onChange={(e) => setSelectedTopic(e.target.value)}
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
             >
-              <option value="">Choose a topic...</option>
-              {concepts.map((c) => (
-                <option key={c.id} value={c.title || c.id}>
+              <option value="">Auto-pick from uploaded chunks</option>
+              {filteredConcepts.map((c) => (
+                <option key={c.id} value={c.id}>
                   {c.title || c.id}
                 </option>
               ))}
@@ -178,7 +251,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
 
         <Button
           onClick={handleStartSession}
-          disabled={!selectedTopic.trim() || creating || memberProfiles.length === 0}
+          disabled={creating || memberProfiles.length === 0 || (!selectedTopic.trim() && !selectedCourse.trim())}
           className="bg-[#03b2e6] hover:bg-[#029ad0] text-white"
         >
           {creating ? (
@@ -197,6 +270,11 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         {memberProfiles.length === 0 && (
           <p className="text-xs text-amber-600">
             Hub member data is needed to start a session. Make sure all members have uploaded materials and completed assessments.
+          </p>
+        )}
+        {startError && (
+          <p className="text-xs text-red-600">
+            {startError.replace(/^API \d+:\s*/i, '')}
           </p>
         )}
       </CardContent>

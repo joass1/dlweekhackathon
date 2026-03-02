@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 
 type CharacterModelProps = {
@@ -12,7 +12,8 @@ type CharacterModelProps = {
 /** Expand [N] citations in a single text segment. */
 function inlineCitations(
   text: string,
-  onCitationClick?: (n: number) => void
+  sectionIndex: number,
+  onCitationClick?: (n: number, sectionIndex: number) => void
 ): React.ReactNode[] {
   if (!/\[\d+\]/.test(text)) return [text];
   const parts = text.split(/(\[\d+\])/);
@@ -24,7 +25,7 @@ function inlineCitations(
         <sup
           key={i}
           className="cursor-pointer inline-flex items-center justify-center w-4 h-4 text-[0.6em] font-bold text-white bg-[#03b2e6] hover:bg-[#0291be] rounded-full ml-0.5 mr-0.5 transition-colors"
-          onClick={() => onCitationClick?.(n)}
+          onClick={() => onCitationClick?.(n, sectionIndex)}
           title={`Jump to source ${n}`}
         >
           {n}
@@ -83,28 +84,46 @@ function deduplicateSpeechCitations(content: string): string {
   return result.join('');
 }
 
-/** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers. */
+/** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers.
+ *  Section index `i` is passed through to onCitationClick so callers know which
+ *  message's [N] was clicked (section 0 = initial prompt, 1 = first assistant reply, …). */
 function expandSpeechCitations(
   text: string,
-  onCitationClick?: (n: number) => void
+  onCitationClick?: (n: number, sectionIndex: number) => void
 ): React.ReactNode {
   const sections = text.split(/\n?%%SEP%%\n?/);
   if (sections.length <= 1) {
-    return inlineCitations(deduplicateSpeechCitations(text), onCitationClick);
+    return inlineCitations(deduplicateSpeechCitations(text), 0, onCitationClick);
   }
   return sections.map((section, i) => (
     <React.Fragment key={i}>
       {i > 0 && <hr className="my-2 border-slate-300" />}
-      <span>{inlineCitations(deduplicateSpeechCitations(section), onCitationClick)}</span>
+      <span>{inlineCitations(deduplicateSpeechCitations(section), i, onCitationClick)}</span>
     </React.Fragment>
   ));
 }
 
 function CharacterModel({ isSpeaking }: CharacterModelProps) {
   const gltf = useGLTF('/models/king.gltf');
+  const { actions } = useAnimations(gltf.animations, gltf.scene);
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const headPitchRef = useRef(0);
+
+  useEffect(() => {
+    const idleNeutral = actions?.Idle_Neutral ?? actions?.Idle;
+    if (!idleNeutral) return;
+
+    idleNeutral.reset();
+    idleNeutral.setLoop(THREE.LoopRepeat, Infinity);
+    idleNeutral.clampWhenFinished = false;
+    idleNeutral.fadeIn(0.25).play();
+
+    return () => {
+      idleNeutral.fadeOut(0.2);
+      idleNeutral.stop();
+    };
+  }, [actions]);
 
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
@@ -123,16 +142,16 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
   useFrame(({ clock }, delta) => {
     if (!motionGroupRef.current) return;
     const t = clock.getElapsedTime();
-    const breathe = 1 + Math.sin(t * 1.0) * 0.001225;
-    const sway = Math.sin(t * 0.45) * 0.00147;
-    const bob = Math.sin(t * 0.65) * 0.001225;
+    const breathe = 1 + Math.sin(t * 0.7) * 0.0005;
+    const sway = Math.sin(t * 0.22) * 0.0006;
+    const bob = Math.sin(t * 0.3) * 0.0005;
 
     motionGroupRef.current.position.x = sway;
     motionGroupRef.current.position.y = bob;
-    motionGroupRef.current.rotation.y = Math.sin(t * 0.2) * 0.0049;
+    motionGroupRef.current.rotation.y = Math.sin(t * 0.15) * 0.0025;
     motionGroupRef.current.scale.set(breathe, breathe, breathe);
 
-    const targetPitch = isSpeaking ? Math.sin(t * 4.8) * 0.00343 : 0;
+    const targetPitch = isSpeaking ? Math.sin(t * 4.2) * 0.004 : 0;
     headPitchRef.current += (targetPitch - headPitchRef.current) * Math.min(1, delta * 8);
     motionGroupRef.current.rotation.x = headPitchRef.current;
   });
@@ -196,9 +215,10 @@ export default function SocraticBackground3D({
 }: {
   speechText?: string;
   isSpeaking?: boolean;
-  onCitationClick?: (n: number) => void;
+  onCitationClick?: (n: number, sectionIndex: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const prevSpeechTextRef = useRef('');
 
   // Attach a non-passive native wheel listener so we can stopPropagation
   // and guarantee the scroll container scrolls on every browser/OS.
@@ -222,6 +242,23 @@ export default function SocraticBackground3D({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [speechText]); // re-attach when content changes
+
+  // Auto-scroll to the newest generated content whenever the assistant reply updates.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    if (!speechText || speechText === prevSpeechTextRef.current) return;
+    prevSpeechTextRef.current = speechText;
+
+    requestAnimationFrame(() => {
+      try {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } catch {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+  }, [speechText]);
 
   return (
     <BackgroundErrorBoundary>
@@ -255,9 +292,9 @@ export default function SocraticBackground3D({
           className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
           style={{ top: 'calc(14% + 8px)' }}
         >
-          <div className="relative w-[545px] rounded-lg border border-white/70 bg-white/95 px-3.5 py-3 text-[14px] leading-snug text-slate-900 shadow-xl backdrop-blur-sm">
+          <div className="relative w-[545px] rounded-lg border border-white/20 bg-slate-900/60 px-3.5 py-3 text-[14px] leading-snug text-white shadow-xl backdrop-blur-md">
             {/* Tail triangle — points down toward the character's head */}
-            <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/70 bg-white/95" />
+            <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/20 bg-slate-900/60" />
             <div
               ref={scrollRef}
               className="overflow-y-auto whitespace-pre-wrap pr-1"

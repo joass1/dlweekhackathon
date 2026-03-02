@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
@@ -20,6 +20,25 @@ interface ContextItem {
   score: number;
 }
 
+function generateId(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto) {
+    if (typeof globalThis.crypto.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+
+    if (typeof globalThis.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      globalThis.crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+      return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+    }
+  }
+
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function AIAssistantPage() {
   const { data: session } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -30,7 +49,7 @@ export default function AIAssistantPage() {
     setIsLoading(true);
     try {
       const userMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         content,
         role: 'user',
         timestamp: new Date()
@@ -56,7 +75,7 @@ export default function AIAssistantPage() {
       setActiveNotes(context);
 
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         content: answer,
         role: 'assistant',
         timestamp: new Date(),

@@ -1,12 +1,19 @@
 import json
 import os
 import pathlib
+import json
+import hmac
+import hashlib
+import base64
+import time
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import timedelta
+from typing import Dict, Any, Dict, List, Optional
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -58,6 +65,7 @@ from app.models.peer_schemas import (
     SessionStateResponse,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
+    TwilioVideoTokenResponse,
 )
 from app.models.tutor_schemas import (
     EmbedContentRequest, EmbedContentResponse,
@@ -145,12 +153,160 @@ if not openai_api_key:
 _openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 tutor_service = TutorService(db, _openai_client)
 peer_session_service = PeerSessionService(db, _openai_client)
+_comprehensive_quiz_unlocks: Dict[str, datetime] = {}
+_comprehensive_quiz_tickets: Dict[str, str] = {}
+_comprehensive_quiz_ticket_concepts: Dict[str, List[str]] = {}
+COMPREHENSIVE_QUIZ_UNLOCK_MINUTES = 15
+
+
+def _set_comprehensive_unlock(student_id: str, expires_at: datetime) -> None:
+    _comprehensive_quiz_unlocks[student_id] = expires_at
+    if db is None:
+        return
+    try:
+        db.collection("students").document(student_id).set(
+            {
+                "comprehensive_quiz_unlock_until": expires_at.isoformat(),
+            },
+            merge=True,
+        )
+    except Exception:
+        pass
+
+
+def _get_comprehensive_unlock(student_id: str) -> Optional[datetime]:
+    in_memory = _comprehensive_quiz_unlocks.get(student_id)
+    if in_memory is not None:
+        return in_memory
+    if db is None:
+        return None
+    try:
+        doc = db.collection("students").document(student_id).get()
+        if not doc.exists:
+            return None
+        raw = (doc.to_dict() or {}).get("comprehensive_quiz_unlock_until")
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        _comprehensive_quiz_unlocks[student_id] = dt
+        return dt
+    except Exception:
+        return None
+
+
+def _consume_comprehensive_unlock(student_id: str) -> None:
+    _comprehensive_quiz_unlocks.pop(student_id, None)
+    if db is None:
+        return
+    try:
+        db.collection("students").document(student_id).set(
+            {
+                "comprehensive_quiz_unlock_until": None,
+            },
+            merge=True,
+        )
+    except Exception:
+        pass
+
+
+def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime, concepts: Optional[List[str]] = None) -> None:
+    _comprehensive_quiz_tickets[student_id] = ticket
+    _comprehensive_quiz_ticket_concepts[student_id] = list(dict.fromkeys([c for c in (concepts or []) if c]))
+    if db is None:
+        return
+    try:
+        db.collection("students").document(student_id).set(
+            {
+                "comprehensive_quiz_ticket": ticket,
+                "comprehensive_quiz_ticket_expires_at": expires_at.isoformat(),
+                "comprehensive_quiz_ticket_concepts": _comprehensive_quiz_ticket_concepts.get(student_id, []),
+            },
+            merge=True,
+        )
+    except Exception:
+        pass
+
+
+def _validate_and_consume_comprehensive_ticket(student_id: str, ticket: str) -> tuple[bool, List[str]]:
+    if not ticket:
+        return False, []
+    in_memory = _comprehensive_quiz_tickets.get(student_id)
+    if in_memory and in_memory == ticket:
+        _comprehensive_quiz_tickets.pop(student_id, None)
+        concepts = _comprehensive_quiz_ticket_concepts.pop(student_id, [])
+        return True, concepts
+    if db is None:
+        return False, []
+    try:
+        doc_ref = db.collection("students").document(student_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return False, []
+        data = doc.to_dict() or {}
+        stored = str(data.get("comprehensive_quiz_ticket") or "")
+        if stored != ticket:
+            return False, []
+        raw_exp = data.get("comprehensive_quiz_ticket_expires_at")
+        if not isinstance(raw_exp, str) or not raw_exp.strip():
+            return False, []
+        exp = datetime.fromisoformat(raw_exp.replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            return False, []
+        concepts = data.get("comprehensive_quiz_ticket_concepts") or []
+        if not isinstance(concepts, list):
+            concepts = []
+        doc_ref.set(
+            {
+                "comprehensive_quiz_ticket": None,
+                "comprehensive_quiz_ticket_expires_at": None,
+                "comprehensive_quiz_ticket_concepts": [],
+            },
+            merge=True,
+        )
+        _comprehensive_quiz_tickets.pop(student_id, None)
+        _comprehensive_quiz_ticket_concepts.pop(student_id, None)
+        return True, [str(c) for c in concepts if str(c).strip()]
+    except Exception:
+        return False, []
 
 
 def _courses_collection(student_id: str):
     if db is None:
         return None
     return db.collection("users").document(student_id).collection("courses")
+
+def _collect_material_context(student_id: str, course_id: Optional[str] = None, max_chars: int = 6000) -> str:
+    """Best-effort retrieval of uploaded chunk text for quiz generation grounding."""
+    if db is None:
+        return ""
+    try:
+        col = db.collection(vector_search.collection_name)
+        query = col.where("userId", "==", student_id)
+        if course_id:
+            query = query.where("course_id", "==", course_id)
+        try:
+            docs = list(query.order_by("created_at", direction="DESCENDING").limit(30).stream())
+        except Exception:
+            docs = list(query.limit(30).stream())
+        parts: List[str] = []
+        total = 0
+        for doc in docs:
+            text = str((doc.to_dict() or {}).get("text") or "").strip()
+            if not text:
+                continue
+            remaining = max_chars - total
+            if remaining <= 0:
+                break
+            chunk = text[:remaining]
+            parts.append(chunk)
+            total += len(chunk)
+        return "\n\n".join(parts)
+    except Exception:
+        return ""
 
 
 def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
@@ -163,8 +319,54 @@ def _get_user_kg_engine(student_id: str) -> KnowledgeGraphEngine:
     return user_engine
 
 
+def _clean_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if len(value) >= 2 and ((value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")):
+        value = value[1:-1].strip()
+    return value
+
+
 def _normalize_lookup(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _b64url_json(data: dict) -> str:
+    raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_bytes(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _create_twilio_video_jwt_without_sdk(
+    account_sid: str,
+    api_key_sid: str,
+    api_key_secret: str,
+    identity: str,
+    room_name: str,
+    ttl_seconds: int,
+) -> str:
+    now = int(time.time())
+    header = {"typ": "JWT", "alg": "HS256", "cty": "twilio-fpa;v=1"}
+    payload = {
+        "jti": f"{api_key_sid}-{now}",
+        "iss": api_key_sid,
+        "sub": account_sid,
+        "exp": now + ttl_seconds,
+        "nbf": now,
+        "grants": {
+            "identity": identity,
+            "video": {"room": room_name},
+        },
+    }
+    signing_input = f"{_b64url_json(header)}.{_b64url_json(payload)}"
+    signature = hmac.new(
+        api_key_secret.encode("utf-8"),
+        signing_input.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{signing_input}.{_b64url_bytes(signature)}"
 
 
 def _resolve_user_concept_id(raw_concept: str, nodes: List[dict]) -> Optional[str]:
@@ -283,7 +485,29 @@ class StudyMissionFlashcardsRequest(BaseModel):
 @app.get("/api/courses")
 async def get_courses(student_id: str = Depends(get_student_id)):
     if db is None:
-        return {"courses": []}
+        # Firestore unavailable: derive course list from the user's KG nodes.
+        try:
+            user_kg_engine = _get_user_kg_engine(student_id)
+            nodes = user_kg_engine.get_graph_data().get("nodes", [])
+            seen: Dict[str, str] = {}
+            for node in nodes:
+                course_id = str((node or {}).get("courseId") or "").strip()
+                if not course_id or course_id in seen:
+                    continue
+                category = str((node or {}).get("category") or "").strip()
+                name = category or course_id.replace("-", " ").replace("_", " ").title()
+                seen[course_id] = name
+
+            courses = sorted(
+                [{"id": cid, "name": cname} for cid, cname in seen.items()],
+                key=lambda x: x["name"].lower(),
+            )
+            if courses:
+                return {"courses": courses}
+        except Exception as e:
+            print(f"Warning: failed to infer courses from local KG for {student_id}: {e}")
+
+        return {"courses": DEFAULT_COURSES}
     try:
         courses_col = _courses_collection(student_id)
         if courses_col is None:
@@ -687,6 +911,8 @@ async def upload_files(
 
     uploaded_files = []
     kg_concepts_added = 0
+    successful_uploads = 0
+    uploaded_concept_ids: List[str] = []
     user_kg_engine = _get_user_kg_engine(student_id)
     suggested_quiz_concept: Optional[str] = None
 
@@ -706,6 +932,7 @@ async def upload_files(
             text_chunks = process_file(str(file_path))
             if not text_chunks:
                 uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "success"})
+                successful_uploads += 1
                 continue
 
             full_text = " ".join(text_chunks)
@@ -766,6 +993,10 @@ async def upload_files(
                     course_name=course_name or None,
                 )
                 kg_concepts_added += len(added)
+                for node in added:
+                    cid = str((node or {}).get("id") or "").strip()
+                    if cid:
+                        uploaded_concept_ids.append(cid)
                 if not suggested_quiz_concept and added:
                     first_id = added[0].get("id")
                     if isinstance(first_id, str) and first_id.strip():
@@ -774,6 +1005,7 @@ async def upload_files(
                 print(f"Warning: KG build failed for {safe_name}: {e}")
 
             uploaded_files.append({"filename": safe_name, "chunks": len(text_chunks), "status": "success"})
+            successful_uploads += 1
 
         except Exception as e:
             import traceback
@@ -783,11 +1015,21 @@ async def upload_files(
             if file_path.exists():
                 file_path.unlink()
 
+    if successful_uploads > 0:
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=COMPREHENSIVE_QUIZ_UNLOCK_MINUTES)
+        ticket = uuid4().hex
+        _set_comprehensive_unlock(student_id, expires_at)
+        _set_comprehensive_ticket(student_id, ticket, expires_at, uploaded_concept_ids)
+    else:
+        ticket = None
+
     return {
         "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
         "files": uploaded_files,
         "kg_concepts_added": kg_concepts_added,
         "suggested_quiz_concept": suggested_quiz_concept,
+        "comprehensive_quiz_ticket": ticket,
+        "uploaded_concept_ids": uploaded_concept_ids,
     }
 
 
@@ -814,17 +1056,54 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
             detail="No knowledge-map concepts found for this student. Upload study materials first.",
         )
 
-    concept_id = _resolve_user_concept_id(request.concept, nodes)
-    if not concept_id:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Concept '{request.concept}' not found in your knowledge map.",
-        )
-
     try:
         request.student_id = student_id
-        request.concept = concept_id
+        request.num_questions = max(1, min(int(request.num_questions), 20))
+        requested = (request.concept or "").strip().lower()
+        all_aliases = {"all", "all-concepts", "all_concepts", "__all__", "comprehensive"}
+        if requested in all_aliases:
+            ticket_ok, ticket_concepts = _validate_and_consume_comprehensive_ticket(
+                student_id, str(request.upload_ticket or "")
+            )
+            unlock_until = _get_comprehensive_unlock(student_id)
+            now = datetime.now(timezone.utc)
+            unlock_ok = unlock_until is not None and unlock_until >= now
+            if ticket_ok and ticket_concepts:
+                concept_ids = list(dict.fromkeys([c for c in ticket_concepts if c]))
+            else:
+                sorted_nodes = sorted(
+                    nodes,
+                    key=lambda n: (
+                        float(n.get("mastery", 0.0)),
+                        str(n.get("id", "")),
+                    ),
+                )
+                concept_ids = [str(n.get("id")) for n in sorted_nodes if str(n.get("id", "")).strip()]
+            if not concept_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No concepts available for comprehensive quiz generation.",
+                )
+            request.concept = "all-concepts"
+            request.concepts = concept_ids
+            request.num_questions = 20
+            request.material_context = _collect_material_context(student_id)
+            # One-time unlock; next comprehensive run requires a fresh upload.
+            _consume_comprehensive_unlock(student_id)
+        else:
+            concept_id = _resolve_user_concept_id(request.concept, nodes)
+            if not concept_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Concept '{request.concept}' not found in your knowledge map.",
+                )
+            node = next((n for n in nodes if str(n.get("id", "")) == concept_id), None)
+            node_course_id = str((node or {}).get("courseId") or "").strip() or None
+            request.material_context = _collect_material_context(student_id, node_course_id)
+            request.concept = concept_id
         return assessment_engine.generate_quiz(request)
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -845,6 +1124,8 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
     try:
         request.student_id = student_id
         result = assessment_engine.classify_mistake(request)
+        state, _ = assessment_engine.store.transaction(student_id)
+        student_quiz = state.get("quizzes", {}).get(student_id, {})
 
         # Keep user graph in sync with assessment outcomes.
         by_question = {c.question_id: c for c in result.classifications}
@@ -856,16 +1137,22 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
             cls = by_question.get(answer.question_id)
             is_correct = cls is None
             mistake_type = None if is_correct else cls.mistake_type
-            kg_update = _apply_user_kg_update(
-                student_id=student_id,
-                concept=request.concept,
-                is_correct=is_correct,
-                mistake_type=mistake_type,
-            )
             action = by_question_action.get(answer.question_id, {
                 "question_id": answer.question_id,
                 "mistake_type": mistake_type or "none",
             })
+            question_payload = student_quiz.get(answer.question_id, {}) if isinstance(student_quiz, dict) else {}
+            concept_for_update = str(
+                action.get("concept")
+                or question_payload.get("concept")
+                or request.concept
+            )
+            kg_update = _apply_user_kg_update(
+                student_id=student_id,
+                concept=concept_for_update,
+                is_correct=is_correct,
+                mistake_type=mistake_type,
+            )
             action["mistake_type"] = action.get("mistake_type", mistake_type or "none")
             if kg_update is not None:
                 action["kg_update"] = kg_update
@@ -1089,6 +1376,10 @@ class UpdateMasteryRequest(BaseModel):
     is_correct: bool
     is_careless: Optional[bool] = False
 
+class SetMasteryRequest(BaseModel):
+    concept_id: str
+    mastery_percent: float
+
 
 class DiagnoseMistakeRequest(BaseModel):
     concept_id: str
@@ -1129,6 +1420,21 @@ async def kg_update_mastery(req: UpdateMasteryRequest, student_id: str = Depends
             is_careless=req.is_careless or False,
         )
         return {"status": "ok", **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/kg/set_mastery")
+async def kg_set_mastery(req: SetMasteryRequest, student_id: str = Depends(get_student_id)):
+    try:
+        user_kg_engine = _get_user_kg_engine(student_id)
+        mastery_percent = max(0.0, min(100.0, float(req.mastery_percent)))
+        node = user_kg_engine.set_mastery(
+            concept_id=req.concept_id,
+            mastery_score=mastery_percent / 100.0,
+        )
+        return {"status": "ok", "node": node}
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -1175,7 +1481,38 @@ async def get_prerequisite_chain(concept_id: str, student_id: str = Depends(get_
 @app.get("/api/kg/graph")
 async def get_graph(student_id: str = Depends(get_student_id)):
     user_kg_engine = _get_user_kg_engine(student_id)
-    return user_kg_engine.get_graph_data()
+    graph_data = user_kg_engine.get_graph_data()
+
+    # Backward-compatibility: infer missing courseId from course names
+    # so older nodes remain visible under the correct course.
+    try:
+        if db is not None:
+            courses_col = _courses_collection(student_id)
+            course_docs = list(courses_col.stream()) if courses_col is not None else []
+            courses = [d.to_dict() or {} for d in course_docs]
+            name_to_id = {
+                "".join(ch for ch in str(c.get("name", "")).lower() if ch.isalnum()): str(c.get("id", ""))
+                for c in courses
+                if c.get("id") and c.get("name")
+            }
+
+            def _norm(text: str) -> str:
+                return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+            for node in graph_data.get("nodes", []):
+                existing = str((node or {}).get("courseId") or "").strip()
+                if existing:
+                    continue
+                category_key = _norm((node or {}).get("category", ""))
+                if not category_key:
+                    continue
+                matched_id = name_to_id.get(category_key)
+                if matched_id:
+                    node["courseId"] = matched_id
+    except Exception as exc:
+        print(f"Warning: failed to infer node courseId values for {student_id}: {exc}")
+
+    return graph_data
 
 
 @app.post("/api/kg/build_from_material")
@@ -1444,11 +1781,16 @@ async def create_peer_session(
     result = peer_session_service.create_session(
         hub_id=req.hub_id,
         topic=req.topic,
+        concept_id=req.concept_id,
+        course_id=req.course_id,
+        course_name=req.course_name,
         member_profiles=member_profiles,
         created_by=student_id,
     )
     if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+        detail = str(result["error"])
+        status_code = 400 if detail.lower().startswith("no uploaded material") else 500
+        raise HTTPException(status_code=status_code, detail=detail)
     return CreateSessionResponse(**result)
 
 
@@ -1503,6 +1845,7 @@ async def submit_peer_answer(
         question_id=req.question_id,
         answer_text=req.answer_text,
         student_id=student_id,
+        concept_id=req.concept_id,
     )
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -1533,6 +1876,15 @@ async def end_peer_session(
     return result
 
 
+@app.get("/api/peer/sessions/all")
+async def get_all_active_sessions(
+    student_id: str = Depends(get_student_id),
+):
+    """Get all active/waiting sessions across all hubs (for testing/browsing)."""
+    sessions = peer_session_service.get_all_active_sessions()
+    return {"sessions": sessions}
+
+
 @app.get("/api/peer/session/history/{hub_id}")
 async def get_peer_session_history(
     hub_id: str,
@@ -1544,99 +1896,73 @@ async def get_peer_session_history(
     return {"sessions": runs}
 
 
-# ── WebRTC Signaling (WebSocket) ──────────────────────────────────────────
+@app.post("/api/peer/session/{session_id}/video-token")
+async def create_peer_video_token(
+    session_id: str,
+    student_id: str = Depends(get_student_id),
+):
+    """Create a Twilio Video access token for a peer learning session."""
+    session = peer_session_service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
 
-import json as _json
-from collections import defaultdict
-from typing import Dict as _Dict
+    member_ids = {m.get("student_id") for m in session.get("members", [])}
+    if student_id not in member_ids:
+        raise HTTPException(status_code=403, detail="You are not a member of this session")
 
-# session_id -> {student_id -> WebSocket}
-_signaling_rooms: _Dict[str, _Dict[str, WebSocket]] = defaultdict(dict)
-
-
-@app.websocket("/ws/peer/signal/{session_id}")
-async def webrtc_signal(websocket: WebSocket, session_id: str):
-    """
-    WebSocket signaling server for WebRTC peer connections.
-
-    Protocol:
-      Client sends JSON messages:
-        {"type": "join",          "student_id": "..."}
-        {"type": "offer",         "target": "<student_id>", "sdp": {...}}
-        {"type": "answer",        "target": "<student_id>", "sdp": {...}}
-        {"type": "ice-candidate", "target": "<student_id>", "candidate": {...}}
-
-      Server relays to target peer with sender info:
-        {"type": "offer",         "from": "<sender_id>", "sdp": {...}}
-        {"type": "answer",        "from": "<sender_id>", "sdp": {...}}
-        {"type": "ice-candidate", "from": "<sender_id>", "candidate": {...}}
-        {"type": "peer-joined",   "student_id": "<new_peer>", "peers": [...]}
-        {"type": "peer-left",     "student_id": "<left_peer>"}
-    """
-    await websocket.accept()
-    room = _signaling_rooms[session_id]
-    student_id: str | None = None
+    account_sid = _clean_env("TWILIO_ACCOUNT_SID")
+    api_key = _clean_env("TWILIO_API_KEY") or _clean_env("TWILIO_API_KEY_SID")
+    api_secret = _clean_env("TWILIO_API_SECRET") or _clean_env("TWILIO_API_KEY_SECRET")
+    if not account_sid or not api_key or not api_secret:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Twilio is not configured. Set TWILIO_ACCOUNT_SID + "
+                "(TWILIO_API_KEY or TWILIO_API_KEY_SID) + "
+                "(TWILIO_API_SECRET or TWILIO_API_KEY_SECRET)."
+            ),
+        )
 
     try:
-        while True:
-            raw = await websocket.receive_text()
-            msg = _json.loads(raw)
-            msg_type = msg.get("type")
+        ttl_seconds = int(os.getenv("TWILIO_VIDEO_TOKEN_TTL_SECONDS", "3600"))
+    except ValueError:
+        ttl_seconds = 3600
+    ttl_seconds = max(300, min(ttl_seconds, 24 * 60 * 60))
+    room_name = f"peer-session-{session_id}"
 
-            if msg_type == "join":
-                student_id = msg.get("student_id", "")
-                room[student_id] = websocket
+    # Prefer Twilio SDK when available, but fall back to local JWT signing
+    # so development can proceed even when pip/network access is unavailable.
+    try:
+        from twilio.jwt.access_token import AccessToken
+        from twilio.jwt.access_token.grants import VideoGrant
 
-                # Tell the new peer about existing peers
-                existing_peers = [pid for pid in room if pid != student_id]
-                await websocket.send_text(_json.dumps({
-                    "type": "peer-joined",
-                    "student_id": student_id,
-                    "peers": existing_peers,
-                }))
-
-                # Notify all existing peers about the new peer
-                for pid, ws in room.items():
-                    if pid != student_id:
-                        try:
-                            await ws.send_text(_json.dumps({
-                                "type": "peer-joined",
-                                "student_id": student_id,
-                                "peers": list(room.keys()),
-                            }))
-                        except Exception:
-                            pass
-
-            elif msg_type in ("offer", "answer", "ice-candidate"):
-                target = msg.get("target")
-                if target and target in room:
-                    payload = {k: v for k, v in msg.items() if k != "target"}
-                    payload["from"] = student_id
-                    try:
-                        await room[target].send_text(_json.dumps(payload))
-                    except Exception:
-                        pass
-
-    except WebSocketDisconnect:
-        pass
+        token = AccessToken(
+            account_sid=account_sid,
+            signing_key_sid=api_key,
+            secret=api_secret,
+            identity=student_id,
+            ttl=ttl_seconds,
+        )
+        token.add_grant(VideoGrant(room=room_name))
+        jwt_value = token.to_jwt()
+        if isinstance(jwt_value, bytes):
+            jwt_value = jwt_value.decode("utf-8")
     except Exception:
-        pass
-    finally:
-        # Clean up
-        if student_id and session_id in _signaling_rooms:
-            _signaling_rooms[session_id].pop(student_id, None)
+        try:
+            jwt_value = _create_twilio_video_jwt_without_sdk(
+                account_sid=account_sid,
+                api_key_sid=api_key,
+                api_key_secret=api_secret,
+                identity=student_id,
+                room_name=room_name,
+                ttl_seconds=ttl_seconds,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to generate Twilio token: {e}")
 
-            # Notify remaining peers
-            for pid, ws in _signaling_rooms[session_id].items():
-                try:
-                    import asyncio
-                    asyncio.ensure_future(ws.send_text(_json.dumps({
-                        "type": "peer-left",
-                        "student_id": student_id,
-                    })))
-                except Exception:
-                    pass
-
-            # Clean up empty room
-            if not _signaling_rooms[session_id]:
-                del _signaling_rooms[session_id]
+    return TwilioVideoTokenResponse(
+        token=jwt_value,
+        room_name=room_name,
+        identity=student_id,
+        ttl_seconds=ttl_seconds,
+    )

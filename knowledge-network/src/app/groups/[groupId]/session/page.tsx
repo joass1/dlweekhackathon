@@ -13,6 +13,7 @@ import {
   type PeerQuestion,
   type SubmitAnswerResponse,
 } from '@/services/peer';
+import { apiFetch } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +30,12 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { WebRTCVideo } from '@/components/groups/WebRTCVideo';
+import BossBattleScene3D from '@/components/groups/BossBattleScene3D';
+
+interface KGNodeOption {
+  id: string;
+  title: string;
+}
 
 // ── Question type icon helper ─────────────────────────────────────────────
 
@@ -61,6 +68,9 @@ export default function PeerSessionPage() {
   const [advancing, setAdvancing] = useState(false);
   const [ending, setEnding] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [conceptOptions, setConceptOptions] = useState<KGNodeOption[]>([]);
+  const [selectedConceptId, setSelectedConceptId] = useState('');
+  const [advanceError, setAdvanceError] = useState<string | null>(null);
 
   // ── Poll session state every 3s ──────────────────────────────────────
 
@@ -93,6 +103,25 @@ export default function PeerSessionPage() {
     };
   }, [fetchSession]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadConceptOptions = async () => {
+      try {
+        const token = await getIdToken();
+        const graph = await apiFetch<{ nodes: { id: string; title: string }[] }>('/api/kg/graph', undefined, token);
+        if (cancelled) return;
+        const nodes = graph.nodes ?? [];
+        setConceptOptions(nodes.map((n) => ({ id: n.id, title: n.title || n.id })));
+      } catch (err) {
+        console.error('Failed to load concept options:', err);
+      }
+    };
+    loadConceptOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken]);
+
   // ── Session timer ─────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -117,10 +146,24 @@ export default function PeerSessionPage() {
   const currentQuestion: PeerQuestion | null =
     session?.questions?.[session.current_question_index] ?? null;
 
-  // Check if this question already has an answer
-  const existingAnswer = session?.answers?.find(
-    (a) => a.question_id === currentQuestion?.question_id
-  );
+  const answersForCurrentQuestion = currentQuestion
+    ? (session?.answers?.filter((a) => a.question_id === currentQuestion.question_id) ?? [])
+    : [];
+  const existingAnswer = answersForCurrentQuestion.find((a) => a.submitted_by === studentId);
+  const answeredMemberIds = new Set(answersForCurrentQuestion.map((a) => a.submitted_by));
+  const waitingMembers = (session?.members ?? []).filter((m) => !answeredMemberIds.has(m.student_id));
+  const allMembersAnswered = waitingMembers.length === 0 && (session?.members?.length ?? 0) > 0;
+
+  useEffect(() => {
+    const defaultConcept =
+      currentQuestion?.concept_id ||
+      currentQuestion?.weak_concept ||
+      session?.selected_concept_id ||
+      '';
+    if (defaultConcept) {
+      setSelectedConceptId(defaultConcept);
+    }
+  }, [currentQuestion?.question_id, currentQuestion?.concept_id, currentQuestion?.weak_concept, session?.selected_concept_id]);
 
   const handleSubmitAnswer = async () => {
     if (!session || !currentQuestion) return;
@@ -132,7 +175,13 @@ export default function PeerSessionPage() {
     setSubmitting(true);
     try {
       const token = await getIdToken();
-      const result = await submitAnswer(session.session_id, currentQuestion.question_id, text, token);
+      const result = await submitAnswer(
+        session.session_id,
+        currentQuestion.question_id,
+        text,
+        selectedConceptId || currentQuestion.concept_id || session.selected_concept_id || null,
+        token,
+      );
       setFeedback(result);
       await fetchSession();
     } catch (err) {
@@ -145,12 +194,14 @@ export default function PeerSessionPage() {
   const handleAdvance = async () => {
     if (!session) return;
     setAdvancing(true);
+    setAdvanceError(null);
     try {
       const token = await getIdToken();
       await advanceQuestion(session.session_id, token);
       await fetchSession();
     } catch (err) {
       console.error('Failed to advance question:', err);
+      setAdvanceError(err instanceof Error ? err.message : 'Could not advance yet.');
     } finally {
       setAdvancing(false);
     }
@@ -174,6 +225,10 @@ export default function PeerSessionPage() {
     const sec = s % 60;
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
+
+  const bossMax = Math.max(1, session?.boss_health_max ?? 100);
+  const bossCurrent = Math.max(0, Math.min(bossMax, session?.boss_health_current ?? bossMax));
+  const bossPct = Math.max(0, Math.min(100, (bossCurrent / bossMax) * 100));
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -201,6 +256,7 @@ export default function PeerSessionPage() {
 
   if (session.status === 'completed') {
     const totalQuestions = session.questions.length;
+    const totalAnswers = session.answers.length;
     const correctCount = session.answers.filter(a => a.is_correct).length;
     const avgScore = session.answers.length
       ? session.answers.reduce((sum, a) => sum + a.score, 0) / session.answers.length
@@ -218,8 +274,8 @@ export default function PeerSessionPage() {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-accent rounded-lg p-4 text-center">
-                <p className="text-2xl font-bold">{correctCount}/{totalQuestions}</p>
-                <p className="text-xs text-muted-foreground">Questions Correct</p>
+                <p className="text-2xl font-bold">{correctCount}/{totalAnswers || totalQuestions}</p>
+                <p className="text-xs text-muted-foreground">Answers Correct</p>
               </div>
               <div className="bg-accent rounded-lg p-4 text-center">
                 <p className="text-2xl font-bold">{Math.round(avgScore * 100)}%</p>
@@ -234,7 +290,8 @@ export default function PeerSessionPage() {
             {/* Review each question */}
             <div className="space-y-3">
               {session.questions.map((q, idx) => {
-                const ans = session.answers.find(a => a.question_id === q.question_id);
+                const answers = session.answers.filter(a => a.question_id === q.question_id);
+                const ans = answers[0];
                 return (
                   <div
                     key={q.question_id}
@@ -255,10 +312,13 @@ export default function PeerSessionPage() {
                     <p className="text-xs text-muted-foreground mt-1">
                       Targeting: {q.target_member_name}&apos;s gap in {q.weak_concept}
                     </p>
-                    {ans && (
+                    {answers.length > 0 && (
                       <div className="mt-2 text-sm">
-                        <p><span className="font-medium">Answer:</span> {ans.answer_text}</p>
-                        <p className="text-muted-foreground mt-1">{ans.ai_feedback}</p>
+                        {answers.map((a, i) => (
+                          <p key={`${a.submitted_by}-${i}`} className="mb-1">
+                            <span className="font-medium">{a.submitted_by}:</span> {a.answer_text} ({Math.round(a.score * 100)}%)
+                          </p>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -280,20 +340,16 @@ export default function PeerSessionPage() {
   return (
     <div className="p-4 max-w-6xl mx-auto space-y-4">
       {/* Header bar */}
-      <div className="flex items-center justify-between bg-white rounded-lg shadow-sm p-4">
-        <div className="flex items-center gap-4">
-          <h1 className="font-semibold text-lg">{session.topic}</h1>
-          <span className="text-sm text-muted-foreground">{formatTime(elapsed)}</span>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            session.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-          }`}>
-            {session.status === 'active' ? 'In Progress' : 'Waiting for members'}
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-            <Users className="w-4 h-4" />
-            {session.members.length}/{session.expected_members}
+      <div className="bg-white rounded-lg shadow-sm p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h1 className="font-semibold text-lg">{session.topic}</h1>
+            <span className="text-sm text-muted-foreground">{formatTime(elapsed)}</span>
+            <span className={`text-xs px-2 py-1 rounded-full ${
+              session.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              {session.status === 'active' ? 'In Progress' : 'Waiting for members'}
+            </span>
           </div>
           <Button
             variant="outline"
@@ -306,20 +362,67 @@ export default function PeerSessionPage() {
             End
           </Button>
         </div>
+        {/* Participants */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Users className="w-4 h-4 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">{session.members.length}/{session.expected_members}</span>
+          {session.members.map((m) => (
+            <span
+              key={m.student_id}
+              className={`text-xs px-2 py-0.5 rounded-full ${
+                m.student_id === studentId
+                  ? 'bg-[#e0f4fb] text-[#03b2e6] font-medium'
+                  : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              {m.name}{m.student_id === studentId ? ' (you)' : ''}
+            </span>
+          ))}
+          {session.members.length < session.expected_members && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-400 border border-dashed border-gray-300">
+              +{session.expected_members - session.members.length} waiting
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Two-column layout: Video | Question */}
+      {/* Two-column layout: (Boss + Video) | Question */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Video panel */}
-        <Card className="overflow-hidden">
-          <CardContent className="p-3">
-            <WebRTCVideo
-              sessionId={session.session_id}
-              studentId={studentId}
-              members={session.members}
-            />
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <Card className="overflow-hidden">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-red-700/80 font-semibold">Boss Battle</p>
+                  <p className="text-sm font-medium">
+                    {session.boss_name || 'Knowledge Warden'} {session.boss_defeated ? 'Defeated' : 'Engaged'}
+                  </p>
+                </div>
+                <p className="text-sm font-semibold">
+                  {Math.round(bossCurrent)} / {Math.round(bossMax)} HP
+                </p>
+              </div>
+              <div className="h-3 w-full rounded-full bg-red-100 border border-red-200 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 ${session.boss_defeated ? 'bg-emerald-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`}
+                  style={{ width: `${bossPct}%` }}
+                />
+              </div>
+              <BossBattleScene3D healthCurrent={bossCurrent} healthMax={bossMax} />
+            </CardContent>
+          </Card>
+
+          {/* Video panel */}
+          <Card className="overflow-hidden">
+            <CardContent className="p-3">
+              <WebRTCVideo
+                sessionId={session.session_id}
+                studentId={studentId}
+                members={session.members}
+              />
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Question panel */}
         <div className="space-y-4">
@@ -364,6 +467,22 @@ export default function PeerSessionPage() {
                 {/* Answer area — depends on question type */}
                 {!existingAnswer && !(feedback) ? (
                   <>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Knowledge node to update</label>
+                      <select
+                        value={selectedConceptId}
+                        onChange={(e) => setSelectedConceptId(e.target.value)}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+                      >
+                        <option value="">Use question concept ({currentQuestion.concept_id || currentQuestion.weak_concept})</option>
+                        {conceptOptions.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.title} ({opt.id})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     {currentQuestion.type === 'mcq' && currentQuestion.options ? (
                       <div className="space-y-2">
                         {currentQuestion.options.map((opt, idx) => (
@@ -455,11 +574,48 @@ export default function PeerSessionPage() {
                         {feedback.explanation}
                       </p>
                     )}
+                    {(feedback?.updated_mastery !== undefined || existingAnswer?.updated_mastery !== undefined) && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Updated mastery: {Math.round((feedback?.updated_mastery ?? existingAnswer?.updated_mastery ?? 0) * 100)}% ({feedback?.mastery_status || existingAnswer?.mastery_status || 'learning'})
+                      </p>
+                    )}
+                    {(feedback?.damage_dealt !== undefined || existingAnswer?.damage_dealt !== undefined) && (
+                      <p className="text-xs text-red-700 mt-1">
+                        Boss damage dealt: {Math.round(feedback?.damage_dealt ?? existingAnswer?.damage_dealt ?? 0)}
+                      </p>
+                    )}
                   </div>
                 )}
 
+                <div className="rounded-lg border bg-accent/40 p-3">
+                  <p className="text-xs font-medium mb-2">Round answers</p>
+                  <div className="space-y-1">
+                    {session.members.map((m) => {
+                      const memberAnswer = answersForCurrentQuestion.find((a) => a.submitted_by === m.student_id);
+                      return (
+                        <div key={m.student_id} className="flex items-center justify-between text-xs">
+                          <span>{m.name}{m.student_id === studentId ? ' (you)' : ''}</span>
+                          {memberAnswer ? (
+                            <span className={memberAnswer.is_correct ? 'text-green-700' : 'text-red-700'}>
+                              Submitted • {Math.round(memberAnswer.score * 100)}% • -{Math.round(memberAnswer.damage_dealt ?? 0)} HP
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">Waiting</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {(existingAnswer || feedback) && !allMembersAnswered && (
+                  <p className="text-xs text-amber-700">
+                    Waiting for: {waitingMembers.map((m) => m.name).join(', ')}
+                  </p>
+                )}
+
                 {/* Next question button */}
-                {(feedback || existingAnswer) && session.current_question_index < session.questions.length - 1 && (
+                {allMembersAnswered && session.current_question_index < session.questions.length - 1 && (
                   <Button
                     onClick={handleAdvance}
                     disabled={advancing}
@@ -474,21 +630,29 @@ export default function PeerSessionPage() {
                     Next Question
                   </Button>
                 )}
-
-                {/* Complete session if last question answered */}
-                {(feedback || existingAnswer) && session.current_question_index >= session.questions.length - 1 && (
+                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && !session.boss_defeated && (
                   <Button
-                    onClick={handleEndSession}
-                    disabled={ending}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white"
+                    onClick={handleAdvance}
+                    disabled={advancing}
+                    className="w-full"
+                    variant="outline"
                   >
-                    {ending ? (
+                    {advancing ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     ) : (
-                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                      <ChevronRight className="w-4 h-4 mr-2" />
                     )}
-                    Complete Session
+                    Generate Next Round
                   </Button>
+                )}
+                {advanceError && (
+                  <p className="text-xs text-red-600">{advanceError}</p>
+                )}
+
+                {session.boss_defeated && (
+                  <p className="text-xs text-green-700">
+                    Boss defeated. Continue discussing or click End when your team is ready to finish the session.
+                  </p>
                 )}
               </CardContent>
             </Card>

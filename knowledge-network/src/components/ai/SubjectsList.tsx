@@ -7,6 +7,7 @@ import {
   Upload, GripVertical, Trash2, CheckCircle, AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
 
 interface Subject {
   id: string;
@@ -33,6 +34,7 @@ interface UploadResult {
 
 export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
   const { user, getIdToken } = useAuth();
+  const router = useRouter();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [isLoadingSubjects, setIsLoadingSubjects] = useState(true);
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
@@ -199,6 +201,16 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       setUploadResults(results);
       setPendingFiles([]);
       await fetchTopics();
+      const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
+      if (ticket && typeof window !== 'undefined') {
+        window.sessionStorage.setItem('comprehensive_quiz_ticket', ticket);
+      }
+      setIsUploadModalOpen(false);
+      router.push(
+        ticket
+          ? `/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`
+          : '/assessment/all-concepts/take'
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed';
       setUploadResults(pendingFiles.map(f => ({ filename: f.name, status: 'error' as const, error: message })));

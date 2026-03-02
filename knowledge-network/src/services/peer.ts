@@ -18,6 +18,7 @@ export interface PeerQuestion {
   question_id: string;
   target_member: string;
   target_member_name: string;
+  concept_id: string;
   weak_concept: string;
   stem: string;
   type: 'open' | 'code' | 'math' | 'mcq';
@@ -30,16 +31,28 @@ export interface SubmittedAnswer {
   question_id: string;
   submitted_by: string;
   answer_text: string;
+  concept_id: string;
+  mistake_type: string;
   is_correct: boolean;
   score: number;
   ai_feedback: string;
   hint: string;
+  damage_dealt?: number | null;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
 }
 
 export interface SessionState {
   session_id: string;
   hub_id: string;
   topic: string;
+  selected_concept_id?: string | null;
+  course_id?: string | null;
+  course_name?: string | null;
+  boss_name?: string | null;
+  boss_health_max?: number;
+  boss_health_current?: number;
+  boss_defeated?: boolean;
   status: 'waiting' | 'active' | 'completed';
   created_by: string;
   created_at?: string;
@@ -57,11 +70,28 @@ export interface CreateSessionResponse {
 
 export interface SubmitAnswerResponse {
   question_id: string;
+  submitted_by: string;
+  concept_id: string;
+  mistake_type: string;
   is_correct: boolean;
   score: number;
   ai_feedback: string;
   hint: string;
   explanation: string;
+  damage_dealt?: number | null;
+  boss_health_max?: number;
+  boss_health_current?: number;
+  boss_defeated?: boolean;
+  already_submitted?: boolean;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
+}
+
+export interface TwilioVideoTokenResponse {
+  token: string;
+  room_name: string;
+  identity: string;
+  ttl_seconds: number;
 }
 
 // ── API Functions ─────────────────────────────────────────────────────────
@@ -69,6 +99,9 @@ export interface SubmitAnswerResponse {
 export async function createSession(
   hubId: string,
   topic: string,
+  conceptId: string | null,
+  courseId: string | null,
+  courseName: string | null,
   memberProfiles: MemberProfile[],
   token?: string | null,
 ): Promise<CreateSessionResponse> {
@@ -77,6 +110,9 @@ export async function createSession(
     body: JSON.stringify({
       hub_id: hubId,
       topic,
+      concept_id: conceptId,
+      course_id: courseId,
+      course_name: courseName,
       member_profiles: memberProfiles,
     }),
   }, token);
@@ -121,6 +157,7 @@ export async function submitAnswer(
   sessionId: string,
   questionId: string,
   answerText: string,
+  conceptId: string | null,
   token?: string | null,
 ): Promise<SubmitAnswerResponse> {
   return apiFetch<SubmitAnswerResponse>('/api/peer/session/answer', {
@@ -129,6 +166,7 @@ export async function submitAnswer(
       session_id: sessionId,
       question_id: questionId,
       answer_text: answerText,
+      concept_id: conceptId,
     }),
   }, token);
 }
@@ -136,7 +174,14 @@ export async function submitAnswer(
 export async function advanceQuestion(
   sessionId: string,
   token?: string | null,
-): Promise<{ status: string; current_question_index: number }> {
+): Promise<{
+  status: string;
+  current_question_index: number;
+  at_last_question?: boolean;
+  boss_defeated?: boolean;
+  generated_new_round?: boolean;
+  round_index?: number;
+}> {
   return apiFetch(`/api/peer/session/${encodeURIComponent(sessionId)}/advance`, {
     method: 'POST',
   }, token);
@@ -149,6 +194,42 @@ export async function endSession(
   return apiFetch(`/api/peer/session/${encodeURIComponent(sessionId)}/end`, {
     method: 'POST',
   }, token);
+}
+
+export async function getPeerVideoToken(
+  sessionId: string,
+  token?: string | null,
+): Promise<TwilioVideoTokenResponse> {
+  return apiFetch<TwilioVideoTokenResponse>(
+    `/api/peer/session/${encodeURIComponent(sessionId)}/video-token`,
+    {
+      method: 'POST',
+    },
+    token,
+  );
+}
+
+export interface SessionSummary {
+  session_id: string;
+  hub_id: string;
+  topic: string;
+  status: 'waiting' | 'active' | 'completed';
+  created_by: string;
+  created_at?: string;
+  members: SessionMember[];
+  expected_members: number;
+  question_count: number;
+}
+
+export async function getAllActiveSessions(
+  token?: string | null,
+): Promise<SessionSummary[]> {
+  const result = await apiFetch<{ sessions: SessionSummary[] }>(
+    '/api/peer/sessions/all',
+    undefined,
+    token,
+  );
+  return result.sessions || [];
 }
 
 export async function getSessionHistory(

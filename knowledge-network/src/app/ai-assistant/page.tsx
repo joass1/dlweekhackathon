@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,6 +14,7 @@ interface Message {
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
+  context?: ContextItem[];  // assistant messages only: sources cited in this response
 }
 
 interface ContextItem {
@@ -31,6 +32,25 @@ const SocraticBackground3D = dynamic(
   { ssr: false }
 );
 
+function generateId(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto) {
+    if (typeof globalThis.crypto.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+
+    if (typeof globalThis.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      globalThis.crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+      return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+    }
+  }
+
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function AIAssistantPage() {
   const initialSocraticPrompt =
     'Hello there! Drag a topic from the side into the chatbox and start chatting with me!';
@@ -47,11 +67,13 @@ export default function AIAssistantPage() {
   const missionTimeoutHandledRef = useRef(false);
 
   // Micro-checkpoint state
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const sessionIdRef = useRef<string>(generateId());
   const messageCountRef = useRef(0);
   const lastCheckpointAtRef = useRef(-8); // start so first check fires at msg 3
   const checkpointedConceptsRef = useRef<string[]>([]);
   const [activeCheckpoint, setActiveCheckpoint] = useState<CheckpointQuestion | null>(null);
+  const sourceKeyToIndexRef = useRef<Map<string, number>>(new Map());
+  const nextSourceIndexRef = useRef(1);
 
   const assistantMessages = useMemo(
     () => messages.filter((m) => m.role === 'assistant'),
@@ -151,6 +173,40 @@ export default function AIAssistantPage() {
   const handleTopicRemove = (id: string) =>
     setScopedTopics(prev => prev.filter(t => t.id !== id));
 
+  const normalizeSourceKey = (item: ContextItem) => {
+    const concept = (item.concept_id || 'unknown').trim().toLowerCase();
+    const text = item.text.trim().replace(/\s+/g, ' ').toLowerCase();
+    return `${concept}::${text}`;
+  };
+
+  const assignStableSourceIndices = (items: ContextItem[]): ContextItem[] =>
+    items.map((item) => {
+      const key = normalizeSourceKey(item);
+      const existing = sourceKeyToIndexRef.current.get(key);
+      if (existing != null) {
+        return { ...item, index: existing };
+      }
+      const idx = nextSourceIndexRef.current++;
+      sourceKeyToIndexRef.current.set(key, idx);
+      return { ...item, index: idx };
+    });
+
+  const remapAnswerCitations = (answer: string, localContext: ContextItem[], stableContext: ContextItem[]) => {
+    const localToStable = new Map<number, number>();
+    for (let i = 0; i < Math.min(localContext.length, stableContext.length); i += 1) {
+      const localIdx = localContext[i].index;
+      const stableIdx = stableContext[i].index;
+      if (typeof localIdx === 'number' && typeof stableIdx === 'number') {
+        localToStable.set(localIdx, stableIdx);
+      }
+    }
+    return answer.replace(/\[(\d+)\]/g, (_, rawN: string) => {
+      const n = Number(rawN);
+      const mapped = localToStable.get(n);
+      return `[${mapped ?? n}]`;
+    });
+  };
+
   const fetchCheckpoint = async (sessionMessages: { role: string; content: string }[]) => {
     if (!scopedTopics.length) return;
     const topicId = scopedTopics[0].conceptId;
@@ -191,10 +247,9 @@ export default function AIAssistantPage() {
 
   const handleCheckpointSubmit = async (answer: string, confidence: number) => {
     if (!activeCheckpoint) return;
-    setActiveCheckpoint(null);
     try {
       const token = await getIdToken();
-      await fetch('/api/ai/checkpoint/submit', {
+      const res = await fetch('/api/ai/checkpoint/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -213,18 +268,21 @@ export default function AIAssistantPage() {
           was_skipped: false,
         }),
       });
+      if (!res.ok) throw new Error(`Checkpoint submit failed with status ${res.status}`);
+      const data = await res.json();
+      return { is_correct: data?.is_correct ?? null };
     } catch (err) {
       console.error('Checkpoint submit error:', err);
+      return;
     }
   };
 
   const handleCheckpointSkip = async () => {
     if (!activeCheckpoint) return;
     const snap = activeCheckpoint;
-    setActiveCheckpoint(null);
     try {
       const token = await getIdToken();
-      await fetch('/api/ai/checkpoint/submit', {
+      const res = await fetch('/api/ai/checkpoint/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -243,8 +301,11 @@ export default function AIAssistantPage() {
           was_skipped: true,
         }),
       });
+      if (!res.ok) throw new Error(`Checkpoint skip failed with status ${res.status}`);
     } catch (err) {
       console.error('Checkpoint skip error:', err);
+    } finally {
+      setActiveCheckpoint(null);
     }
   };
 
@@ -253,7 +314,7 @@ export default function AIAssistantPage() {
     setHighlightedSourceIndex(null);
     try {
       const userMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         content,
         role: 'user',
         timestamp: new Date()
@@ -278,17 +339,32 @@ export default function AIAssistantPage() {
       }
 
       const { answer, context } = await response.json();
-      setActiveNotes(context ?? []);
+      const localContext: ContextItem[] = context ?? [];
+      const stableContext = assignStableSourceIndices(localContext);
+      const remappedAnswer = remapAnswerCitations(answer, localContext, stableContext);
+      // Preserve prior sources and stable indices across the session.
+      setActiveNotes(prev => {
+        const merged = [...prev];
+        const existing = new Set(prev.map(normalizeSourceKey));
+        for (const item of stableContext) {
+          const key = normalizeSourceKey(item);
+          if (existing.has(key)) continue;
+          existing.add(key);
+          merged.push(item);
+        }
+        return merged;
+      });
 
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        content: answer,
+        id: generateId(),
+        content: remappedAnswer,
         role: 'assistant',
         timestamp: new Date(),
+        context: stableContext,  // store per-message with session-stable citation indices
       };
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Micro-checkpoint trigger: fire after ≥3 msgs with 8-msg cooldown
+      // Micro-checkpoint trigger: fire after â‰¥3 msgs with 8-msg cooldown
       messageCountRef.current += 1;
       const mc = messageCountRef.current;
       if (
@@ -339,7 +415,9 @@ export default function AIAssistantPage() {
           <SocraticBackground3D
             speechText={selectedAssistantSpeech}
             isSpeaking={isLoading || Boolean(selectedAssistantSpeech)}
-            onCitationClick={(n) => setHighlightedSourceIndex(n)}
+            onCitationClick={(n, _sectionIdx) => {
+              setHighlightedSourceIndex(n);
+            }}
           />
 
           <div className="relative z-10 p-4 border-b border-slate-300/50 bg-[#e0f4fb]/78 backdrop-blur-sm">
@@ -398,14 +476,16 @@ export default function AIAssistantPage() {
         </div>
       </Split>
 
-      {/* Micro-checkpoint popup — fixed overlay, outside Split */}
+      {/* Micro-checkpoint popup â€” fixed overlay, outside Split */}
       {activeCheckpoint && (
         <MicroCheckpoint
           checkpoint={activeCheckpoint}
           onSubmit={handleCheckpointSubmit}
           onSkip={handleCheckpointSkip}
+          onClose={() => setActiveCheckpoint(null)}
         />
       )}
     </div>
   );
 }
+

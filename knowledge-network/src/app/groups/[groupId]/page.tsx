@@ -22,6 +22,8 @@ interface KGNode {
   title: string;
   mastery: number;
   status: string;
+  courseId?: string;
+  course_id?: string;
 }
 
 export default function GroupDetailPage({ params }: PageProps) {
@@ -44,7 +46,7 @@ export default function GroupDetailPage({ params }: PageProps) {
 
         if (!cancelled) {
           // Build concept list for topic selection
-          setConcepts(nodes.map(n => ({ id: n.id, title: n.title || n.id })));
+          setConcepts(nodes.map(n => ({ id: n.id, title: n.title || n.id, courseId: n.courseId || n.course_id })));
 
           // Build member profile for the current student
           const conceptProfile: Record<string, number> = {};

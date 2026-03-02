@@ -63,7 +63,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
-    // ── Defs: arrowhead ───────────────────────────────────────────────────────────
+    // ── Defs: arrowhead + glow filters ─────────────────────────────────────────
     const defs = svg.append('defs');
 
     defs.append('marker')
@@ -77,6 +77,34 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .append('path')
       .attr('d', 'M 0,-5 L 10,0 L 0,5')
       .attr('fill', '#cbd5e1');
+
+    // Glow filter for nodes
+    const glowFilter = defs.append('filter')
+      .attr('id', 'node-glow')
+      .attr('x', '-50%').attr('y', '-50%')
+      .attr('width', '200%').attr('height', '200%');
+    glowFilter.append('feGaussianBlur')
+      .attr('in', 'SourceGraphic')
+      .attr('stdDeviation', '4')
+      .attr('result', 'blur');
+    glowFilter.append('feComposite')
+      .attr('in', 'SourceGraphic')
+      .attr('in2', 'blur')
+      .attr('operator', 'over');
+
+    // Particle glow filter (smaller, tighter)
+    const particleGlow = defs.append('filter')
+      .attr('id', 'particle-glow')
+      .attr('x', '-100%').attr('y', '-100%')
+      .attr('width', '300%').attr('height', '300%');
+    particleGlow.append('feGaussianBlur')
+      .attr('in', 'SourceGraphic')
+      .attr('stdDeviation', '2.5')
+      .attr('result', 'blur');
+    particleGlow.append('feComposite')
+      .attr('in', 'SourceGraphic')
+      .attr('in2', 'blur')
+      .attr('operator', 'over');
 
     const ballColors: Record<Node['status'], { fill: string; stroke: string; text: string }> = {
       mastered: { fill: '#34d399', stroke: '#059669', text: '#ffffff' },
@@ -96,8 +124,8 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .selectAll('line')
       .data(graphLinks)
       .join('line')
-      .style('stroke', d => d.type === 'prerequisite' ? '#cbd5e1' : '#94a3b8')
-      .style('stroke-width', d => d.type === 'prerequisite' ? 2.2 : 1.2)
+      .style('stroke', d => d.type === 'prerequisite' ? 'rgba(148,216,240,0.25)' : 'rgba(148,163,184,0.3)')
+      .style('stroke-width', d => d.type === 'prerequisite' ? 1.5 : 1)
       .style('stroke-dasharray', d => d.type === 'prerequisite' ? 'none' : '4,4')
       .attr('marker-end', d => d.type === 'prerequisite' ? 'url(#arrowhead)' : '');
 
@@ -119,6 +147,16 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
       .style('stroke-width', d => isStartPointNode(d) ? 1.8 : 0)
       .style('stroke-dasharray', '3,2')
       .style('opacity', d => isStartPointNode(d) ? 0.95 : 0);
+
+    // Glow layer behind the main body
+    nodeGroup.append('circle')
+      .attr('class', 'node-glow')
+      .attr('r', d => nodeR(d) + 2)
+      .style('fill', d => (
+        isStartPointNode(d) && d.status === 'not_started' ? '#38bdf8' : ballColors[d.status].fill
+      ))
+      .style('fill-opacity', 0.35)
+      .attr('filter', 'url(#node-glow)');
 
     // Main ball body
     nodeGroup.append('circle')
@@ -222,6 +260,67 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     nodeGroup.call(drag as any);
 
+    // ── Animated particles flowing along prerequisite edges ──────────────────
+    const prerequisiteLinks = graphLinks.filter(l => l.type === 'prerequisite');
+    const PARTICLES_PER_LINK = 2;
+    const PARTICLE_SPEED = 0.004; // fraction of edge length per frame
+
+    interface Particle {
+      linkIndex: number;
+      t: number;        // 0→1 progress along the edge
+      speed: number;
+    }
+
+    const particles: Particle[] = [];
+    prerequisiteLinks.forEach((_, i) => {
+      for (let p = 0; p < PARTICLES_PER_LINK; p++) {
+        particles.push({
+          linkIndex: i,
+          t: p / PARTICLES_PER_LINK, // stagger evenly
+          speed: PARTICLE_SPEED + Math.random() * 0.002,
+        });
+      }
+    });
+
+    const particleGroup = svg.append('g').attr('class', 'particles');
+    const particleCircles = particleGroup.selectAll('circle')
+      .data(particles)
+      .join('circle')
+      .attr('r', 2.5)
+      .style('fill', '#94d8f0')
+      .style('fill-opacity', 0.9)
+      .attr('filter', 'url(#particle-glow)');
+
+    let animFrameId: number;
+    const animateParticles = () => {
+      particles.forEach(p => {
+        p.t += p.speed;
+        if (p.t > 1) p.t -= 1;
+      });
+
+      particleCircles
+        .attr('cx', d => {
+          const l = prerequisiteLinks[d.linkIndex];
+          const s = l.source as unknown as Node;
+          const t = l.target as unknown as Node;
+          return (s.x ?? 0) + ((t.x ?? 0) - (s.x ?? 0)) * d.t;
+        })
+        .attr('cy', d => {
+          const l = prerequisiteLinks[d.linkIndex];
+          const s = l.source as unknown as Node;
+          const t = l.target as unknown as Node;
+          return (s.y ?? 0) + ((t.y ?? 0) - (s.y ?? 0)) * d.t;
+        })
+        .style('fill-opacity', d => {
+          // Fade in/out near endpoints
+          const fade = Math.min(d.t, 1 - d.t) * 4;
+          return Math.min(0.9, fade);
+        });
+
+      animFrameId = requestAnimationFrame(animateParticles);
+    };
+    animFrameId = requestAnimationFrame(animateParticles);
+
     const pad = 30;
     simulation.on('tick', () => {
       // Clamp nodes inside the SVG boundaries
@@ -244,7 +343,7 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
         .attr('y', d => d.y ?? 0);
     });
 
-    return () => { tooltip.remove(); };
+    return () => { tooltip.remove(); cancelAnimationFrame(animFrameId); };
   }, [nodes, links, showLabels]);
 
   return (
