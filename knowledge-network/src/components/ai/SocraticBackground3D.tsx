@@ -97,13 +97,8 @@ function expandSpeechCitations(
   }
   return sections.map((section, i) => (
     <React.Fragment key={i}>
-<<<<<<< Updated upstream
-      {i > 0 && <hr className="my-2 border-white/20" />}
-      <span>{inlineCitations(deduplicateSpeechCitations(section), onCitationClick)}</span>
-=======
       {i > 0 && <hr className="my-2 border-slate-300" />}
       <span>{inlineCitations(deduplicateSpeechCitations(section), i, onCitationClick)}</span>
->>>>>>> Stashed changes
     </React.Fragment>
   ));
 }
