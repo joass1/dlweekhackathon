@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -58,6 +58,7 @@ from app.models.peer_schemas import (
     SessionStateResponse,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
+    TwilioVideoTokenResponse,
 )
 from app.models.tutor_schemas import (
     EmbedContentRequest, EmbedContentResponse,
@@ -1427,99 +1428,62 @@ async def get_peer_session_history(
     return {"sessions": runs}
 
 
-# ── WebRTC Signaling (WebSocket) ──────────────────────────────────────────
+@app.post("/api/peer/session/{session_id}/video-token")
+async def create_peer_video_token(
+    session_id: str,
+    student_id: str = Depends(get_student_id),
+):
+    """Create a Twilio Video access token for a peer learning session."""
+    session = peer_session_service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
 
-import json as _json
-from collections import defaultdict
-from typing import Dict as _Dict
+    member_ids = {m.get("student_id") for m in session.get("members", [])}
+    if student_id not in member_ids:
+        raise HTTPException(status_code=403, detail="You are not a member of this session")
 
-# session_id -> {student_id -> WebSocket}
-_signaling_rooms: _Dict[str, _Dict[str, WebSocket]] = defaultdict(dict)
-
-
-@app.websocket("/ws/peer/signal/{session_id}")
-async def webrtc_signal(websocket: WebSocket, session_id: str):
-    """
-    WebSocket signaling server for WebRTC peer connections.
-
-    Protocol:
-      Client sends JSON messages:
-        {"type": "join",          "student_id": "..."}
-        {"type": "offer",         "target": "<student_id>", "sdp": {...}}
-        {"type": "answer",        "target": "<student_id>", "sdp": {...}}
-        {"type": "ice-candidate", "target": "<student_id>", "candidate": {...}}
-
-      Server relays to target peer with sender info:
-        {"type": "offer",         "from": "<sender_id>", "sdp": {...}}
-        {"type": "answer",        "from": "<sender_id>", "sdp": {...}}
-        {"type": "ice-candidate", "from": "<sender_id>", "candidate": {...}}
-        {"type": "peer-joined",   "student_id": "<new_peer>", "peers": [...]}
-        {"type": "peer-left",     "student_id": "<left_peer>"}
-    """
-    await websocket.accept()
-    room = _signaling_rooms[session_id]
-    student_id: str | None = None
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    api_key = os.getenv("TWILIO_API_KEY", "").strip()
+    api_secret = os.getenv("TWILIO_API_SECRET", "").strip()
+    if not account_sid or not api_key or not api_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_API_KEY, and TWILIO_API_SECRET.",
+        )
 
     try:
-        while True:
-            raw = await websocket.receive_text()
-            msg = _json.loads(raw)
-            msg_type = msg.get("type")
+        ttl_seconds = int(os.getenv("TWILIO_VIDEO_TOKEN_TTL_SECONDS", "3600"))
+    except ValueError:
+        ttl_seconds = 3600
+    ttl_seconds = max(300, min(ttl_seconds, 24 * 60 * 60))
+    room_name = f"peer-session-{session_id}"
 
-            if msg_type == "join":
-                student_id = msg.get("student_id", "")
-                room[student_id] = websocket
+    try:
+        from twilio.jwt.access_token import AccessToken
+        from twilio.jwt.access_token.grants import VideoGrant
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Twilio SDK unavailable: {e}")
 
-                # Tell the new peer about existing peers
-                existing_peers = [pid for pid in room if pid != student_id]
-                await websocket.send_text(_json.dumps({
-                    "type": "peer-joined",
-                    "student_id": student_id,
-                    "peers": existing_peers,
-                }))
+    try:
+        token = AccessToken(
+            account_sid=account_sid,
+            signing_key_sid=api_key,
+            secret=api_secret,
+            identity=student_id,
+            ttl=ttl_seconds,
+        )
+        token.add_grant(VideoGrant(room=room_name))
+        jwt_value = token.to_jwt()
+        if isinstance(jwt_value, bytes):
+            jwt_value = jwt_value.decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate Twilio token: {e}")
 
-                # Notify all existing peers about the new peer
-                for pid, ws in room.items():
-                    if pid != student_id:
-                        try:
-                            await ws.send_text(_json.dumps({
-                                "type": "peer-joined",
-                                "student_id": student_id,
-                                "peers": list(room.keys()),
-                            }))
-                        except Exception:
-                            pass
+    return TwilioVideoTokenResponse(
+        token=jwt_value,
+        room_name=room_name,
+        identity=student_id,
+        ttl_seconds=ttl_seconds,
+    )
 
-            elif msg_type in ("offer", "answer", "ice-candidate"):
-                target = msg.get("target")
-                if target and target in room:
-                    payload = {k: v for k, v in msg.items() if k != "target"}
-                    payload["from"] = student_id
-                    try:
-                        await room[target].send_text(_json.dumps(payload))
-                    except Exception:
-                        pass
 
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
-    finally:
-        # Clean up
-        if student_id and session_id in _signaling_rooms:
-            _signaling_rooms[session_id].pop(student_id, None)
-
-            # Notify remaining peers
-            for pid, ws in _signaling_rooms[session_id].items():
-                try:
-                    import asyncio
-                    asyncio.ensure_future(ws.send_text(_json.dumps({
-                        "type": "peer-left",
-                        "student_id": student_id,
-                    })))
-                except Exception:
-                    pass
-
-            # Clean up empty room
-            if not _signaling_rooms[session_id]:
-                del _signaling_rooms[session_id]

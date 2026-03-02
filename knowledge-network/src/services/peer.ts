@@ -64,6 +64,13 @@ export interface SubmitAnswerResponse {
   explanation: string;
 }
 
+export interface TwilioVideoTokenResponse {
+  token: string;
+  room_name: string;
+  identity: string;
+  ttl_seconds: number;
+}
+
 // ── API Functions ─────────────────────────────────────────────────────────
 
 export async function createSession(
@@ -149,6 +156,19 @@ export async function endSession(
   return apiFetch(`/api/peer/session/${encodeURIComponent(sessionId)}/end`, {
     method: 'POST',
   }, token);
+}
+
+export async function getPeerVideoToken(
+  sessionId: string,
+  token?: string | null,
+): Promise<TwilioVideoTokenResponse> {
+  return apiFetch<TwilioVideoTokenResponse>(
+    `/api/peer/session/${encodeURIComponent(sessionId)}/video-token`,
+    {
+      method: 'POST',
+    },
+    token,
+  );
 }
 
 export interface SessionSummary {
