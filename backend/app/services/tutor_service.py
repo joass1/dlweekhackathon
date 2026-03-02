@@ -55,34 +55,7 @@ class TutorService:
         hits = sum(1 for t in query_tokens if t in text_lower)
         return hits / len(query_tokens)
 
-    def retrieve_context(self, query: str, limit: int = 5, user_id: str = None, concept_ids: list = None) -> list:
-        if self.db is None:
-            return []
-
-        # Extract meaningful tokens (drop stopwords and very short words)
-        query_tokens = {
-            t for t in query.lower().split()
-            if t and t not in self._STOPWORDS and len(t) > 2
-        }
-
-        # Fetch candidate chunks:
-        # • If concept_ids given (notes pinned in UI), scope to those concepts
-        # • Otherwise scan all chunks for this user
-        if concept_ids:
-            q = self.db.collection(self.collection).where("concept_id", "in", concept_ids[:10])
-            if user_id:
-                q = q.where("userId", "==", user_id)
-            docs = q.limit(300).stream()
-        elif user_id:
-            docs = (
-                self.db.collection(self.collection)
-                .where("userId", "==", user_id)
-                .limit(300)
-                .stream()
-            )
-        else:
-            return []
-
+    def _stream_and_score(self, docs, query_tokens: set) -> list:
         scored = []
         seen: set = set()
         for doc in docs:
@@ -98,11 +71,108 @@ class TutorService:
             seen.add(h)
             score = self._score_chunk(query_tokens, text)
             scored.append({
-                "text": text,          # full chunk — no truncation
+                "text": text,
                 "concept_id": str(row.get("concept_id", "unknown")),
                 "score": score,
                 "chunk_id": str(uuid4()),
             })
+        return scored
+
+    def retrieve_context(self, query: str, limit: int = 5, user_id: str = None, concept_ids: list = None) -> list:
+        if self.db is None:
+            return []
+
+        # Extract meaningful tokens (drop stopwords and very short words)
+        query_tokens = {
+            t for t in query.lower().split()
+            if t and t not in self._STOPWORDS and len(t) > 2
+        }
+
+        # Filter out empty/falsy concept_ids
+        clean_ids = [c for c in (concept_ids or []) if c]
+
+        scored = []
+
+        # Try concept_id-scoped retrieval first (matches per-topic concept_ids)
+        if clean_ids and user_id:
+            try:
+                q = self.db.collection(self.collection) \
+                    .where("concept_id", "in", clean_ids[:10]) \
+                    .where("userId", "==", user_id)
+                docs = q.limit(300).stream()
+                scored = self._stream_and_score(docs, query_tokens)
+            except Exception as e:
+                print(f"[TutorService] concept-scoped query failed: {e}")
+                scored = []
+
+            # Fallback for legacy data: concept_ids may actually be file stems
+            # (e.g. "smu_gen_ai_topic_3") while chunks use course-level
+            # concept_id (e.g. "gen-ai"). Match by source filename instead.
+            if not scored:
+                try:
+                    docs = (
+                        self.db.collection(self.collection)
+                        .where("userId", "==", user_id)
+                        .limit(500)
+                        .stream()
+                    )
+                    # Build set of source patterns from concept_ids for matching
+                    id_patterns = set()
+                    for cid in clean_ids:
+                        # Normalize to lowercase, collapse separators
+                        normalized = cid.lower().replace("-", "_").replace(" ", "_")
+                        id_patterns.add(normalized)
+
+                    all_chunks = []
+                    for doc in docs:
+                        row = doc.to_dict()
+                        if not row:
+                            continue
+                        text = str(row.get("text", "")).strip()
+                        if not text:
+                            continue
+                        all_chunks.append(row)
+
+                    # Filter chunks whose source filename matches any pinned topic
+                    matched = []
+                    for row in all_chunks:
+                        source = str(row.get("source", "")).lower().replace("-", "_").replace(" ", "_")
+                        source_stem = source.rsplit(".", 1)[0] if "." in source else source
+                        concept = str(row.get("concept_id", "")).lower().replace("-", "_").replace(" ", "_")
+                        if any(pat in source_stem or pat in concept or source_stem in pat for pat in id_patterns):
+                            matched.append(row)
+
+                    # If source matching found results, use those; otherwise use all
+                    target = matched if matched else all_chunks
+                    seen: set = set()
+                    for row in target:
+                        text = str(row.get("text", "")).strip()
+                        h = hash(text)
+                        if h in seen:
+                            continue
+                        seen.add(h)
+                        score = self._score_chunk(query_tokens, text)
+                        scored.append({
+                            "text": text,
+                            "concept_id": str(row.get("concept_id", "unknown")),
+                            "score": score,
+                            "chunk_id": str(uuid4()),
+                        })
+                except Exception as e:
+                    print(f"[TutorService] source-match fallback failed: {e}")
+                    scored = []
+        elif user_id:
+            try:
+                docs = (
+                    self.db.collection(self.collection)
+                    .where("userId", "==", user_id)
+                    .limit(300)
+                    .stream()
+                )
+                scored = self._stream_and_score(docs, query_tokens)
+            except Exception as e:
+                print(f"[TutorService] user query failed: {e}")
+                scored = []
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:limit]

@@ -357,7 +357,9 @@ async def upload_files(
                                 },
                                 merge=True,
                             )
-                    concept_slug = (course_id or safe_name).lower().replace(" ", "-")
+                    topic_title = pathlib.Path(safe_name).stem
+                    # Per-file concept_id so each topic is independently retrievable
+                    concept_slug = topic_title.lower().replace(" ", "_").replace("-", "_")
                     batch = db.batch()
                     for i, chunk in enumerate(text_chunks):
                         doc_ref = db.collection(vector_search.collection_name).document()
@@ -373,7 +375,6 @@ async def upload_files(
                         })
                     batch.commit()
                     # Write user_topics entry for sidebar
-                    topic_title = pathlib.Path(safe_name).stem
                     topic_ref = db.collection("user_topics").document()
                     topic_ref.set({
                         "userId": student_id,
