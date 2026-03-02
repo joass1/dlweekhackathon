@@ -184,18 +184,18 @@ export default function Page() {
       <div className="p-6 max-w-7xl mx-auto overflow-x-hidden">
       <div className={`space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
         <section>
-          <h1 className="text-3xl font-bold text-white drop-shadow-sm">Welcome back, {displayName}</h1>
-          <p className="text-white/80 mt-1">Here&apos;s your learning overview</p>
+          <h1 className="text-3xl font-bold text-black">Welcome back, {displayName}</h1>
+          <p className="text-black/70 mt-1">Here&apos;s your learning overview</p>
         </section>
 
-        <Card className="border-white/30 bg-white/70 backdrop-blur-md shadow-lg">
+        <Card className="border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg text-white">
           <div className="p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#0289b9] flex items-center gap-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#4cc9f0] flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5" /> Next Best Action
               </p>
               {loading ? (
-                <div className="flex items-center text-sm text-muted-foreground">
+                <div className="flex items-center text-sm text-white/60">
                   <span className="mr-2 inline-flex"><BounceLoader size={16} /></span>
                   Preparing your focus queue...
                 </div>
@@ -207,7 +207,7 @@ export default function Page() {
                 </p>
               )}
               {!loading && attentionTotal > 0 && (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-white/60">
                   {weakCount} weak and {learningCount} learning concepts currently need attention.
                 </p>
               )}
@@ -217,7 +217,7 @@ export default function Page() {
               <button
                 type="button"
                 onClick={() => setIsNeedsAttentionOpen(true)}
-                className="px-4 py-2 text-sm rounded-full border border-white/40 bg-white/30 hover:bg-white/50 transition-colors backdrop-blur-sm"
+                className="px-4 py-2 text-sm rounded-full border border-white/30 bg-white/10 hover:bg-white/20 transition-colors text-white"
               >
                 View Attention List
               </button>
@@ -233,21 +233,22 @@ export default function Page() {
         </Card>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
-          <Card className="p-5 h-full min-h-[140px] bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
+          <Card className="p-5 h-full min-h-[140px] bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-1 h-full bg-emerald-400 rounded-l-xl" />
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Mastery Progress</p>
+                <p className="text-sm font-medium text-white/70">Mastery Progress</p>
                 {loading ? (
-                  <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
+                  <div className="mt-3 text-white/60"><BounceLoader size={20} /></div>
                 ) : (
                   <>
-                    <p className="text-3xl font-bold mt-2">{masteryRate}%</p>
-                    <p className="text-sm text-muted-foreground mt-1">{mastered} of {total} concepts mastered</p>
+                    <p className="text-3xl font-bold mt-2 text-emerald-400">{masteryRate}%</p>
+                    <p className="text-sm text-white/60 mt-1">{mastered} of {total} concepts mastered</p>
                   </>
                 )}
               </div>
-              <div className="p-2.5 rounded-xl bg-green-500/15">
-                <BookOpen className="h-5 w-5 text-green-500" />
+              <div className="p-2.5 rounded-xl bg-emerald-500/20">
+                <BookOpen className="h-5 w-5 text-emerald-400" />
               </div>
             </div>
           </Card>
@@ -258,21 +259,22 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open needs attention details"
           >
-            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
+            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-1 h-full bg-amber-400 rounded-l-xl" />
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Needs Attention</p>
+                  <p className="text-sm font-medium text-white/70">Needs Attention</p>
                   {loading ? (
-                    <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
+                    <div className="mt-3 text-white/60"><BounceLoader size={20} /></div>
                   ) : (
                     <>
-                      <p className="text-3xl font-bold mt-2 text-yellow-600">{attentionTotal}</p>
-                      <p className="text-sm text-muted-foreground mt-1">{weakCount} weak &middot; {learningCount} learning</p>
+                      <p className="text-3xl font-bold mt-2 text-amber-400">{attentionTotal}</p>
+                      <p className="text-sm text-white/60 mt-1">{weakCount} weak &middot; {learningCount} learning</p>
                     </>
                   )}
                 </div>
-                <div className="p-2.5 rounded-xl bg-yellow-500/15">
-                  <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                <div className="p-2.5 rounded-xl bg-amber-500/20">
+                  <AlertTriangle className="h-5 w-5 text-amber-400" />
                 </div>
               </div>
             </Card>
@@ -284,21 +286,22 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open activity history"
           >
-            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
+            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-1 h-full bg-sky-400 rounded-l-xl" />
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Activity</p>
+                  <p className="text-sm font-medium text-white/70">Activity</p>
                   {loading ? (
-                    <div className="mt-3 text-muted-foreground"><BounceLoader size={20} /></div>
+                    <div className="mt-3 text-white/60"><BounceLoader size={20} /></div>
                   ) : (
                     <>
-                      <p className="text-3xl font-bold mt-2">{totalAttempts}</p>
-                      <p className="text-sm text-muted-foreground mt-1">{Math.round(accuracy * 100)}% accuracy</p>
+                      <p className="text-3xl font-bold mt-2 text-sky-400">{totalAttempts}</p>
+                      <p className="text-sm text-white/60 mt-1">{Math.round(accuracy * 100)}% accuracy</p>
                     </>
                   )}
                 </div>
-                <div className="p-2.5 rounded-xl bg-blue-500/15">
-                  <Target className="h-5 w-5 text-blue-500" />
+                <div className="p-2.5 rounded-xl bg-sky-500/20">
+                  <Target className="h-5 w-5 text-sky-400" />
                 </div>
               </div>
             </Card>
@@ -312,17 +315,17 @@ export default function Page() {
             isKGExpanded ? 'fixed inset-8 z-40' : ''
           }`}
         >
-          <Card className="overflow-hidden h-full flex flex-col bg-white/70 backdrop-blur-md border-white/30 shadow-lg">
+          <Card className="overflow-hidden h-full flex flex-col bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white">
             <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h3 className="font-semibold">Knowledge Map</h3>
-                <p className="text-xs text-muted-foreground mt-1">Use labels toggle for a cleaner map when many topics are present.</p>
+                <p className="text-xs text-white/60 mt-1">Use labels toggle for a cleaner map when many topics are present.</p>
               </div>
               <div className="flex items-center gap-2">
                 <select
                   value={selectedCourse}
                   onChange={e => setSelectedCourse(e.target.value)}
-                  className="text-sm p-1.5 border border-white/40 rounded-lg bg-white/50"
+                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white"
                 >
                   {courses.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
@@ -331,13 +334,13 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={() => setShowMapLabels(prev => !prev)}
-                  className="text-xs px-2.5 py-1.5 rounded-lg border hover:bg-accent transition-colors"
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 transition-colors text-white/80"
                 >
                   {showMapLabels ? 'Hide Labels' : 'Show Labels'}
                 </button>
                 <button
                   onClick={toggleKG}
-                  className="p-1 rounded hover:bg-accent text-muted-foreground"
+                  className="p-1 rounded hover:bg-accent text-white/60"
                   title={isKGExpanded ? 'Collapse' : 'Expand'}
                   aria-label={isKGExpanded ? 'Collapse knowledge map' : 'Expand knowledge map'}
                 >
@@ -350,7 +353,7 @@ export default function Page() {
             </div>
             <div className={`${isKGExpanded ? 'flex-1 min-h-0' : 'h-[680px]'}`}>
               {loading ? (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                <div className="h-full flex items-center justify-center text-sm text-white/60">
                   <span className="mr-2 inline-flex"><BounceLoader size={20} /></span> Loading knowledge graph...
                 </div>
               ) : (
@@ -389,12 +392,12 @@ export default function Page() {
             <div className="p-4 border-b flex items-center justify-between">
               <div>
                 <h3 className="font-semibold">Needs Attention</h3>
-                <p className="text-sm text-muted-foreground">Concepts that are weak or still learning</p>
+                <p className="text-sm text-white/60">Concepts that are weak or still learning</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsNeedsAttentionOpen(false)}
-                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                className="p-1 rounded hover:bg-accent text-white/60"
                 aria-label="Close needs attention details"
               >
                 <X className="w-4 h-4" />
@@ -403,12 +406,12 @@ export default function Page() {
 
             <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
-                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                <div className="flex items-center justify-center py-8 text-sm text-white/60">
                   <span className="mr-2 inline-flex"><BounceLoader size={20} /></span>
                   Loading concepts...
                 </div>
               ) : attentionConcepts.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">No concepts currently need attention.</p>
+                <p className="text-sm text-white/60 py-4 text-center">No concepts currently need attention.</p>
               ) : (
                 <div className="space-y-3">
                   {attentionConcepts.map((concept) => (
@@ -430,7 +433,7 @@ export default function Page() {
                             style={{ width: `${concept.mastery}%` }}
                           />
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1">Mastery: {concept.mastery}%</p>
+                        <p className="text-xs text-white/60 mt-1">Mastery: {concept.mastery}%</p>
                       </div>
                     </div>
                   ))}
@@ -456,12 +459,12 @@ export default function Page() {
             <div className="p-4 border-b flex items-center justify-between">
               <div>
                 <h3 className="font-semibold">Recent Activity</h3>
-                <p className="text-sm text-muted-foreground">Your latest assessment outcomes</p>
+                <p className="text-sm text-white/60">Your latest assessment outcomes</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsActivityOpen(false)}
-                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                className="p-1 rounded hover:bg-accent text-white/60"
                 aria-label="Close activity history"
               >
                 <X className="w-4 h-4" />
@@ -470,12 +473,12 @@ export default function Page() {
 
             <div className="p-4 overflow-y-auto max-h-[calc(80vh-72px)]">
               {loading ? (
-                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                <div className="flex items-center justify-center py-8 text-sm text-white/60">
                   <span className="mr-2 inline-flex"><BounceLoader size={20} /></span>
                   Loading activity...
                 </div>
               ) : recentAttempts.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">No activity yet. Take an assessment to generate history.</p>
+                <p className="text-sm text-white/60 py-4 text-center">No activity yet. Take an assessment to generate history.</p>
               ) : (
                 <div className="space-y-2">
                   {recentAttempts.slice(-12).reverse().map((attempt, i) => (
