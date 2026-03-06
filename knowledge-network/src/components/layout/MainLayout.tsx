@@ -59,7 +59,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
 
       if (viewportWidth < 640) {
         setAccountLayout('dock');
-      } else if (rightSideSpace >= 320) {
+      } else if (rightSideSpace >= 380) {
         setAccountLayout('inline');
       } else if (rightSideSpace >= 126) {
         setAccountLayout('compact');

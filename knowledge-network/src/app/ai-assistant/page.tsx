@@ -442,8 +442,8 @@ export default function AIAssistantPage() {
 
       <Split
         className="relative z-10 flex h-screen overflow-hidden bg-transparent"
-        sizes={[20, 50, 30]}
-        minSize={[200, 400, 250]}
+        sizes={[23, 53, 24]}
+        minSize={[180, 400, 160]}
         gutterSize={4}
       >
         {/* Left sidebar */}
