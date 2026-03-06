@@ -4,6 +4,7 @@ import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { Typewriter } from '@/components/ui/typewriter';
 
 type CharacterModelProps = {
   isSpeaking: boolean;
@@ -89,16 +90,47 @@ function deduplicateSpeechCitations(content: string): string {
  *  message's [N] was clicked (section 0 = initial prompt, 1 = first assistant reply, …). */
 function expandSpeechCitations(
   text: string,
-  onCitationClick?: (n: number, sectionIndex: number) => void
+  onCitationClick?: (n: number, sectionIndex: number) => void,
+  typingText?: string
 ): React.ReactNode {
   const sections = text.split(/\n?%%SEP%%\n?/);
+  const animatedSectionIndex =
+    typingText && sections[sections.length - 1] === typingText ? sections.length - 1 : -1;
+
   if (sections.length <= 1) {
+    if (animatedSectionIndex === 0 && typingText) {
+      return (
+        <Typewriter
+          text={typingText}
+          speed={24}
+          initialDelay={120}
+          loop={false}
+          cursorChar="_"
+          cursorClassName="ml-1 text-[#8de7ff]"
+        />
+      );
+    }
+
     return inlineCitations(deduplicateSpeechCitations(text), 0, onCitationClick);
   }
+
   return sections.map((section, i) => (
     <React.Fragment key={i}>
       {i > 0 && <hr className="my-2 border-slate-300" />}
-      <span>{inlineCitations(deduplicateSpeechCitations(section), i, onCitationClick)}</span>
+      <span>
+        {i === animatedSectionIndex && typingText ? (
+          <Typewriter
+            text={typingText}
+            speed={24}
+            initialDelay={120}
+            loop={false}
+            cursorChar="_"
+            cursorClassName="ml-1 text-[#8de7ff]"
+          />
+        ) : (
+          inlineCitations(deduplicateSpeechCitations(section), i, onCitationClick)
+        )}
+      </span>
     </React.Fragment>
   ));
 }
@@ -211,10 +243,12 @@ function AnimatedAccentLight() {
 export default function SocraticBackground3D({
   speechText = '',
   isSpeaking = false,
+  typingText,
   onCitationClick,
 }: {
   speechText?: string;
   isSpeaking?: boolean;
+  typingText?: string;
   onCitationClick?: (n: number, sectionIndex: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -306,7 +340,7 @@ export default function SocraticBackground3D({
                 touchAction: 'pan-y',
               }}
             >
-              {expandSpeechCitations(speechText, onCitationClick)}
+              {expandSpeechCitations(speechText, onCitationClick, typingText)}
             </div>
           </div>
         </div>

@@ -10,6 +10,7 @@ import { GroupFeed } from '@/components/groups/GroupFeed';
 import { Card } from '@/components/ui/card';
 import { Users } from 'lucide-react';
 import type { MemberProfile } from '@/services/peer';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface PageProps {
   params: Promise<{
@@ -31,6 +32,8 @@ export default function GroupDetailPage({ params }: PageProps) {
   const groupId = resolvedParams.groupId;
   const { apiFetchWithAuth } = useAuthedApi();
   const studentId = useStudentId();
+  const { user } = useAuth();
+  const displayName = user?.displayName || user?.email?.split('@')[0] || 'Player';
 
   const [memberProfiles, setMemberProfiles] = useState<MemberProfile[]>([]);
   const [concepts, setConcepts] = useState<{ id: string; title: string }[]>([]);
@@ -57,7 +60,7 @@ export default function GroupDetailPage({ params }: PageProps) {
           // For now, the current student is the only profile we have
           // In a full implementation, we'd load all hub members' profiles
           setMemberProfiles([
-            { student_id: studentId, name: studentId, concept_profile: conceptProfile },
+            { student_id: studentId, name: displayName, concept_profile: conceptProfile },
           ]);
         }
       } catch (err) {
@@ -68,7 +71,7 @@ export default function GroupDetailPage({ params }: PageProps) {
     };
     loadHubData();
     return () => { cancelled = true; };
-  }, [apiFetchWithAuth, studentId]);
+  }, [apiFetchWithAuth, studentId, displayName]);
 
   return (
     <div className="p-6 space-y-6">

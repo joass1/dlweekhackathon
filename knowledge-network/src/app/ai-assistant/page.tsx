@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ChatInput, ChatWindow, MicroCheckpoint, NotesContext, SubjectsList } from '@/components/ai';
 import type { CheckpointQuestion } from '@/components/ai';
@@ -23,6 +23,32 @@ interface ContextItem {
   score: number;
   index?: number;
 }
+
+const SPEECH_THINKING_PHRASES = [
+  "Wandering through the labyrinth of knowledge...",
+  "Whispering to the neurons... they whisper back...",
+  "Unraveling threads of understanding...",
+  "Consulting ancient scrolls of wisdom...",
+  "Chasing butterflies of insight...",
+  "Stirring the cauldron of concepts...",
+  "Dancing through prerequisite chains...",
+  "Tickling the knowledge graph...",
+  "Weaving moonlight into explanations...",
+  "Rummaging through the attic of ideas...",
+  "Connecting constellations of thought...",
+  "Brewing a peculiar potion of clarity...",
+  "Asking the oracle of understanding...",
+  "Painting pictures with pure logic...",
+  "Juggling theorems and epiphanies...",
+  "Decoding the whispers of the syllabus...",
+  "Somersaulting through concept space...",
+  "Polishing diamonds of insight...",
+  "Untangling the cosmic spaghetti of knowledge...",
+  "Plucking strings on the harp of reason...",
+  "Spelunking through caverns of curriculum...",
+  "Folding origami cranes of explanation...",
+  "Sipping tea with Socrates himself...",
+];
 
 const STUDY_MISSION_TIMER_KEY = 'mentora:studyMissionTimer';
 const STUDY_MISSION_SESSION_KEY = 'mentora:studyMissionSession';
@@ -66,6 +92,25 @@ export default function AIAssistantPage() {
   const [missionTimerCourse, setMissionTimerCourse] = useState<string>('all');
   const missionTimeoutHandledRef = useRef(false);
 
+  // Rotating thinking phrase for the speech bubble
+  const [thinkingPhrase, setThinkingPhrase] = useState(() =>
+    SPEECH_THINKING_PHRASES[Math.floor(Math.random() * SPEECH_THINKING_PHRASES.length)]
+  );
+
+  useEffect(() => {
+    if (!isLoading) return;
+    const interval = setInterval(() => {
+      setThinkingPhrase((prev) => {
+        let next: string;
+        do {
+          next = SPEECH_THINKING_PHRASES[Math.floor(Math.random() * SPEECH_THINKING_PHRASES.length)];
+        } while (next === prev && SPEECH_THINKING_PHRASES.length > 1);
+        return next;
+      });
+    }, 2800);
+    return () => clearInterval(interval);
+  }, [isLoading]);
+
   // Micro-checkpoint state
   const sessionIdRef = useRef<string>(generateId());
   const messageCountRef = useRef(0);
@@ -94,9 +139,9 @@ export default function AIAssistantPage() {
 
   const selectedAssistantSpeech = useMemo(() => {
     const parts = [initialSocraticPrompt, ...cleanedAssistantMessages];
-    if (isLoading) parts.push('Thinking...');
+    if (isLoading) parts.push(thinkingPhrase);
     return parts.join('\n%%SEP%%\n');
-  }, [cleanedAssistantMessages, initialSocraticPrompt, isLoading]);
+  }, [cleanedAssistantMessages, initialSocraticPrompt, isLoading, thinkingPhrase]);
 
   useEffect(() => {
     const topic = (searchParams.get('topic') || '').trim();
@@ -415,6 +460,7 @@ export default function AIAssistantPage() {
           <SocraticBackground3D
             speechText={selectedAssistantSpeech}
             isSpeaking={isLoading || Boolean(selectedAssistantSpeech)}
+            typingText={isLoading ? thinkingPhrase : undefined}
             onCitationClick={(n, _sectionIdx) => {
               setHighlightedSourceIndex(n);
             }}

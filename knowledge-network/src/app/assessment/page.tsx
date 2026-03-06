@@ -8,6 +8,7 @@ import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAssessmentHistory, type AssessmentHistoryRun } from '@/services/assessment';
+import { GlowingEffect } from '@/components/ui/glowing-effect';
 
 interface GraphNode {
   id: string;
@@ -275,11 +276,12 @@ export default function AssessmentSelectionPage() {
               {coursesWithCounts.map((course) => (
                 <button
                   key={course.id}
-                  className={`text-left ${glassCardClass} overflow-hidden transition-all ${
+                  className={`glow-card relative text-left ${glassCardClass} overflow-hidden transition-all ${
                     course.topicCount > 0 ? 'hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] hover:-translate-y-0.5' : 'opacity-70'
                   }`}
                   onClick={() => setSelectedCourse(course.id)}
                 >
+                  <GlowingEffect spread={40} glow={true} disabled={false} proximity={64} inactiveZone={0.01} borderWidth={2} />
                   <div className="p-6">
                     <h3 className="text-xl font-semibold mb-2 text-white">{course.name}</h3>
                     <p className="text-sm text-white/75">
@@ -322,8 +324,9 @@ export default function AssessmentSelectionPage() {
                 {selectedCourseConcepts.map((concept) => (
                   <div
                     key={concept.id}
-                    className={`${glassCardClass} overflow-hidden hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] transition-all`}
+                    className={`glow-card relative ${glassCardClass} overflow-hidden hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] transition-all`}
                   >
+                    <GlowingEffect spread={40} glow={true} disabled={false} proximity={64} inactiveZone={0.01} borderWidth={2} />
                     <div className="p-6">
                       <h3 className="text-xl font-semibold mb-2 text-white">{concept.title}</h3>
                       <p className="text-white/75 mb-3">{concept.category}</p>

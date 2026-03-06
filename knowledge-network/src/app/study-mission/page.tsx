@@ -9,6 +9,7 @@ import Image from 'next/image';
 import { CourseOption } from '@/lib/courses';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { GlowingEffect } from '@/components/ui/glowing-effect';
 
 interface StudyPlanItem {
   concept_id: string;
@@ -840,11 +841,12 @@ export default function StudyMissionPage() {
     return (
       <Card
         key={concept.concept_id}
-        className={`${surfaceCardClass} p-4 transition-all ${
+        className={`glow-card relative ${surfaceCardClass} p-4 transition-all ${
           isCurrent ? 'ring-2 ring-[#03b2e6] bg-[#03b2e6]/18' :
           isDone ? 'opacity-65' : ''
         }`}
       >
+        <GlowingEffect spread={200} glow={true} disabled={isDone} proximity={64} borderWidth={2} variant="cyan" />
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -938,7 +940,8 @@ export default function StudyMissionPage() {
           prioritized by knowledge gap severity, prerequisite depth, and decay risk.
         </p>
 
-        <Card className={`${surfaceCardClass} p-6`}>
+        <Card className={`glow-card relative ${surfaceCardClass} p-6`}>
+          <GlowingEffect spread={250} glow={true} disabled={false} proximity={80} borderWidth={2} variant="cyan" />
           <h2 className="font-semibold mb-3 text-white">Select Course</h2>
           <div className="mb-6">
             <select
@@ -1148,7 +1151,8 @@ export default function StudyMissionPage() {
           </div>
         </div>
 
-        <Card className={`${surfaceCardClass} p-4 text-center min-w-[200px]`}>
+        <Card className={`glow-card relative ${surfaceCardClass} p-4 text-center min-w-[200px]`}>
+          <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
           <div className="flex items-center justify-center gap-1 text-xs text-white/70 mb-1">
             <Clock className="w-3 h-3" /> Time Remaining
           </div>
@@ -1184,7 +1188,8 @@ export default function StudyMissionPage() {
         </Card>
       )}
 
-      <Card className={`${surfaceCardClass} p-4 mb-6`}>
+      <Card className={`glow-card relative ${surfaceCardClass} p-4 mb-6`}>
+        <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-[#03b2e6] font-semibold">Limited Time Focus</p>

@@ -167,11 +167,13 @@ export default function BossBattleScene3D({
   healthMax: number;
 }) {
   return (
-    <div className="h-72 w-full rounded-xl overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 border border-red-300/30">
+    <div className="w-full h-full bg-gradient-to-br from-slate-950 via-[#0a1628] to-slate-900">
       <Canvas dpr={[1, 1.5]} gl={{ alpha: true }} camera={{ position: [0, 0.35, 4.6], fov: 33 }}>
-        <ambientLight intensity={0.9} />
-        <directionalLight position={[4, 5, 4]} intensity={1.25} />
-        <directionalLight position={[-4, 2, -2]} intensity={0.55} color="#ff6b6b" />
+        <ambientLight intensity={0.7} />
+        <directionalLight position={[4, 5, 4]} intensity={1.4} />
+        <directionalLight position={[-4, 2, -2]} intensity={0.6} color="#ff6b6b" />
+        <directionalLight position={[0, -2, 4]} intensity={0.3} color="#03b2e6" />
+        <fog attach="fog" args={['#0a1628', 8, 20]} />
         <Suspense fallback={null}>
           <BossModel healthCurrent={healthCurrent} healthMax={healthMax} />
         </Suspense>

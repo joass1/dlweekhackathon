@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { TextShimmer } from '@/components/ui/text-shimmer';
 
 interface Message {
   id: string;
@@ -16,30 +17,42 @@ interface ChatWindowProps {
 }
 
 const THINKING_PHRASES = [
-  "Pondering the depths of knowledge...",
-  "Connecting the dots across concepts...",
-  "Rummaging through course materials...",
-  "Brewing up an explanation...",
-  "Tracing prerequisite chains...",
-  "Consulting the knowledge graph...",
-  "Weaving together an answer...",
-  "Meandering through neural pathways...",
-  "Synthesizing insights...",
-  "Untangling the concept web...",
-  "Flipping through mental flashcards...",
-  "Warming up the reasoning engine...",
-  "Mapping out the explanation...",
-  "Assembling the building blocks...",
-  "Diving into the material...",
+  "Wandering through the labyrinth of knowledge...",
+  "Whispering to the neurons... they whisper back...",
+  "Unraveling threads of understanding...",
+  "Consulting ancient scrolls of wisdom...",
+  "Chasing butterflies of insight...",
+  "Stirring the cauldron of concepts...",
+  "Dancing through prerequisite chains...",
+  "Tickling the knowledge graph...",
+  "Weaving moonlight into explanations...",
+  "Rummaging through the attic of ideas...",
+  "Connecting constellations of thought...",
+  "Brewing a peculiar potion of clarity...",
+  "Asking the oracle of understanding...",
+  "Painting pictures with pure logic...",
+  "Herding cats of cognition...",
+  "Juggling theorems and epiphanies...",
+  "Decoding the whispers of the syllabus...",
+  "Somersaulting through concept space...",
+  "Polishing diamonds of insight...",
+  "Untangling the cosmic spaghetti of knowledge...",
+  "Plucking strings on the harp of reason...",
+  "Feeding the hamsters that power comprehension...",
+  "Spelunking through caverns of curriculum...",
+  "Folding origami cranes of explanation...",
+  "Sipping tea with Socrates himself...",
 ];
 
 function ThinkingIndicator() {
   const [phraseIndex, setPhraseIndex] = useState(() =>
     Math.floor(Math.random() * THINKING_PHRASES.length)
   );
+  const [fade, setFade] = useState(true);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
+  const cyclePhrase = useCallback(() => {
+    setFade(false);
+    setTimeout(() => {
       setPhraseIndex((prev) => {
         let next: number;
         do {
@@ -47,9 +60,14 @@ function ThinkingIndicator() {
         } while (next === prev && THINKING_PHRASES.length > 1);
         return next;
       });
-    }, 2500);
-    return () => clearInterval(interval);
+      setFade(true);
+    }, 300);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(cyclePhrase, 2800);
+    return () => clearInterval(interval);
+  }, [cyclePhrase]);
 
   return (
     <div className="p-4 bg-[#e0f4fb]/50 rounded-lg ml-4 flex items-center gap-3">
@@ -58,9 +76,16 @@ function ThinkingIndicator() {
         <span className="w-2 h-2 bg-[#03b2e6] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
         <span className="w-2 h-2 bg-[#03b2e6] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
       </div>
-      <span className="text-sm text-[#03b2e6] italic transition-opacity duration-300">
-        {THINKING_PHRASES[phraseIndex]}
-      </span>
+      <div
+        className={`transition-opacity duration-300 ${fade ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <TextShimmer
+          duration={1.2}
+          className="font-mono text-sm italic [--shimmer-base:#0ea5e9] [--shimmer-color:#e0f4fb]"
+        >
+          {THINKING_PHRASES[phraseIndex]}
+        </TextShimmer>
+      </div>
     </div>
   );
 }

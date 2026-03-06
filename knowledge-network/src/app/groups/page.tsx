@@ -12,6 +12,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { getAllActiveSessions, joinSession, type SessionSummary } from '@/services/peer';
 import { useAuth } from '@/contexts/AuthContext';
+import { GlowingEffect } from '@/components/ui/glowing-effect';
 
 interface HubMember {
   student_id: string;
@@ -35,10 +36,13 @@ interface KGNode {
   status: string;
 }
 
+const glassCardClass = 'rounded-3xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
+
 export default function GroupsPage() {
   const studentId = useStudentId();
   const { apiFetchWithAuth } = useAuthedApi();
-  const { getIdToken } = useAuth();
+  const { user, getIdToken } = useAuth();
+  const displayName = user?.displayName || user?.email?.split('@')[0] || 'Player';
   const searchParams = useSearchParams();
   const router = useRouter();
   const [hubs, setHubs] = useState<Hub[]>([]);
@@ -74,7 +78,7 @@ export default function GroupsPage() {
           conceptProfile[n.id] = n.mastery / 100;
         });
 
-        const students = [{ student_id: studentId, name: studentId, concept_profile: conceptProfile }];
+        const students = [{ student_id: studentId, name: displayName, concept_profile: conceptProfile }];
 
         // Call hub matching API
         const hubResult = await apiFetchWithAuth<{ hubs: Hub[] }>('/api/adaptive/hubs/match', {
@@ -103,7 +107,7 @@ export default function GroupsPage() {
     setJoiningId(session.session_id);
     try {
       const token = await getIdToken();
-      await joinSession(session.session_id, studentId, studentId, token);
+      await joinSession(session.session_id, studentId, displayName, token);
       router.push(`/groups/${session.hub_id}/session?id=${session.session_id}`);
     } catch (err) {
       console.error('Failed to join session:', err);
@@ -111,9 +115,25 @@ export default function GroupsPage() {
     }
   };
 
+  const pageShell = (children: React.ReactNode) => (
+    <div className="relative min-h-full overflow-hidden">
+      <div
+        className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+        aria-hidden
+      />
+      <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
+      <div className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-[#03b2e6]/18 blur-3xl" aria-hidden />
+      <div className="pointer-events-none absolute right-[-5rem] top-[-5rem] h-96 w-96 rounded-full bg-amber-400/12 blur-3xl" aria-hidden />
+      <div className="relative z-10 p-6 text-white">
+        {children}
+      </div>
+    </div>
+  );
+
   if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-[400px]">
+    return pageShell(
+      <div className="flex items-center justify-center min-h-[400px]">
         <Image
           src="/logo-images/favicon.png"
           alt="Loading"
@@ -122,66 +142,67 @@ export default function GroupsPage() {
           className="animate-bounce mr-2"
           priority
         />
-        <span className="text-muted-foreground">Matching peer learning hubs...</span>
+        <span className="text-white/60">Matching peer learning hubs...</span>
       </div>
     );
   }
 
   if (error) {
-    return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-6">Peer Learning Hubs</h1>
-        <Card className="p-6 bg-red-50 border-red-200 text-red-700 text-sm">{error}</Card>
-      </div>
+    return pageShell(
+      <>
+        <h1 className="text-2xl font-bold mb-6 text-white">Peer Learning Hubs</h1>
+        <Card className={`${glassCardClass} p-6 border-red-300/30 bg-red-500/20 text-red-100 text-sm`}>{error}</Card>
+      </>
     );
   }
 
-  return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-2">Peer Learning Hubs</h1>
-      <p className="text-sm text-muted-foreground mb-6">
+  return pageShell(
+    <>
+      <h1 className="text-2xl font-bold mb-2 text-white">Peer Learning Hubs</h1>
+      <p className="text-sm text-white/70 mb-6">
         Balanced groups where each member&apos;s strengths complement others&apos; weaknesses.
       </p>
 
       {/* ── Active Sessions (browse & join any) ──────────────────────── */}
       {activeSessions.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-            <Play className="w-4 h-4 text-green-600" />
+          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-white">
+            <Play className="w-4 h-4 text-emerald-400" />
             Live Sessions
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeSessions.map((s) => {
               const alreadyIn = s.members.some(m => m.student_id === studentId);
               return (
-                <Card key={s.session_id} className="border-green-200 bg-green-50/50">
+                <Card key={s.session_id} className={`glow-card relative ${glassCardClass} border-emerald-400/30 overflow-hidden`}>
+                  <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    <CardTitle className="text-base flex items-center gap-2 text-white">
+                      <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                       {s.topic}
                     </CardTitle>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-white/60">
                       {s.status === 'waiting' ? 'Waiting for players...' : 'In progress'} &middot; {s.members.length}/{s.expected_members} joined &middot; {s.question_count} questions
                     </p>
                   </CardHeader>
                   <CardContent>
                     <div className="mb-3">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">Participants:</p>
+                      <p className="text-xs font-medium text-white/60 mb-1">Participants:</p>
                       <div className="flex flex-wrap gap-1">
                         {s.members.map((m) => (
                           <span
                             key={m.student_id}
                             className={`text-xs px-2 py-0.5 rounded-full ${
                               m.student_id === studentId
-                                ? 'bg-[#e0f4fb] text-[#03b2e6] font-medium'
-                                : 'bg-gray-100 text-gray-700'
+                                ? 'bg-[#03b2e6]/25 text-[#4cc9f0] font-medium'
+                                : 'bg-white/10 text-white/80'
                             }`}
                           >
                             {m.name}{m.student_id === studentId ? ' (you)' : ''}
                           </span>
                         ))}
                         {s.members.length < s.expected_members && (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-400 border border-dashed border-gray-300">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 text-white/40 border border-dashed border-white/20">
                             +{s.expected_members - s.members.length} open
                           </span>
                         )}
@@ -198,7 +219,7 @@ export default function GroupsPage() {
                     ) : (
                       <Button
                         size="sm"
-                        className="w-full"
+                        className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20"
                         onClick={() => handleJoinSession(s)}
                         disabled={joiningId === s.session_id}
                       >
@@ -218,18 +239,18 @@ export default function GroupsPage() {
       )}
 
       {topicFromGraph && (
-        <Card className="mb-5 p-4 bg-blue-50 border-blue-200">
-          <p className="text-sm text-blue-800">
+        <div className="mb-5 p-4 rounded-xl border border-[#03b2e6]/30 bg-[#03b2e6]/15 backdrop-blur-sm">
+          <p className="text-sm text-white">
             Focused topic from Knowledge Map: <span className="font-semibold">{topicFromGraph}</span>
           </p>
-        </Card>
+        </div>
       )}
 
       {hubs.length === 0 ? (
-        <Card className="p-8 text-center">
-          <Users className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-muted-foreground mb-2">No hubs available yet.</p>
-          <p className="text-sm text-muted-foreground">Upload course materials and complete some assessments first.</p>
+        <Card className={`${glassCardClass} p-8 text-center`}>
+          <Users className="w-10 h-10 text-white/30 mx-auto mb-3" />
+          <p className="text-white/70 mb-2">No hubs available yet.</p>
+          <p className="text-sm text-white/60">Upload course materials and complete some assessments first.</p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -237,39 +258,42 @@ export default function GroupsPage() {
             const yourHub = hub.members.some(m => m.student_id === studentId);
             return (
               <Link key={hub.hub_id} href={`/groups/${hub.hub_id}`}>
-                <Card className={`hover:shadow-lg transition-shadow ${yourHub ? 'ring-2 ring-[#03b2e6]' : ''}`}>
+                <Card className={`glow-card relative ${glassCardClass} overflow-hidden transition-all hover:-translate-y-0.5 ${
+                  yourHub ? 'border-[#03b2e6]/60 ring-1 ring-[#03b2e6]/40' : ''
+                }`}>
+                  <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
+                    <CardTitle className="flex items-center gap-2 text-white">
                       <Users className="w-4 h-4" />
                       Hub {hub.hub_id.replace('hub_', '#')}
-                      {yourHub && <span className="text-xs bg-[#e0f4fb] text-[#03b2e6] px-2 py-0.5 rounded-full">Your Hub</span>}
+                      {yourHub && <span className="text-xs bg-[#03b2e6]/25 text-[#4cc9f0] px-2 py-0.5 rounded-full">Your Hub</span>}
                     </CardTitle>
-                    <p className="text-sm text-muted-foreground">{hub.members.length} members</p>
+                    <p className="text-sm text-white/60">{hub.members.length} members</p>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
                       <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Avg Mastery</span>
-                        <span className="font-medium">{Math.round(hub.hub_avg_mastery * 100)}%</span>
+                        <span className="text-white/60">Avg Mastery</span>
+                        <span className="font-medium text-white">{Math.round(hub.hub_avg_mastery * 100)}%</span>
                       </div>
-                      <div className="w-full bg-muted rounded-full h-2">
+                      <div className="w-full bg-white/10 rounded-full h-2">
                         <div
                           className="bg-[#03b2e6] h-2 rounded-full"
                           style={{ width: `${hub.hub_avg_mastery * 100}%` }}
                         />
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Complementarity</span>
-                        <span className="font-medium">{(hub.complementarity_score * 100).toFixed(0)}%</span>
+                        <span className="text-white/60">Complementarity</span>
+                        <span className="font-medium text-white">{(hub.complementarity_score * 100).toFixed(0)}%</span>
                       </div>
                       <div className="flex flex-wrap gap-1 mt-2">
                         {Object.entries(hub.tier_distribution).map(([tier, count]) => (
-                          <span key={tier} className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
+                          <span key={tier} className="text-xs bg-white/10 text-white/70 px-2 py-0.5 rounded">
                             {tier}: {count}
                           </span>
                         ))}
                       </div>
-                      <div className="text-xs text-muted-foreground mt-2">
+                      <div className="text-xs text-white/50 mt-2">
                         {hub.members.map(m => m.name).join(', ')}
                       </div>
                     </div>
@@ -280,6 +304,6 @@ export default function GroupsPage() {
           })}
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
+import { GlowingEffect } from '@/components/ui/glowing-effect';
 
 interface KGNode {
   id: string;
@@ -235,7 +236,8 @@ export default function Page() {
           <p className="text-black/70 mt-1">Here&apos;s your learning overview</p>
         </section>
 
-        <Card className="border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg text-white">
+        <Card className="glow-card relative overflow-hidden rounded-2xl border-white/15 bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md shadow-xl text-white">
+          <GlowingEffect spread={250} glow={true} disabled={false} proximity={80} borderWidth={2} variant="cyan" />
           <div className="p-5 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#4cc9f0] flex items-center gap-2">
@@ -303,7 +305,8 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open course mastery progress"
           >
-            <Card className="p-5 h-full min-h-[140px] bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden transition-shadow hover:shadow-md">
+            <Card className="glow-card p-5 h-full min-h-[140px] rounded-2xl bg-gradient-to-br from-slate-900/70 via-emerald-950/40 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white relative overflow-hidden transition-all hover:shadow-emerald-500/10 hover:shadow-2xl">
+              <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
               <div className="absolute top-0 left-0 w-1 h-full bg-emerald-400 rounded-l-xl" />
               <div className="flex justify-between items-start">
                 <div>
@@ -330,7 +333,8 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open needs attention details"
           >
-            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden">
+            <Card className="glow-card p-5 h-full min-h-[140px] rounded-2xl bg-gradient-to-br from-slate-900/70 via-amber-950/35 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white relative overflow-hidden transition-all hover:shadow-amber-500/10 hover:shadow-2xl">
+              <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
               <div className="absolute top-0 left-0 w-1 h-full bg-amber-400 rounded-l-xl" />
               <div className="flex justify-between items-start">
                 <div>
@@ -357,7 +361,8 @@ export default function Page() {
             className="w-full h-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open activity history"
           >
-            <Card className="p-5 h-full min-h-[140px] transition-shadow hover:shadow-md bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white relative overflow-hidden">
+            <Card className="glow-card p-5 h-full min-h-[140px] rounded-2xl bg-gradient-to-br from-slate-900/70 via-sky-950/35 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white relative overflow-hidden transition-all hover:shadow-sky-500/10 hover:shadow-2xl">
+              <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
               <div className="absolute top-0 left-0 w-1 h-full bg-sky-400 rounded-l-xl" />
               <div className="flex justify-between items-start">
                 <div>
@@ -383,7 +388,7 @@ export default function Page() {
       <section className={`mt-8 space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {progress && progress.self_awareness.total_attempts > 0 && (
-            <Card className="rounded-2xl bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white p-5">
+            <Card className="glow-card rounded-2xl bg-gradient-to-br from-slate-900/70 via-indigo-950/30 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white p-5">
               <h3 className="font-semibold mb-3">Self-Awareness Score</h3>
               <div className="flex items-center gap-6">
                 <div>
@@ -408,7 +413,7 @@ export default function Page() {
           )}
 
           {progress && progress.total_attempts > 0 && (
-            <Card className="rounded-2xl bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white p-5">
+            <Card className="glow-card rounded-2xl bg-gradient-to-br from-slate-900/70 via-rose-950/25 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white p-5">
               <h3 className="font-semibold mb-3">Mistake Breakdown</h3>
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
@@ -435,7 +440,7 @@ export default function Page() {
             isKGExpanded ? 'fixed inset-8 z-40' : ''
           }`}
         >
-          <Card className="overflow-hidden h-full flex flex-col bg-slate-900/55 backdrop-blur-sm border-white/20 shadow-lg text-white">
+          <Card className="glow-card overflow-hidden h-full flex flex-col rounded-2xl bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white">
             <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h3 className="font-semibold">Knowledge Map</h3>
