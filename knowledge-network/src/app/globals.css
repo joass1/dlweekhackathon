@@ -85,6 +85,16 @@
   }
 }
 
+.nav-safe-top {
+  padding-top: 5.5rem;
+}
+
+@media (min-width: 768px) {
+  .nav-safe-top {
+    padding-top: 6.5rem;
+  }
+}
+
 /* Glowing card hover effect */
 .glow-card {
   position: relative;

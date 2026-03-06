@@ -243,7 +243,7 @@ export default function AssessmentTakePage() {
   }
 
   return (
-    <div className="min-h-full py-8">
+    <div className="min-h-full nav-safe-top pb-8">
       <div className="max-w-3xl mx-auto px-4">
         <h1 className="text-2xl font-bold mb-2 text-slate-900">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
         <p className="text-sm text-slate-700 mb-8">Answer each question, then rate how confident you are in your answer.</p>

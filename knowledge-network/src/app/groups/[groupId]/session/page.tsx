@@ -384,7 +384,7 @@ export default function PeerSessionPage() {
       </div>
 
       {/* ── Top HUD Bar ───────────────────────────────────────────────── */}
-      <div className="absolute top-0 left-0 right-0 z-20 p-3">
+      <div className="absolute left-0 right-0 top-16 z-20 p-3 md:top-20">
         <div className={`${glass} px-4 py-3 flex items-center justify-between`}>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -431,7 +431,7 @@ export default function PeerSessionPage() {
       </div>
 
       {/* ── Boss Health Bar (centered under HUD) ─────────────────────── */}
-      <div className="absolute top-[72px] left-1/2 -translate-x-1/2 z-20 w-full max-w-xl px-4">
+      <div className="absolute left-1/2 top-[136px] z-20 w-full max-w-xl -translate-x-1/2 px-4 md:top-[144px]">
         <div className={`${glass} px-4 py-3`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -494,7 +494,7 @@ export default function PeerSessionPage() {
       </div>
 
       {/* ── Question Panel Overlay (right side) ──────────────────────── */}
-      <div className="absolute top-[140px] right-4 bottom-4 z-20 w-full max-w-md overflow-y-auto">
+      <div className="absolute right-4 bottom-4 top-[204px] z-20 w-full max-w-md overflow-y-auto md:top-[212px]">
         <div className="space-y-3">
           {/* Progress pips */}
           <div className="flex items-center gap-1.5 px-1">

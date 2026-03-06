@@ -159,7 +159,7 @@ export default function UploadPage() {
       className="relative min-h-full overflow-x-hidden bg-cover bg-center bg-no-repeat bg-fixed"
       style={{ backgroundImage: "url('/backgrounds/uploadback.png')" }}
     >
-    <div className="relative z-10 p-6 max-w-4xl mx-auto">
+    <div className="nav-safe-top relative z-10 p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2 text-black">Upload Course Materials</h1>
       <p className="text-black/70 mb-4">
         Upload your lecture notes, textbooks, and study materials. Mentora will analyze them

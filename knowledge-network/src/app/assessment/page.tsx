@@ -208,7 +208,7 @@ export default function AssessmentSelectionPage() {
   }, [courses, searchParams, selectedCourse]);
 
   const pageShellClass = 'relative min-h-full overflow-hidden';
-  const pageContentClass = 'relative z-10 max-w-6xl mx-auto px-4 py-8 text-white';
+  const pageContentClass = 'nav-safe-top relative z-10 max-w-6xl mx-auto px-4 pb-8 text-white';
   const glassCardClass = 'rounded-3xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
 
   const BounceLoader = ({ size = 28 }: { size?: number }) => (

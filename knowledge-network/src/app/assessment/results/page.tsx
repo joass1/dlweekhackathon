@@ -55,7 +55,7 @@ export default function ResultsPage() {
   }
 
   return (
-    <div className="min-h-full py-8">
+    <div className="min-h-full nav-safe-top pb-8">
       <div className="max-w-4xl mx-auto px-4 text-slate-900">
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold mb-4">Group Matching Complete!</h1>

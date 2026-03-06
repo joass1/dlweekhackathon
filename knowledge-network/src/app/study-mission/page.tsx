@@ -104,7 +104,7 @@ interface PersistedStudyMissionSession {
 
 export default function StudyMissionPage() {
   const pageShellClass = 'relative min-h-full overflow-hidden';
-  const pageContentClass = 'relative z-10 p-6 max-w-7xl mx-auto overflow-x-hidden text-white';
+  const pageContentClass = 'nav-safe-top relative z-10 p-6 max-w-7xl mx-auto overflow-x-hidden text-white';
   const surfaceCardClass = 'rounded-3xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)] text-white';
 
   const router = useRouter();

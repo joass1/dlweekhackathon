@@ -74,7 +74,7 @@ export default function GroupDetailPage({ params }: PageProps) {
   }, [apiFetchWithAuth, studentId, displayName]);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="nav-safe-top p-6 space-y-6">
       <div className="flex items-center gap-3 mb-2">
         <Users className="w-6 h-6 text-[#03b2e6]" />
         <h1 className="text-2xl font-bold">Hub {groupId.replace('hub_', '#')}</h1>

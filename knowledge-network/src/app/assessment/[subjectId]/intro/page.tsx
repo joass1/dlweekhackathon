@@ -78,7 +78,7 @@ export default function AssessmentIntroPage() {
 
   if (loading) {
     return (
-      <div className="min-h-full py-8">
+      <div className="min-h-full nav-safe-top pb-8">
         <div className="max-w-4xl mx-auto px-4">
           <div className="rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg p-8 text-center text-slate-700">
             <div className="flex items-center justify-center mb-3">
@@ -93,7 +93,7 @@ export default function AssessmentIntroPage() {
 
   if (error || !subject) {
     return (
-      <div className="min-h-full py-8">
+      <div className="min-h-full nav-safe-top pb-8">
         <div className="max-w-4xl mx-auto px-4">
           <div className="rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg p-8 text-center text-slate-900">
             <h1 className="text-2xl font-semibold mb-2">Concept unavailable</h1>
@@ -117,7 +117,7 @@ export default function AssessmentIntroPage() {
   const prereqs = Array.isArray(subject.prerequisites) ? subject.prerequisites : [];
 
   return (
-    <div className="min-h-full py-8">
+    <div className="min-h-full nav-safe-top pb-8">
       <div className="max-w-4xl mx-auto px-4">
         <div className="rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg p-8 text-slate-900">
           <div className="text-center mb-8">

@@ -447,12 +447,34 @@ export default function AIAssistantPage() {
         gutterSize={4}
       >
         {/* Left sidebar */}
-        <div className="relative z-10 border-r border-white/20 bg-slate-900/52 h-screen overflow-y-auto backdrop-blur-sm">
-          <SubjectsList
-            onNoteSelect={(noteId) => {
-              // Handle note selection
-            }}
-          />
+        <div className="relative z-10 h-screen border-r border-white/20 bg-slate-900/52 backdrop-blur-sm">
+          <div className="h-full overflow-y-auto pb-36">
+            <SubjectsList
+              onNoteSelect={(noteId) => {
+                // Handle note selection
+              }}
+            />
+          </div>
+
+          <div className="pointer-events-none absolute bottom-4 left-4 right-4 z-20">
+            <div className="pointer-events-auto rounded-2xl border border-slate-200/15 bg-slate-950/72 px-4 py-3 text-slate-100 shadow-lg backdrop-blur-md">
+              <h2 className="font-semibold text-white">Socratic Tutor</h2>
+              <p className="text-sm font-medium text-sky-100/90">
+                I guide you with questions to help you discover answers yourself
+              </p>
+              {missionTimerRemaining !== null && (
+                <button
+                  type="button"
+                  onClick={() => router.push('/study-mission')}
+                  className="mt-3 rounded-full border border-cyan-400/30 bg-white/10 px-3 py-1 text-xs font-semibold text-cyan-100 transition-colors hover:bg-white/15"
+                  title="Return to Study Mission"
+                >
+                  Study Mission: {formatTimer(missionTimerRemaining)}
+                  {missionTimerCourse !== 'all' ? ` | ${missionTimerCourse}` : ''}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Main chat area */}
@@ -466,25 +488,6 @@ export default function AIAssistantPage() {
             }}
           />
 
-          <div className="relative z-10 p-4 border-b border-slate-300/50 bg-[#e0f4fb]/78 backdrop-blur-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-semibold text-foreground">Socratic Tutor</h2>
-                <p className="text-sm font-medium text-sky-900">I guide you with questions to help you discover answers yourself</p>
-              </div>
-              {missionTimerRemaining !== null && (
-                <button
-                  type="button"
-                  onClick={() => router.push('/study-mission')}
-                  className="rounded-full border border-[#03b2e6]/40 bg-white/70 px-3 py-1 text-xs font-semibold text-[#0287ba] hover:bg-white transition-colors"
-                  title="Return to Study Mission"
-                >
-                  Study Mission: {formatTimer(missionTimerRemaining)}
-                  {missionTimerCourse !== 'all' ? ` | ${missionTimerCourse}` : ''}
-                </button>
-              )}
-            </div>
-          </div>
           <div className="relative z-10 flex-1" />
           <div className="relative z-10 p-4 border-t border-slate-300/50 bg-white/78 backdrop-blur-sm">
             <ChatInput

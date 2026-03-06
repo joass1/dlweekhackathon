@@ -125,7 +125,7 @@ export default function GroupsPage() {
       <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
       <div className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-[#03b2e6]/18 blur-3xl" aria-hidden />
       <div className="pointer-events-none absolute right-[-5rem] top-[-5rem] h-96 w-96 rounded-full bg-amber-400/12 blur-3xl" aria-hidden />
-      <div className="relative z-10 p-6 text-white">
+      <div className="nav-safe-top relative z-10 p-6 text-white">
         {children}
       </div>
     </div>

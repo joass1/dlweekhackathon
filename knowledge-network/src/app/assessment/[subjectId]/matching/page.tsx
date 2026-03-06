@@ -18,7 +18,7 @@ export default function MatchingPage() {
   }, [router, subjectId]);
 
   return (
-    <div className="min-h-full flex items-center justify-center">
+    <div className="min-h-full nav-safe-top flex items-center justify-center">
       <div className="text-center px-4 rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg py-10 w-full max-w-xl text-slate-900">
         <div className="mb-8">
           <div className="flex items-center justify-center">
