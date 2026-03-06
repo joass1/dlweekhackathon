@@ -8,7 +8,6 @@ requests>=2.31.0
 
 # AI / LLM
 openai>=1.0.0
-sentence-transformers>=2.0.0
 
 # Document processing
 langchain-community>=0.2.0
@@ -27,5 +26,4 @@ pyvis>=0.3.0
 firebase-admin>=6.5.0
 
 # Backend integrations
-supabase>=2.0.0
 twilio>=9.0.0
