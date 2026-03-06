@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles } from 'lucide-react';
+import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
@@ -43,6 +43,95 @@ interface StudentProgress {
   kg_stats: { total_concepts: number; mastered: number; learning: number; weak: number; not_started: number };
 }
 
+interface AIRecommendation {
+  concept_id: string;
+  title: string;
+  summary: string;
+  reasons: string[];
+  confidence: 'high' | 'medium' | 'low';
+  disclaimer: string;
+  provider?: string;
+  model: string;
+}
+
+function formatLearningStatus(status: KGNode['status']) {
+  switch (status) {
+    case 'weak':
+      return 'Needs work';
+    case 'learning':
+      return 'In progress';
+    case 'mastered':
+      return 'Strong';
+    case 'not_started':
+    default:
+      return 'Not started';
+  }
+}
+
+function formatConfidenceLabel(confidence: AIRecommendation['confidence']) {
+  switch (confidence) {
+    case 'high':
+      return 'Strong signal';
+    case 'medium':
+      return 'Moderate signal';
+    case 'low':
+    default:
+      return 'Early signal';
+  }
+}
+
+function humanizeRecommendationReason(reason: string) {
+  const trimmed = reason.replace(/_/g, ' ').trim();
+  if (!trimmed) return trimmed;
+
+  const dynamicRewrites: Array<[RegExp, (full: string, ...groups: string[]) => string]> = [
+    [
+      /mastery is ([\d.]+)%?,? the lowest in the candidate set, making it the most urgent gap\.?/i,
+      (_full, value) =>
+        `Your current understanding is ${Math.round(Number(value))}%, which makes this the most urgent topic to revisit right now.`,
+    ],
+    [
+      /it has ?decay is true, indicating forgetting risk is already visible\.?/i,
+      () => 'This topic is due for review, so waiting longer could make it harder to remember.',
+    ],
+    [
+      /it is also showing review decay, so delaying it increases forgetting risk\.?/i,
+      () => 'This topic is due for review, so waiting longer could make it harder to remember.',
+    ],
+    [
+      /unlock count is (\d+), so improving this can unblock at least one downstream topic\.?/i,
+      (_full, value) =>
+        `Improving this now can help with ${value} connected topic${Number(value) === 1 ? '' : 's'} that come next.`,
+    ],
+    [
+      /prerequisite count is 0, so you can address it immediately without needing other refreshers first\.?/i,
+      () => 'You can work on this right away without needing to review another topic first.',
+    ],
+    [
+      /prerequisite count is (\d+), so you can address it immediately without needing other refreshers first\.?/i,
+      (_full, value) =>
+        `It builds on ${value} earlier topic${Number(value) === 1 ? '' : 's'}, so strengthening it now can prevent confusion from stacking up.`,
+    ],
+  ];
+
+  let next = trimmed;
+  for (const [pattern, replacer] of dynamicRewrites) {
+    if (pattern.test(next)) {
+      next = next.replace(pattern, (...args) => replacer(String(args[0]), ...args.slice(1, -2).map(String)));
+    }
+  }
+
+  return next
+    .replace(/\bhas decay\b/gi, 'is due for review')
+    .replace(/\bhas_decay\b/gi, 'is due for review')
+    .replace(/\bunlock_count\b/gi, 'connected topics')
+    .replace(/\bprerequisite_count\b/gi, 'earlier topics')
+    .replace(/\bcandidate set\b/gi, 'current options')
+    .replace(/\bdownstream\b/gi, 'later')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export default function Page() {
   const [nodes, setNodes] = useState<KGNode[]>([]);
   const [links, setLinks] = useState<KGLink[]>([]);
@@ -56,8 +145,12 @@ export default function Page() {
   const [isCourseProgressOpen, setIsCourseProgressOpen] = useState(false);
   const [showMapLabels, setShowMapLabels] = useState(false);
   const [actionCourse, setActionCourse] = useState('all');
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [aiRecommendation, setAiRecommendation] = useState<AIRecommendation | null>(null);
+  const [recommendationSource, setRecommendationSource] = useState<'backend-ai' | 'heuristic'>('heuristic');
+  const [recommendationPending, setRecommendationPending] = useState(false);
   const studentId = useStudentId();
-  const { user } = useAuth();
+  const { user, getIdToken } = useAuth();
   const { setIsCollapsed } = useSidebar();
   const { apiFetchWithAuth } = useAuthedApi();
 
@@ -71,12 +164,36 @@ export default function Page() {
 
   useEffect(() => {
     async function loadData() {
+      setLoadWarning(null);
       try {
-        const [graphData, courseData, progressData] = await Promise.all([
+        const [graphResult, courseResult, progressResult] = await Promise.allSettled([
           apiFetchWithAuth<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph'),
-          apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses').catch(() => ({ courses: DEFAULT_COURSES })),
-          apiFetchWithAuth<StudentProgress>(`/api/students/${studentId}/progress`).catch(() => null),
+          apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses'),
+          apiFetchWithAuth<StudentProgress>(`/api/students/${studentId}/progress`),
         ]);
+
+        const graphData =
+          graphResult.status === 'fulfilled'
+            ? graphResult.value
+            : { nodes: [], links: [] };
+        const courseData =
+          courseResult.status === 'fulfilled'
+            ? courseResult.value
+            : { courses: DEFAULT_COURSES };
+        const progressData =
+          progressResult.status === 'fulfilled'
+            ? progressResult.value
+            : null;
+
+        if (graphResult.status === 'rejected') {
+          setLoadWarning(
+            'Live recommendation data could not be fully refreshed. Mentora is showing a reduced dashboard until the graph service is back.'
+          );
+        } else if (courseResult.status === 'rejected' || progressResult.status === 'rejected') {
+          setLoadWarning(
+            'Some live metrics are temporarily unavailable, but your current recommendations still use the latest graph signals we have.'
+          );
+        }
 
         const incoming: CourseOption[] = Array.isArray(courseData.courses) ? courseData.courses : DEFAULT_COURSES;
         setCourses([{ id: 'all', name: 'All Courses' }, ...incoming]);
@@ -99,9 +216,11 @@ export default function Page() {
             type: l.type === 'prerequisite' ? 'prerequisite' : 'related',
           }))
         );
-        if (progressData) setProgress(progressData);
+        setProgress(progressData);
       } catch {
-        // Backend unavailable
+        setLoadWarning(
+          'Mentora could not reach the live learning services. The dashboard will stay available, but some personalized signals may be missing.'
+        );
       } finally {
         setLoading(false);
       }
@@ -167,6 +286,102 @@ export default function Page() {
   const actionLearningCount = actionFilteredConcepts.filter(n => n.status === 'learning').length;
   const actionAttentionTotal = actionWeakCount + actionLearningCount;
   const nextFocusConcept = actionFilteredConcepts[0];
+  const actionFilteredIds = useMemo(
+    () => new Set(actionFilteredConcepts.map((concept) => concept.id)),
+    [actionFilteredConcepts]
+  );
+  const actionPrerequisiteCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const concept of actionFilteredConcepts) {
+      counts.set(concept.id, 0);
+    }
+    for (const link of links) {
+      if (link.type !== 'prerequisite') continue;
+      if (!actionFilteredIds.has(link.source) || !actionFilteredIds.has(link.target)) continue;
+      counts.set(link.target, (counts.get(link.target) ?? 0) + 1);
+    }
+    return counts;
+  }, [actionFilteredConcepts, actionFilteredIds, links]);
+  const actionUnlockCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const concept of actionFilteredConcepts) {
+      counts.set(concept.id, 0);
+    }
+    for (const link of links) {
+      if (link.type !== 'prerequisite') continue;
+      if (!actionFilteredIds.has(link.source) || !actionFilteredIds.has(link.target)) continue;
+      counts.set(link.source, (counts.get(link.source) ?? 0) + 1);
+    }
+    return counts;
+  }, [actionFilteredConcepts, actionFilteredIds, links]);
+  const recommendationReasons = useMemo(() => {
+    if (!nextFocusConcept) return [];
+
+    const reasons = [
+      `Your current understanding is ${nextFocusConcept.mastery}%, so this topic still needs attention.`,
+    ];
+    const downstreamCount = actionUnlockCounts.get(nextFocusConcept.id) ?? 0;
+    const prerequisiteCount = actionPrerequisiteCounts.get(nextFocusConcept.id) ?? 0;
+
+    if (downstreamCount > 0) {
+      reasons.push(
+        `Reviewing this now can make ${downstreamCount} connected topic${downstreamCount === 1 ? '' : 's'} easier next.`
+      );
+    }
+
+    if (prerequisiteCount > 0) {
+      reasons.push(
+        `It builds on ${prerequisiteCount} earlier topic${prerequisiteCount === 1 ? '' : 's'}, so strengthening it now can prevent confusion from stacking up.`
+      );
+    }
+
+    if (nextFocusConcept.decayTimestamp) {
+      reasons.push('This topic is due for review, so waiting longer increases the risk of forgetting it.');
+    }
+
+    return reasons;
+  }, [actionPrerequisiteCounts, actionUnlockCounts, nextFocusConcept]);
+  const recommendationCandidates = useMemo(
+    () =>
+      actionFilteredConcepts.slice(0, 8).map((concept, index) => ({
+        concept_id: concept.id,
+        title: concept.title,
+        mastery: concept.mastery,
+        status: concept.status,
+        unlock_count: actionUnlockCounts.get(concept.id) ?? 0,
+        prerequisite_count: actionPrerequisiteCounts.get(concept.id) ?? 0,
+        has_decay: Boolean(concept.decayTimestamp),
+        rank_hint: index + 1,
+      })),
+    [actionFilteredConcepts, actionPrerequisiteCounts, actionUnlockCounts]
+  );
+  const activeRecommendedConcept = useMemo(() => {
+    if (!aiRecommendation?.concept_id) return nextFocusConcept;
+    return actionFilteredConcepts.find((concept) => concept.id === aiRecommendation.concept_id) ?? nextFocusConcept;
+  }, [actionFilteredConcepts, aiRecommendation?.concept_id, nextFocusConcept]);
+  const activeRecommendationSummary = aiRecommendation?.summary
+    ?? (activeRecommendedConcept
+      ? `Review ${activeRecommendedConcept.title} first${actionAttentionTotal > 1 ? `, then clear ${actionAttentionTotal - 1} more` : ''}.`
+      : '');
+  const activeRecommendationDisclaimer = aiRecommendation?.disclaimer
+    ?? 'This is guidance from your current learning signals, not an automatic grade or final judgment.';
+  const activeRecommendationReasons = useMemo(() => {
+    const sourceReasons = aiRecommendation?.reasons?.length
+      ? aiRecommendation.reasons
+      : recommendationReasons;
+
+    const normalizedDisclaimer = activeRecommendationDisclaimer.trim().toLowerCase();
+    const seen = new Set<string>();
+
+    return sourceReasons.filter((reason) => {
+      const normalizedReason = reason.trim().toLowerCase();
+      if (!normalizedReason) return false;
+      if (normalizedReason === normalizedDisclaimer) return false;
+      if (seen.has(normalizedReason)) return false;
+      seen.add(normalizedReason);
+      return true;
+    }).map(humanizeRecommendationReason);
+  }, [activeRecommendationDisclaimer, aiRecommendation?.reasons, recommendationReasons]);
   const totalAttempts = progress?.total_attempts ?? 0;
   const accuracy = progress?.accuracy ?? 0;
   const accuracyPct = Math.round(accuracy * 100);
@@ -225,6 +440,69 @@ export default function Page() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isNeedsAttentionOpen, isActivityOpen, isCourseProgressOpen]);
 
+  useEffect(() => {
+    if (loading || recommendationCandidates.length === 0) {
+      setAiRecommendation(null);
+      setRecommendationSource('heuristic');
+      setRecommendationPending(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const loadRecommendation = async () => {
+      setRecommendationPending(true);
+      try {
+        const token = await getIdToken();
+        const response = await fetch('/api/recommendation/next-action', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            course_name: courses.find((course) => course.id === actionCourse)?.name ?? 'All Courses',
+            candidates: recommendationCandidates,
+            attention_summary: {
+              weak_count: actionWeakCount,
+              learning_count: actionLearningCount,
+            },
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Recommendation API failed with status ${response.status}`);
+        }
+
+        const data = await response.json() as AIRecommendation;
+        setAiRecommendation(data);
+        setRecommendationSource('backend-ai');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn('Falling back to heuristic dashboard recommendation.', error);
+        setAiRecommendation(null);
+        setRecommendationSource('heuristic');
+      } finally {
+        if (!controller.signal.aborted) {
+          setRecommendationPending(false);
+        }
+      }
+    };
+
+    void loadRecommendation();
+
+    return () => controller.abort();
+  }, [
+    actionAttentionTotal,
+    actionCourse,
+    actionLearningCount,
+    actionWeakCount,
+    courses,
+    getIdToken,
+    loading,
+    recommendationCandidates,
+  ]);
+
   return (
     <div
       className="min-h-full"
@@ -235,6 +513,18 @@ export default function Page() {
           <h1 className="text-3xl font-bold text-black">Welcome back, {displayName}</h1>
           <p className="text-black/70 mt-1">Here&apos;s your learning overview</p>
         </section>
+
+        {loadWarning && (
+          <Card className="rounded-2xl border-amber-300/50 bg-amber-500/10 p-4 text-slate-900 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />
+              <div>
+                <p className="font-semibold text-amber-950">Partial live data issue</p>
+                <p className="mt-1 text-sm text-amber-950/80">{loadWarning}</p>
+              </div>
+            </div>
+          </Card>
+        )}
 
         <Card className="glow-card relative overflow-hidden rounded-2xl border-white/15 bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md shadow-xl text-white">
           <GlowingEffect spread={250} glow={true} disabled={false} proximity={80} borderWidth={2} variant="cyan" />
@@ -266,11 +556,23 @@ export default function Page() {
                 ) : (
                   <>
                     <p className="text-lg font-semibold">
-                      Review <span className="text-[#4cc9f0]">{nextFocusConcept?.title}</span> first{actionAttentionTotal > 1 ? `, then clear ${actionAttentionTotal - 1} more` : ''}.
+                      {activeRecommendationSummary.split(activeRecommendedConcept?.title ?? '').length > 1 && activeRecommendedConcept ? (
+                        <>
+                          {activeRecommendationSummary.split(activeRecommendedConcept.title)[0]}
+                          <span className="text-[#4cc9f0]">{activeRecommendedConcept.title}</span>
+                          {activeRecommendationSummary.slice(
+                            activeRecommendationSummary.indexOf(activeRecommendedConcept.title) + activeRecommendedConcept.title.length
+                          )}
+                        </>
+                      ) : (
+                        activeRecommendationSummary
+                      )}
                     </p>
                     <p className="text-sm text-white/60">
-                      {nextFocusConcept && (
-                        <span>Mastery: {nextFocusConcept.mastery}% ({nextFocusConcept.status.replace('_', ' ')}) &middot; </span>
+                      {activeRecommendedConcept && (
+                        <span>
+                          Current understanding: {activeRecommendedConcept.mastery}% ({formatLearningStatus(activeRecommendedConcept.status)}) &middot;{' '}
+                        </span>
                       )}
                       {actionWeakCount} weak and {actionLearningCount} learning concepts need attention{actionCourse !== 'all' ? ` in ${courses.find(c => c.id === actionCourse)?.name}` : ''}.
                     </p>
@@ -295,6 +597,74 @@ export default function Page() {
                 </Link>
               </div>
             </div>
+
+            {!loading && activeRecommendedConcept && (
+              <div className="rounded-2xl border border-cyan-300/20 bg-white/5 p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Why Mentora Picked This
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-white/65">
+                    {recommendationPending && <span>Refreshing...</span>}
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1">
+                      {recommendationSource === 'backend-ai'
+                        ? `AI via backend${aiRecommendation?.provider && aiRecommendation?.model
+                          ? ` · ${aiRecommendation.provider}/${aiRecommendation.model}`
+                          : aiRecommendation?.model
+                            ? ` · ${aiRecommendation.model}`
+                            : ''}`
+                        : 'Local heuristic'}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                    Current understanding {activeRecommendedConcept.mastery}%
+                  </span>
+                  <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                    {formatLearningStatus(activeRecommendedConcept.status)}
+                  </span>
+                  {(actionUnlockCounts.get(activeRecommendedConcept.id) ?? 0) > 0 && (
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                      Helps with {actionUnlockCounts.get(activeRecommendedConcept.id)} next topic{(actionUnlockCounts.get(activeRecommendedConcept.id) ?? 0) === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  {(actionPrerequisiteCounts.get(activeRecommendedConcept.id) ?? 0) > 0 && (
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                      Builds on {actionPrerequisiteCounts.get(activeRecommendedConcept.id)} earlier topic{(actionPrerequisiteCounts.get(activeRecommendedConcept.id) ?? 0) === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  {activeRecommendedConcept.decayTimestamp && (
+                    <span className="rounded-full border border-orange-300/25 bg-orange-400/10 px-2.5 py-1 text-orange-100">
+                      Due for review
+                    </span>
+                  )}
+                  {aiRecommendation?.confidence && (
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                      {formatConfidenceLabel(aiRecommendation.confidence)}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 space-y-1.5 text-sm text-white/75">
+                  {activeRecommendationReasons.map((reason) => (
+                    <p key={reason}>{reason}</p>
+                  ))}
+                </div>
+                <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/60">
+                    How This Is Chosen
+                  </p>
+                  <p className="mt-1 text-sm text-white/70">
+                    Mentora compares four signals: your current understanding, whether the topic is due for review,
+                    how many later topics it can make easier, and whether it depends on earlier foundations first.
+                  </p>
+                </div>
+                <p className="mt-3 text-xs text-white/55">
+                  {activeRecommendationDisclaimer}
+                </p>
+              </div>
+            )}
           </div>
         </Card>
 

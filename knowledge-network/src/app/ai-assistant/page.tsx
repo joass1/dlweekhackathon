@@ -8,6 +8,7 @@ import { ScopedTopic } from '@/components/ai/ChatInput';
 import Split from 'react-split';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface Message {
   id: string;
@@ -90,6 +91,7 @@ export default function AIAssistantPage() {
   const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
   const [missionTimerRemaining, setMissionTimerRemaining] = useState<number | null>(null);
   const [missionTimerCourse, setMissionTimerCourse] = useState<string>('all');
+  const [chatError, setChatError] = useState<string | null>(null);
   const missionTimeoutHandledRef = useRef(false);
 
   // Rotating thinking phrase for the speech bubble
@@ -142,6 +144,12 @@ export default function AIAssistantPage() {
     if (isLoading) parts.push(thinkingPhrase);
     return parts.join('\n%%SEP%%\n');
   }, [cleanedAssistantMessages, initialSocraticPrompt, isLoading, thinkingPhrase]);
+  const tutorEvidenceNote = useMemo(
+    () => activeNotes.length > 0
+      ? 'Tutor answers are grounded in the cited sources on the right. Click citation bubbles to inspect the exact supporting text.'
+      : 'If a tutor response has no visible sources, treat it as tentative and verify it before relying on it for a graded task.',
+    [activeNotes.length]
+  );
 
   useEffect(() => {
     const topic = (searchParams.get('topic') || '').trim();
@@ -357,6 +365,7 @@ export default function AIAssistantPage() {
   const handleSendMessage = async (content: string) => {
     setIsLoading(true);
     setHighlightedSourceIndex(null);
+    setChatError(null);
     try {
       const userMessage: Message = {
         id: generateId(),
@@ -427,6 +436,9 @@ export default function AIAssistantPage() {
       }
     } catch (error) {
       console.error('Error in chat:', error);
+      setChatError(
+        'The tutor service is unavailable right now. You can keep reviewing your sources and try again in a moment.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -489,6 +501,25 @@ export default function AIAssistantPage() {
           />
 
           <div className="relative z-10 flex-1" />
+          <div className="relative z-10 px-4 pb-0 md:px-6">
+            <div className="rounded-2xl border border-white/20 bg-slate-950/68 px-4 py-3 text-white shadow-lg backdrop-blur-md">
+              <div className="flex items-start gap-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 text-cyan-300" />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Responsible AI Note</p>
+                  <p className="mt-1 text-sm text-white/80">{tutorEvidenceNote}</p>
+                </div>
+              </div>
+            </div>
+            {chatError && (
+              <div className="mt-3 rounded-2xl border border-red-300/30 bg-red-500/12 px-4 py-3 text-red-100 shadow-lg backdrop-blur-md">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 text-red-200" />
+                  <p className="text-sm">{chatError}</p>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="relative z-10 p-4 border-t border-slate-300/50 bg-white/78 backdrop-blur-sm">
             <ChatInput
               onSendMessage={handleSendMessage}

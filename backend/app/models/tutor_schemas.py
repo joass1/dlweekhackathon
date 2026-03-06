@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 
 class EmbedContentRequest(BaseModel):
@@ -46,6 +46,39 @@ class TutorChatRequest(BaseModel):
     userId: Optional[str] = None
     knowledge_state: Optional[KnowledgeState] = None
     concept_ids: Optional[List[str]] = None
+
+
+class RecommendationCandidate(BaseModel):
+    concept_id: str
+    title: str
+    mastery: float
+    status: str
+    unlock_count: int
+    prerequisite_count: int
+    has_decay: bool = False
+    rank_hint: int
+
+
+class RecommendationAttentionSummary(BaseModel):
+    weak_count: int = 0
+    learning_count: int = 0
+
+
+class RecommendationRequest(BaseModel):
+    course_name: Optional[str] = None
+    candidates: List[RecommendationCandidate]
+    attention_summary: Optional[RecommendationAttentionSummary] = None
+
+
+class RecommendationResponse(BaseModel):
+    concept_id: str
+    title: str
+    summary: str
+    reasons: List[str]
+    confidence: Literal["high", "medium", "low"]
+    disclaimer: str
+    provider: str
+    model: str
 
 
 class CheckpointRequest(BaseModel):

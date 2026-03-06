@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Clock, Play, Pause, RotateCcw, CheckCircle, AlertTriangle, BookOpen, Rocket, TrendingUp, ShieldAlert, GitBranch, Layers, ChevronLeft, ChevronRight, Repeat, Minus, Plus } from 'lucide-react';
 import Link from 'next/link';
@@ -52,6 +52,8 @@ interface KGLink {
 }
 
 type PlanMode = 'grade_boost' | 'foundation_repair';
+type MissionPlanSource = 'backend' | 'fallback';
+type FlashcardDeckSource = 'ai' | 'fallback' | 'none';
 
 interface Flashcard {
   id: string;
@@ -100,6 +102,8 @@ interface PersistedStudyMissionSession {
   completedConceptIds: string[];
   currentFlashcardIndex: number;
   isFlashcardFlipped: boolean;
+  planSource?: MissionPlanSource;
+  flashcardSource?: FlashcardDeckSource;
 }
 
 export default function StudyMissionPage() {
@@ -134,6 +138,10 @@ export default function StudyMissionPage() {
   const [generatedFlashcards, setGeneratedFlashcards] = useState<Flashcard[]>([]);
   const [isLoadingFlashcards, setIsLoadingFlashcards] = useState(false);
   const [hasHydratedSession, setHasHydratedSession] = useState(false);
+  const [planSource, setPlanSource] = useState<MissionPlanSource>('backend');
+  const [flashcardSource, setFlashcardSource] = useState<FlashcardDeckSource>('none');
+  const [plannerNotice, setPlannerNotice] = useState<string | null>(null);
+  const [flashcardNotice, setFlashcardNotice] = useState<string | null>(null);
 
   const { loading: authLoading, user } = useAuth();
   const { apiFetchWithAuth } = useAuthedApi();
@@ -194,6 +202,16 @@ export default function StudyMissionPage() {
       }
       if (typeof parsed.isFlashcardFlipped === 'boolean') {
         setIsFlashcardFlipped(parsed.isFlashcardFlipped);
+      }
+      if (parsed.planSource === 'fallback' || parsed.planSource === 'backend') {
+        setPlanSource(parsed.planSource);
+      }
+      if (
+        parsed.flashcardSource === 'ai'
+        || parsed.flashcardSource === 'fallback'
+        || parsed.flashcardSource === 'none'
+      ) {
+        setFlashcardSource(parsed.flashcardSource);
       }
 
       const remaining =
@@ -290,6 +308,8 @@ export default function StudyMissionPage() {
       completedConceptIds: Array.from(completedConcepts),
       currentFlashcardIndex,
       isFlashcardFlipped,
+      planSource,
+      flashcardSource,
     };
     window.localStorage.setItem(STUDY_MISSION_SESSION_KEY, JSON.stringify(sessionSnapshot));
   }, [
@@ -302,7 +322,9 @@ export default function StudyMissionPage() {
     missionActive,
     missionBriefing,
     missionStarted,
+    flashcardSource,
     planMode,
+    planSource,
     selectedCourse,
     flashcardCount,
     studyMinutes,
@@ -329,6 +351,10 @@ export default function StudyMissionPage() {
     setIsFlashcardFlipped(false);
     setGeneratedFlashcards([]);
     setIsLoadingFlashcards(false);
+    setPlanSource('backend');
+    setFlashcardSource('none');
+    setPlannerNotice(null);
+    setFlashcardNotice(null);
     setTrapConcept(null);
     setTrapConfidence(null);
     setTrapReflection('');
@@ -438,6 +464,101 @@ export default function StudyMissionPage() {
     return ranked;
   };
 
+  const estimateDecayRisk = (node: KGNode) => {
+    if (!node.decayTimestamp) {
+      return node.mastery <= 40 ? 0.35 : 0.15;
+    }
+
+    const decayMs = Date.now() - new Date(node.decayTimestamp).getTime();
+    if (!Number.isFinite(decayMs) || decayMs <= 0) {
+      return node.mastery <= 40 ? 0.35 : 0.15;
+    }
+
+    const daysSinceReview = decayMs / (1000 * 60 * 60 * 24);
+    return clamp01(daysSinceReview / 21);
+  };
+
+  const buildFallbackStudyPlan = (candidates: KGNode[], prerequisites: Record<string, string[]>): StudyPlanResponse => {
+    const depthCache = new Map<string, number>();
+
+    const getPrereqDepth = (conceptId: string, trail = new Set<string>()): number => {
+      const cached = depthCache.get(conceptId);
+      if (typeof cached === 'number') return cached;
+      if (trail.has(conceptId)) return 0;
+
+      const nextTrail = new Set(trail);
+      nextTrail.add(conceptId);
+      const parents = prerequisites[conceptId] ?? [];
+      const depth = parents.length === 0
+        ? 0
+        : Math.min(
+            4,
+            1 + Math.max(...parents.map((parentId) => getPrereqDepth(parentId, nextTrail)))
+          );
+
+      depthCache.set(conceptId, depth);
+      return depth;
+    };
+
+    const scoredConcepts: StudyPlanItem[] = candidates.map((node) => {
+      const mastery = clamp01(Number(node.mastery ?? 0) / 100);
+      const gapSeverity = clamp01(1 - mastery);
+      const prereqDepth = getPrereqDepth(String(node.id));
+      const decayRisk = estimateDecayRisk(node);
+      const attempts = Math.max(0, Number(node.attempts ?? 0));
+      const carelessCount = Math.max(0, Number(node.careless_count ?? 0));
+      const carelessFrequency = attempts > 0 ? clamp01(carelessCount / attempts) : 0;
+      const estimatedMinutes = Math.max(
+        6,
+        Math.min(18, Math.round(6 + gapSeverity * 8 + prereqDepth * 1.5 + decayRisk * 3))
+      );
+
+      const draft: StudyPlanItem = {
+        concept_id: String(node.id),
+        title: String(node.title || node.id),
+        estimated_minutes: estimatedMinutes,
+        score: 0,
+        factors: {
+          gap_severity: gapSeverity,
+          prereq_depth: prereqDepth,
+          decay_risk: decayRisk,
+          careless_frequency: carelessFrequency,
+        },
+        mastery,
+      };
+
+      return {
+        ...draft,
+        score: conceptPriorityScore(draft),
+      };
+    });
+
+    const ranked = rankConcepts(scoredConcepts, planMode);
+    let minutesAllocated = 0;
+    let selectedCount = 0;
+
+    for (const concept of ranked) {
+      const estimate = Math.max(1, concept.estimated_minutes);
+      if (minutesAllocated + estimate <= studyMinutes || selectedCount === 0) {
+        minutesAllocated += estimate;
+        selectedCount += 1;
+      } else {
+        break;
+      }
+    }
+
+    const courseLabel = courses.find((course) => course.id === selectedCourse)?.name ?? 'your selected course';
+    const firstConceptTitle = ranked[0]?.title ?? 'your next focus concept';
+
+    return {
+      minutes_requested: studyMinutes,
+      minutes_allocated: minutesAllocated,
+      remaining_minutes: Math.max(0, studyMinutes - minutesAllocated),
+      selected_concepts: ranked,
+      mission_briefing: `Mentora could not reach the adaptive planner, so this mission was built locally for ${courseLabel} using mastery gaps, prerequisite chains, decay risk, and careless-mistake frequency. Start with ${firstConceptTitle}.`,
+    };
+  };
+
   const rankedConcepts = useMemo(
     () => rankConcepts(studyPlan?.selected_concepts ?? [], planMode),
     [planMode, studyPlan?.selected_concepts]
@@ -510,17 +631,100 @@ export default function StudyMissionPage() {
     }
     return map;
   }, [flashcardConcepts]);
+  const buildFallbackFlashcards = useCallback((requestedCards: number): Flashcard[] => {
+    const courseLabel = courses.find((course) => course.id === selectedCourse)?.name ?? 'this course';
+    const templateCards = flashcardConcepts.flatMap((concept) => {
+      const reasonTags = getReasonTags(concept);
+      const cards: Flashcard[] = [
+        {
+          id: `${concept.concept_id}-fallback-definition`,
+          conceptId: concept.concept_id,
+          front: `Define "${concept.title}" in your own words.`,
+          back: `Correct answer: Give a clear, accurate definition of ${concept.title} and tie it back to the key idea from ${courseLabel}.`,
+          tags: [...new Set([...reasonTags, 'Fallback'])],
+        },
+        {
+          id: `${concept.concept_id}-fallback-application`,
+          conceptId: concept.concept_id,
+          front: `When would you apply "${concept.title}" in ${courseLabel}?`,
+          back: `Correct answer: Describe a realistic problem where ${concept.title} matters and explain what breaks if you ignore it.`,
+          tags: [...new Set([...reasonTags, 'Application'])],
+        },
+      ];
+
+      if (reasonTags.includes('Careless')) {
+        cards.push({
+          id: `${concept.concept_id}-fallback-mistake`,
+          conceptId: concept.concept_id,
+          front: `What common careless mistake should you avoid when working on "${concept.title}"?`,
+          back: 'Correct answer: State the most likely oversight, then name one deliberate check you will do before finalizing an answer.',
+          tags: [...new Set([...reasonTags, 'Mistake Proofing'])],
+        });
+      }
+
+      return cards;
+    });
+
+    if (templateCards.length === 0) {
+      return [];
+    }
+
+    const cards = [...templateCards];
+    let cloneIndex = 0;
+    while (cards.length < requestedCards) {
+      const source = templateCards[cloneIndex % templateCards.length];
+      cards.push({
+        ...source,
+        id: `${source.id}-repeat-${cloneIndex + 1}`,
+      });
+      cloneIndex += 1;
+    }
+
+    return cards.slice(0, requestedCards);
+  }, [courses, flashcardConcepts, selectedCourse]);
+  const primaryRecommendation = missionBuckets.mustDo[0] ?? rankedConcepts[0] ?? null;
+  const primaryRecommendationReasons = useMemo(() => {
+    if (!primaryRecommendation) return [];
+
+    const reasons = [
+      `Gap severity is ${(primaryRecommendation.factors.gap_severity * 100).toFixed(0)}%, which means this concept is still materially under mastery's safe zone.`,
+      `Prerequisite depth is ${primaryRecommendation.factors.prereq_depth}, so improvement here has downstream effect on related topics.`,
+    ];
+
+    if (primaryRecommendation.factors.decay_risk >= 0.35) {
+      reasons.push(
+        `Decay risk is ${(primaryRecommendation.factors.decay_risk * 100).toFixed(0)}%, so this topic is more likely to fade if you postpone it.`
+      );
+    }
+
+    if (primaryRecommendation.factors.careless_frequency >= 0.2) {
+      reasons.push(
+        `Careless-risk frequency is ${(primaryRecommendation.factors.careless_frequency * 100).toFixed(0)}%, so Mentora is biasing toward error-proof review instead of speed alone.`
+      );
+    }
+
+    reasons.push(
+      planMode === 'grade_boost'
+        ? 'Grade Boost mode biases toward faster point gains per minute.'
+        : 'Foundation Repair mode biases toward root concepts that prevent later confusion.'
+    );
+
+    return reasons;
+  }, [planMode, primaryRecommendation]);
 
   useEffect(() => {
     if (!missionStarted) {
       setGeneratedFlashcards([]);
       setIsLoadingFlashcards(false);
+      setFlashcardSource('none');
+      setFlashcardNotice(null);
       return;
     }
 
     let cancelled = false;
     const loadFlashcardsFromAiAgent = async () => {
       setIsLoadingFlashcards(true);
+      setFlashcardNotice(null);
       try {
         const requestedCards = Math.max(1, Math.min(70, flashcardCount));
         const response = await apiFetchWithAuth<{ flashcards?: StudyMissionGeneratedFlashcard[] }>('/api/study-mission/flashcards', {
@@ -570,15 +774,8 @@ export default function StudyMissionPage() {
         }
 
         if (cards.length === 0) {
-          for (const concept of flashcardConcepts) {
-            cards.push({
-              id: `${concept.concept_id}-agent-fallback`,
-              conceptId: concept.concept_id,
-              front: `Explain the core idea of "${concept.title}" in one sentence.`,
-              back: 'Correct answer: Use the most accurate definition from your uploaded materials.',
-              tags: getReasonTags(concept),
-            });
-          }
+          const fallbackCards = buildFallbackFlashcards(requestedCards);
+          cards.push(...fallbackCards);
         }
 
         if (cards.length > 0 && cards.length < requestedCards) {
@@ -596,10 +793,29 @@ export default function StudyMissionPage() {
 
         if (!cancelled) {
           setGeneratedFlashcards(cards);
+          if (agentCards.length > 0 && cards.length > 0) {
+            setFlashcardSource('ai');
+            setFlashcardNotice(null);
+          } else if (cards.length > 0) {
+            setFlashcardSource('fallback');
+            setFlashcardNotice(
+              'The AI flashcard service returned no usable cards, so Mentora generated concept-based fallback flashcards instead.'
+            );
+          } else {
+            setFlashcardSource('none');
+          }
         }
       } catch {
         if (!cancelled) {
-          setGeneratedFlashcards([]);
+          const requestedCards = Math.max(1, Math.min(70, flashcardCount));
+          const fallbackCards = buildFallbackFlashcards(requestedCards);
+          setGeneratedFlashcards(fallbackCards);
+          setFlashcardSource(fallbackCards.length > 0 ? 'fallback' : 'none');
+          setFlashcardNotice(
+            fallbackCards.length > 0
+              ? 'The AI flashcard service is unavailable, so Mentora switched to fallback flashcards built from your mission concepts.'
+              : 'Flashcards are temporarily unavailable because both the AI service and fallback concept set are empty.'
+          );
         }
       } finally {
         if (!cancelled) {
@@ -614,9 +830,9 @@ export default function StudyMissionPage() {
     };
   }, [
     apiFetchWithAuth,
+    buildFallbackFlashcards,
     flashcardConceptIds,
     flashcardConceptKey,
-    flashcardConcepts,
     flashcardCount,
     flashcardTagsByConcept,
     missionStarted,
@@ -732,6 +948,10 @@ export default function StudyMissionPage() {
   const startMission = async () => {
     setLoading(true);
     setError(null);
+    setPlannerNotice(null);
+    setFlashcardNotice(null);
+    setPlanSource('backend');
+    setFlashcardSource('none');
     setHasTimedOutRedirected(false);
     setGeneratedFlashcards([]);
     setIsLoadingFlashcards(false);
@@ -797,22 +1017,33 @@ export default function StudyMissionPage() {
       }
 
       // 3. Call the study plan API
-      const plan = await apiFetchWithAuth<StudyPlanResponse>('/api/adaptive/planner/study-plan', {
-        method: 'POST',
-        body: JSON.stringify({
-          minutes: studyMinutes,
-          concepts: studyCandidates.map(n => ({
-            concept_id: n.id,
-            title: n.title,
-            mastery: n.mastery / 100, // Backend expects 0-1 range
-            decay_rate: 0.02,
-            attempts: n.attempts ?? 0,
-            careless_count: n.careless_count ?? 0,
-            estimated_minutes: 10,
-          })),
-          prerequisites,
-        }),
-      });
+      let plan: StudyPlanResponse;
+      try {
+        plan = await apiFetchWithAuth<StudyPlanResponse>('/api/adaptive/planner/study-plan', {
+          method: 'POST',
+          body: JSON.stringify({
+            minutes: studyMinutes,
+            concepts: studyCandidates.map(n => ({
+              concept_id: n.id,
+              title: n.title,
+              mastery: n.mastery / 100, // Backend expects 0-1 range
+              decay_rate: 0.02,
+              attempts: n.attempts ?? 0,
+              careless_count: n.careless_count ?? 0,
+              estimated_minutes: 10,
+            })),
+            prerequisites,
+          }),
+        });
+        setPlanSource('backend');
+      } catch (plannerError) {
+        console.warn('Adaptive planner unavailable, falling back to local heuristic planner.', plannerError);
+        plan = buildFallbackStudyPlan(studyCandidates, prerequisites);
+        setPlanSource('fallback');
+        setPlannerNotice(
+          'The adaptive planner is unavailable, so this mission is using Mentora’s local fallback model based on mastery gaps, prerequisite chains, decay risk, and careless-mistake frequency.'
+        );
+      }
 
       setStudyPlan(plan);
       setMissionBriefing(plan.mission_briefing);
@@ -824,7 +1055,7 @@ export default function StudyMissionPage() {
       setMissionActive(true);
     } catch (err) {
       console.error('Failed to generate study plan:', err);
-      setError('Could not generate a study plan. Make sure the backend is running.');
+      setError('Could not generate a study plan because your knowledge graph could not be loaded. Make sure the backend is running and your materials have been processed.');
     } finally {
       setLoading(false);
     }
@@ -1188,6 +1419,57 @@ export default function StudyMissionPage() {
         </Card>
       )}
 
+      {(plannerNotice || primaryRecommendation) && (
+        <Card className={`${surfaceCardClass} p-4 mb-6`}>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-xs uppercase tracking-[0.14em] text-[#03b2e6] font-semibold">Recommendation Rationale</p>
+              <h2 className="text-lg font-semibold mt-1">
+                {primaryRecommendation ? `Why ${primaryRecommendation.title} is first` : 'How this mission was built'}
+              </h2>
+              <p className="text-sm text-white/75 mt-1">
+                Mentora explains mission order using mastery gaps, prerequisite impact, decay risk, and mistake patterns.
+              </p>
+            </div>
+            <div className="text-right text-xs text-white/70">
+              <p>Plan source</p>
+              <p className="mt-1 rounded-full border border-white/15 bg-white/10 px-3 py-1 font-semibold text-white">
+                {planSource === 'backend' ? 'Adaptive planner' : 'Local fallback model'}
+              </p>
+            </div>
+          </div>
+
+          {plannerNotice && (
+            <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              {plannerNotice}
+            </div>
+          )}
+
+          {primaryRecommendation && (
+            <>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                {getReasonTags(primaryRecommendation).map((tag) => (
+                  <span key={`${primaryRecommendation.concept_id}-${tag}-summary`} className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                    {tag}
+                  </span>
+                ))}
+                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                  ROI {roiPerMinute(primaryRecommendation).toFixed(1)}/min
+                </span>
+                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white/85">
+                  ~{primaryRecommendation.estimated_minutes} min
+                </span>
+              </div>
+              <div className="mt-4 space-y-1.5 text-sm text-white/80">
+                {primaryRecommendationReasons.map((reason) => (
+                  <p key={reason}>{reason}</p>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
       <Card className={`glow-card relative ${surfaceCardClass} p-4 mb-6`}>
         <GlowingEffect spread={200} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1213,14 +1495,38 @@ export default function StudyMissionPage() {
 
       <Card className={`${surfaceCardClass} p-4 mb-6`}>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold flex items-center gap-2">
-            <Layers className="w-4 h-4 text-[#03b2e6]" />
-            Course Flashcards
-          </h3>
-          <span className="text-xs text-white/70">
-            {flashcards.length === 0 ? '0/0' : `${currentFlashcardIndex + 1}/${flashcards.length}`}
-          </span>
+          <div>
+            <h3 className="font-semibold flex items-center gap-2">
+              <Layers className="w-4 h-4 text-[#03b2e6]" />
+              Course Flashcards
+            </h3>
+            <p className="mt-1 text-xs text-white/65">
+              {flashcardSource === 'ai'
+                ? 'Built from uploaded course chunks and mission priorities.'
+                : flashcardSource === 'fallback'
+                  ? 'Fallback deck generated from mission concepts to keep your session moving.'
+                  : 'A deck will appear once a mission starts.'}
+            </p>
+          </div>
+          <div className="text-right">
+            <span className="text-xs text-white/70">
+              {flashcards.length === 0 ? '0/0' : `${currentFlashcardIndex + 1}/${flashcards.length}`}
+            </span>
+            <p className="mt-1 text-[11px] text-white/60">
+              {flashcardSource === 'ai'
+                ? 'Source: AI chunks'
+                : flashcardSource === 'fallback'
+                  ? 'Source: fallback'
+                  : 'Source: waiting'}
+            </p>
+          </div>
         </div>
+
+        {flashcardNotice && (
+          <div className="mb-3 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+            {flashcardNotice}
+          </div>
+        )}
 
         {isLoadingFlashcards ? (
           <div className="min-h-[180px] flex flex-col items-center justify-center text-sm text-white/70">
