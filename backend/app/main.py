@@ -69,6 +69,7 @@ from app.models.peer_schemas import (
 )
 from app.models.tutor_schemas import (
     EmbedContentRequest, EmbedContentResponse,
+    RecommendationRequest, RecommendationResponse,
     RetrieveContextRequest,
     TutorChatRequest,
     CheckpointRequest, CheckpointSubmitRequest, CheckpointSubmitResponse,
@@ -1751,6 +1752,30 @@ async def tutor_chat_endpoint(request: TutorChatRequest, student_id: str = Depen
         if not request.query:
             raise HTTPException(status_code=400, detail="Query is required")
         return tutor_service.tutor_chat(request.query, request.knowledge_state, student_id, request.concept_ids)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tutor/recommend-next-action", response_model=RecommendationResponse)
+async def recommend_next_action_endpoint(
+    request: RecommendationRequest,
+    student_id: str = Depends(get_student_id),
+):
+    try:
+        if not request.candidates:
+            raise HTTPException(status_code=400, detail="At least one candidate is required")
+        if _openai_client is None:
+            raise HTTPException(status_code=503, detail="OpenAI client is not configured")
+
+        return tutor_service.recommend_next_action(
+            course_name=request.course_name,
+            candidates=[candidate.dict() for candidate in request.candidates],
+            attention_summary=request.attention_summary.dict() if request.attention_summary else None,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

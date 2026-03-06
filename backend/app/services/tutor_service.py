@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -7,6 +8,11 @@ try:
     from langchain.text_splitter import CharacterTextSplitter
 except ImportError:
     from langchain_text_splitters import CharacterTextSplitter
+
+from app.models.tutor_schemas import RecommendationResponse
+
+
+OPENAI_TUTOR_MODEL = "gpt-5.2"
 
 
 class TutorService:
@@ -245,6 +251,261 @@ class TutorService:
             prompt += extra
         return prompt
 
+    @staticmethod
+    def _strip_code_fences(raw: str) -> str:
+        cleaned = str(raw or "").strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            cleaned = "\n".join(lines[1:])
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        return cleaned.strip()
+
+    def _extract_json_object(self, raw: str) -> str:
+        cleaned = self._strip_code_fences(raw)
+        if not cleaned:
+            return ""
+        if cleaned.startswith("{") and cleaned.endswith("}"):
+            return cleaned
+        first_brace = cleaned.find("{")
+        last_brace = cleaned.rfind("}")
+        if first_brace >= 0 and last_brace > first_brace:
+            return cleaned[first_brace:last_brace + 1]
+        return ""
+
+    @staticmethod
+    def _clean_text(value, fallback: str, max_len: int) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            text = fallback
+        return text[:max_len].strip()
+
+    def _fallback_recommendation_reasons(self, candidate: dict) -> list:
+        reasons = [
+            (
+                f"Your current understanding is {round(float(candidate.get('mastery', 0)))}%, "
+                f"so this topic still needs attention."
+            )
+        ]
+
+        unlock_count = int(candidate.get("unlock_count", 0) or 0)
+        prerequisite_count = int(candidate.get("prerequisite_count", 0) or 0)
+        rank_hint = int(candidate.get("rank_hint", 0) or 0)
+
+        if unlock_count > 0:
+            reasons.append(
+                f"Reviewing this can unblock {unlock_count} downstream topic{'s' if unlock_count != 1 else ''}."
+            )
+        if candidate.get("has_decay"):
+            reasons.append("It is showing review decay, so delaying it raises forgetting risk.")
+        if prerequisite_count > 0:
+            reasons.append(
+                f"It already depends on {prerequisite_count} prerequisite"
+                f"{'s' if prerequisite_count != 1 else ''}, so confusion can compound if it stays weak."
+            )
+        if len(reasons) < 2 and rank_hint > 0:
+            reasons.append(
+                f"It is already near the top of your current review queue at rank #{rank_hint}."
+            )
+        return reasons[:4]
+
+    def _humanize_recommendation_reason(self, reason: str, candidate: dict) -> str:
+        text = self._clean_text(reason, "", 220)
+        if not text:
+            return text
+
+        mastery = round(float(candidate.get("mastery", 0) or 0))
+        unlock_count = int(candidate.get("unlock_count", 0) or 0)
+        prerequisite_count = int(candidate.get("prerequisite_count", 0) or 0)
+
+        replacements = [
+            (
+                re.compile(r"mastery is ([\d.]+)%?,? the lowest in the candidate set, making it the most urgent gap\.?", re.I),
+                f"Your current understanding is {mastery}%, which makes this the most urgent topic to revisit right now.",
+            ),
+            (
+                re.compile(r"it has[_ ]?decay is true, indicating forgetting risk is already visible\.?", re.I),
+                "This topic is due for review, so waiting longer could make it harder to remember.",
+            ),
+            (
+                re.compile(r"unlock[_ ]?count is (\d+), so improving this can unblock at least one downstream topic\.?", re.I),
+                f"Improving this now can help with {unlock_count} connected topic{'s' if unlock_count != 1 else ''} that come next.",
+            ),
+            (
+                re.compile(r"prerequisite[_ ]?count is 0, so you can address it immediately without needing other refreshers first\.?", re.I),
+                "You can work on this right away without needing to review another topic first.",
+            ),
+            (
+                re.compile(r"prerequisite[_ ]?count is (\d+), so you can address it immediately without needing other refreshers first\.?", re.I),
+                f"It builds on {prerequisite_count} earlier topic{'s' if prerequisite_count != 1 else ''}, so strengthening it now can prevent confusion from stacking up.",
+            ),
+            (
+                re.compile(r"review decay", re.I),
+                "due for review",
+            ),
+        ]
+
+        for pattern, replacement in replacements:
+            if pattern.search(text):
+                text = pattern.sub(replacement, text)
+
+        text = re.sub(r"\bhas_decay\b", "this topic is due for review", text, flags=re.I)
+        text = re.sub(r"\bunlock_count\b", "the number of connected next topics", text, flags=re.I)
+        text = re.sub(r"\bprerequisite_count\b", "the number of earlier topics it builds on", text, flags=re.I)
+        text = re.sub(r"\bcandidate set\b", "current options", text, flags=re.I)
+        text = re.sub(r"\bdownstream\b", "later", text, flags=re.I)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _normalize_recommendation_payload(self, raw: str, candidates: list) -> dict:
+        candidate_map = {
+            str(candidate.get("concept_id", "")).strip(): candidate
+            for candidate in candidates
+            if str(candidate.get("concept_id", "")).strip()
+        }
+        parsed_json = self._extract_json_object(raw)
+        if not parsed_json:
+            raise ValueError("Recommendation response did not contain a JSON object.")
+
+        parsed = json.loads(parsed_json)
+        concept_id = str(parsed.get("concept_id", "")).strip()
+        if concept_id not in candidate_map:
+            raise ValueError("Recommendation response selected a concept outside the candidate list.")
+
+        chosen = candidate_map[concept_id]
+        title = str(chosen.get("title", concept_id)).strip() or concept_id
+        summary = self._clean_text(
+            parsed.get("summary"),
+            f"Review {title} next to strengthen the highest-value weak concept in your current queue.",
+            160,
+        )
+
+        raw_reasons = parsed.get("reasons", [])
+        if isinstance(raw_reasons, str):
+            raw_reasons = [raw_reasons]
+        reasons = []
+        seen = set()
+        for item in raw_reasons if isinstance(raw_reasons, list) else []:
+            reason = self._humanize_recommendation_reason(str(item), chosen)
+            key = reason.lower()
+            if not reason or key in seen:
+                continue
+            seen.add(key)
+            reasons.append(reason)
+        if len(reasons) < 2:
+            for reason in self._fallback_recommendation_reasons(chosen):
+                key = reason.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                reasons.append(reason)
+                if len(reasons) >= 4:
+                    break
+
+        confidence = str(parsed.get("confidence", "medium")).strip().lower()
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "medium"
+
+        disclaimer = self._clean_text(
+            parsed.get("disclaimer"),
+            "This is guidance from your current learning signals, not an automatic grade or final judgment.",
+            180,
+        )
+
+        normalized = RecommendationResponse(
+            concept_id=concept_id,
+            title=title,
+            summary=summary,
+            reasons=reasons[:4],
+            confidence=confidence,
+            disclaimer=disclaimer,
+            provider="openai",
+            model=OPENAI_TUTOR_MODEL,
+        )
+        return normalized.dict()
+
+    def _build_recommendation_prompts(self, course_name: str, candidates: list, attention_summary: dict) -> tuple:
+        system_prompt = (
+            "You are Mentora's next-best-action recommendation engine for a learning dashboard.\n"
+            "Choose exactly one concept from the provided candidate list as the single best next topic to review.\n"
+            "Use only the structured candidate data. Do not invent facts, concepts, scores, dependencies, or student history.\n"
+            "Primary objective: maximize immediate learning value while reducing the risk of cascading confusion.\n\n"
+            "Decision policy:\n"
+            "1. Prefer concepts with higher unlock_count because they unblock more downstream learning.\n"
+            "2. Treat lower mastery as more urgent.\n"
+            "3. If has_decay is true, increase urgency because forgetting risk is already visible.\n"
+            "4. If prerequisite_count is high and mastery is weak, treat that as added risk because confusion can compound.\n"
+            "5. Use rank_hint only as a final weak tie-breaker.\n"
+            "6. Calibrate confidence conservatively. Use high only when one candidate clearly wins on multiple signals.\n\n"
+            "Output rules:\n"
+            "- Return raw JSON only. No markdown, no prose outside JSON.\n"
+            "- concept_id must match a candidate exactly.\n"
+            "- summary must be one short dashboard sentence.\n"
+            "- reasons must contain 2 to 4 short grounded statements based on the provided fields.\n"
+            "- Write for a student, not an engineer.\n"
+            "- Never mention raw field names or code-style terms such as mastery, unlock_count, prerequisite_count, has_decay, rank_hint, true, or false.\n"
+            "- Replace technical graph language with plain language such as connected topics, earlier topics, or due for review.\n"
+            "- Do not repeat the disclaimer inside reasons.\n"
+            "- disclaimer must say this is guidance, not a final judgment.\n"
+        )
+
+        user_prompt = (
+            f"Course: {course_name or 'All Courses'}\n"
+            f"Attention summary: {json.dumps(attention_summary or {}, ensure_ascii=False)}\n"
+            f"Candidates: {json.dumps(candidates, ensure_ascii=False)}\n\n"
+            "Good reason examples:\n"
+            '- "Your current understanding is still low here, so this is a good place to strengthen first."\n'
+            '- "Reviewing this now can make the next 3 connected topics easier."\n'
+            '- "This topic is due for review, so revisiting it now lowers the risk of forgetting."\n\n'
+            "Bad reason examples:\n"
+            '- "This seems important."\n'
+            '- "I have a feeling this is best."\n'
+            '- "has_decay is true."\n'
+            '- "unlock_count is 3."\n'
+            '- "The student should probably read more."\n\n'
+            "Return exactly this JSON schema:\n"
+            '{"concept_id":"string","title":"string","summary":"string","reasons":["string"],'
+            '"confidence":"high|medium|low","disclaimer":"string"}'
+        )
+        return system_prompt, user_prompt
+
+    def recommend_next_action(self, course_name: str = None, candidates: list = None, attention_summary: dict = None) -> dict:
+        clean_candidates = [
+            {
+                "concept_id": str(candidate.get("concept_id", "")).strip(),
+                "title": str(candidate.get("title", "")).strip(),
+                "mastery": float(candidate.get("mastery", 0) or 0),
+                "status": str(candidate.get("status", "learning")).strip() or "learning",
+                "unlock_count": int(candidate.get("unlock_count", 0) or 0),
+                "prerequisite_count": int(candidate.get("prerequisite_count", 0) or 0),
+                "has_decay": bool(candidate.get("has_decay", False)),
+                "rank_hint": int(candidate.get("rank_hint", 0) or 0),
+            }
+            for candidate in (candidates or [])
+            if str(candidate.get("concept_id", "")).strip()
+        ][:8]
+
+        if not clean_candidates:
+            raise ValueError("At least one recommendation candidate is required.")
+        if self.openai is None:
+            raise RuntimeError("OpenAI client is not configured.")
+
+        system_prompt, user_prompt = self._build_recommendation_prompts(
+            course_name or "All Courses",
+            clean_candidates,
+            attention_summary or {},
+        )
+        response = self.openai.chat.completions.create(
+            model=OPENAI_TUTOR_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_completion_tokens=350,
+        )
+        raw = self._clean_text(response.choices[0].message.content, "", 4000)
+        return self._normalize_recommendation_payload(raw, clean_candidates)
+
     def tutor_chat(self, message: str, knowledge_state=None, user_id: str = None, concept_ids: list = None) -> dict:
         context_chunks = self.retrieve_context(message, limit=8, user_id=user_id, concept_ids=concept_ids)
 
@@ -264,7 +525,7 @@ class TutorService:
         system_prompt = self._build_unified_prompt(knowledge_state)
 
         response = self.openai.chat.completions.create(
-            model="gpt-5.2",
+            model=OPENAI_TUTOR_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Retrieved course context:\n{context_text}\n\nStudent question: {message}"},
@@ -313,7 +574,7 @@ class TutorService:
         )
 
         response = self.openai.chat.completions.create(
-            model="gpt-5.2",
+            model=OPENAI_TUTOR_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=350,
         )
@@ -440,7 +701,7 @@ class TutorService:
         )
 
         response = self.openai.chat.completions.create(
-            model="gpt-5.2",
+            model=OPENAI_TUTOR_MODEL,
             messages=[{"role": "user", "content": llm_prompt}],
             max_completion_tokens=300,
         )
@@ -510,7 +771,7 @@ class TutorService:
         )
 
         response = self.openai.chat.completions.create(
-            model="gpt-5.2",
+            model=OPENAI_TUTOR_MODEL,
             messages=[{"role": "user", "content": llm_prompt}],
             max_completion_tokens=150,
         )
