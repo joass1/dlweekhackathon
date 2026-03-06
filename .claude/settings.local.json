@@ -6,7 +6,8 @@
       "Bash(npm install @tailwindcss/typography)",
       "Bash(git stash)",
       "Bash(git pull)",
-      "Bash(cd /Applications/MAMP/htdocs/dlweekhackathon/knowledge-network && npx tsc --noEmit --pretty 2>&1 | head -60)"
+      "Bash(cd /Applications/MAMP/htdocs/dlweekhackathon/knowledge-network && npx tsc --noEmit --pretty 2>&1 | head -60)",
+      "Bash(git -C /c/Users/Projo/OneDrive/Documents/GitHub/dlweekhackathon ls-files --cached \"*.DS_Store\" \"**/.DS_Store\")"
     ]
   }
 }
