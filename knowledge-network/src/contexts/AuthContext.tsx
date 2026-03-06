@@ -10,6 +10,7 @@ import {
 import {
   onAuthStateChanged,
   signOut as firebaseSignOut,
+  multiFactor,
   type User,
 } from "firebase/auth";
 import Image from "next/image";
@@ -19,6 +20,9 @@ import { useRouter, usePathname } from "next/navigation";
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  isMfaEnrolled: boolean;
+  skipRedirect: boolean;
+  setSkipRedirect: (v: boolean) => void;
   signOut: () => Promise<void>;
   getIdToken: () => Promise<string | null>;
 }
@@ -26,6 +30,9 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
+  isMfaEnrolled: false,
+  skipRedirect: false,
+  setSkipRedirect: () => {},
   signOut: async () => {},
   getIdToken: async () => null,
 });
@@ -33,6 +40,7 @@ const AuthContext = createContext<AuthContextValue>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [skipRedirect, setSkipRedirect] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -46,14 +54,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Route guard: redirect unauthenticated users to sign-in
   useEffect(() => {
-    if (loading) return;
+    if (loading || skipRedirect) return;
     if (!user && pathname !== "/auth/signin") {
       router.replace("/auth/signin");
     }
     if (user && pathname === "/auth/signin") {
       router.replace("/");
     }
-  }, [user, loading, pathname, router]);
+  }, [user, loading, skipRedirect, pathname, router]);
 
   const signOut = async () => {
     await firebaseSignOut(auth);
@@ -65,13 +73,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user.getIdToken();
   };
 
+  const isMfaEnrolled = user
+    ? multiFactor(user).enrolledFactors.length > 0
+    : false;
+
   // Don't render protected pages until auth resolves and user is available
   // (or we're already on the sign-in page)
   const isAuthPage = pathname === "/auth/signin";
   const showChildren = !loading && (user || isAuthPage);
 
   return (
-    <AuthContext.Provider value={{ user, loading, signOut, getIdToken }}>
+    <AuthContext.Provider value={{ user, loading, isMfaEnrolled, skipRedirect, setSkipRedirect, signOut, getIdToken }}>
       {showChildren ? (
         children
       ) : (

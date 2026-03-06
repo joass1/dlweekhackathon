@@ -16,7 +16,7 @@ pypdf>=4.0.0
 
 # Data
 pandas>=2.0.0
-numpy>=1.26.0,<2.0.0
+numpy>=1.26.0
 
 # Knowledge graph
 networkx>=3.0
