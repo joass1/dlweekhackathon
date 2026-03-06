@@ -9,6 +9,7 @@ Usage:
         ...
 """
 
+import json
 import os
 
 from dotenv import load_dotenv
@@ -25,6 +26,13 @@ def _ensure_firebase_app_initialized() -> None:
         return
     except ValueError:
         pass
+
+    # Priority: JSON string env var > file path > default
+    json_str = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    if json_str:
+        service_account_info = json.loads(json_str)
+        initialize_app(credentials.Certificate(service_account_info))
+        return
 
     service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
     if service_account_path:
