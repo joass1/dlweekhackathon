@@ -160,8 +160,8 @@ export default function UploadPage() {
       style={{ backgroundImage: "url('/backgrounds/uploadback.png')" }}
     >
     <div className="nav-safe-top relative z-10 p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-2 text-black">Upload Course Materials</h1>
-      <p className="text-black/70 mb-4">
+      <h1 className="text-2xl font-bold mb-2 text-white">Upload Course Materials</h1>
+      <p className="text-white/70 mb-4">
         Upload your lecture notes, textbooks, and study materials. Mentora will analyze them
         to build your personalized knowledge graph.
       </p>
@@ -252,7 +252,7 @@ export default function UploadPage() {
         </Card>
       )}
 
-      <Card className="p-4 border-[#03b2e6]/30 bg-[#03b2e6]/10 backdrop-blur-sm shadow-lg">
+      <Card className="p-4 border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg">
         <div className="flex gap-3">
           <BookOpen className="w-5 h-5 text-[#4cc9f0] mt-0.5 flex-shrink-0" />
           <div>
