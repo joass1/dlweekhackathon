@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
@@ -29,7 +29,7 @@ import { Mail, Loader2, Phone, ShieldCheck } from "lucide-react";
 type Tab = "signin" | "signup";
 type MfaStep = "none" | "verify-email" | "enroll-phone" | "enroll-code" | "challenge-code";
 
-/* â”€â”€ Shared sub-components for the dark glassmorphic theme â”€â”€ */
+/* Shared sub-components for the dark glassmorphic theme */
 
 function GlassCard({ children }: { children: React.ReactNode }) {
   return (
@@ -99,7 +99,7 @@ function GhostButton({ children, ...props }: React.ButtonHTMLAttributes<HTMLButt
   );
 }
 
-/* â”€â”€ Main page â”€â”€ */
+/* Main page */
 
 function AuthPageWrapper({ children }: { children: React.ReactNode }) {
   return (
@@ -229,7 +229,7 @@ export default function SignInPage() {
     }
   }, [router]);
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Helpers
 
   function isMultiFactorError(err: unknown): err is MultiFactorError {
     return (
@@ -240,7 +240,7 @@ export default function SignInPage() {
     );
   }
 
-  // â”€â”€ Auth handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Auth handlers
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -249,7 +249,7 @@ export default function SignInPage() {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
       if (!cred.user.emailVerified) {
-        // Block unverified users â€” show verification screen
+        // Block unverified users - show verification screen
         setSkipRedirect(true);
         setMfaStep("verify-email");
         setMessage("Please verify your email before continuing. Check your inbox for the verification link.");
@@ -520,8 +520,7 @@ export default function SignInPage() {
     }
   };
 
-  // â”€â”€ Shared page wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Render
 
   if (authLoading) {
     return (
@@ -550,7 +549,7 @@ export default function SignInPage() {
           <div className="space-y-3">
             <PrimaryButton onClick={handleCheckEmailVerified} disabled={loading}>
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2 inline" /> : null}
-              I&apos;ve Verified My Email â€” Continue
+              I&apos;ve Verified My Email - Continue
             </PrimaryButton>
             <OutlineButton onClick={handleResendVerification} disabled={loading}>
               Resend Verification Email
@@ -692,7 +691,7 @@ export default function SignInPage() {
     );
   }
 
-  // â”€â”€ Default sign-in / sign-up form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Default sign-in / sign-up form
 
   return (
     <AuthPageWrapper>
