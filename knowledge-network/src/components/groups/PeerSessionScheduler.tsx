@@ -15,6 +15,7 @@ import {
   type SessionState,
   type MemberProfile,
 } from '@/services/peer';
+import { FluidDropdown } from '@/components/ui/fluid-dropdown';
 import { GlowingEffect } from '@/components/ui/glowing-effect';
 
 interface Props {
@@ -289,50 +290,47 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         {courses.length > 0 && (
           <div>
             <label className="mb-2 block text-sm font-medium text-white/80">Select course:</label>
-            <select
+            <FluidDropdown
+              ariaLabel="Select peer session course"
+              options={courses.map((course) => ({
+                value: course.id,
+                label: course.name,
+              }))}
               value={selectedCourse}
-              onChange={(e) => setSelectedCourse(e.target.value)}
-              className={fieldClass}
-            >
-              {courses.map((c) => (
-                <option key={c.id} value={c.id} className="bg-slate-900 text-white">
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onValueChange={setSelectedCourse}
+            />
           </div>
         )}
 
         <div>
           <label className="mb-2 block text-sm font-medium text-white/80">Select level:</label>
-          <select
-            value={selectedLevel}
-            onChange={(e) => setSelectedLevel(Number(e.target.value))}
-            className={fieldClass}
-          >
-            {LEVEL_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value} className="bg-slate-900 text-white">
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <FluidDropdown
+            ariaLabel="Select peer session level"
+            options={LEVEL_OPTIONS.map((option) => ({
+              value: String(option.value),
+              label: option.label,
+            }))}
+            value={String(selectedLevel)}
+            onValueChange={(nextValue) => setSelectedLevel(Number(nextValue))}
+          />
         </div>
 
         {filteredConcepts.length > 0 ? (
           <div>
             <label className="mb-2 block text-sm font-medium text-white/80">Select a topic to study together:</label>
-            <select
+            <FluidDropdown
+              ariaLabel="Select peer session topic"
+              options={[
+                { value: '', label: 'Auto-pick from uploaded chunks' },
+                ...filteredConcepts.map((concept) => ({
+                  value: concept.id,
+                  label: concept.title || concept.id,
+                })),
+              ]}
               value={selectedTopic}
-              onChange={(e) => setSelectedTopic(e.target.value)}
-              className={fieldClass}
-            >
-              <option value="" className="bg-slate-900 text-white">Auto-pick from uploaded chunks</option>
-              {filteredConcepts.map((c) => (
-                <option key={c.id} value={c.id} className="bg-slate-900 text-white">
-                  {c.title || c.id}
-                </option>
-              ))}
-            </select>
+              onValueChange={setSelectedTopic}
+              placeholder="Auto-pick from uploaded chunks"
+            />
           </div>
         ) : (
           <div>

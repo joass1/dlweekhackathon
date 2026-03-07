@@ -9,6 +9,7 @@ import Image from 'next/image';
 import { CourseOption } from '@/lib/courses';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { FluidDropdown } from '@/components/ui/fluid-dropdown';
 import { GlowingEffect } from '@/components/ui/glowing-effect';
 import { normalizeTopicRow, TopicOption, UserTopicApiRow } from '@/types/topics';
 
@@ -43,6 +44,10 @@ interface KGNode {
   topicIds?: string[];
   category?: string;
   decayTimestamp?: string | null;
+  decayRisk?: number;
+  dueForReview?: boolean;
+  attemptCount?: number;
+  carelessCount?: number;
   attempts?: number;
   careless_count?: number;
 }
@@ -513,6 +518,10 @@ export default function StudyMissionPage() {
   };
 
   const estimateDecayRisk = (node: KGNode) => {
+    if (typeof node.decayRisk === 'number' && Number.isFinite(node.decayRisk)) {
+      return clamp01(node.decayRisk);
+    }
+
     if (!node.decayTimestamp) {
       return node.mastery <= 40 ? 0.35 : 0.15;
     }
@@ -548,13 +557,13 @@ export default function StudyMissionPage() {
       return depth;
     };
 
-    const scoredConcepts: StudyPlanItem[] = candidates.map((node) => {
+      const scoredConcepts: StudyPlanItem[] = candidates.map((node) => {
       const mastery = clamp01(Number(node.mastery ?? 0) / 100);
       const gapSeverity = clamp01(1 - mastery);
       const prereqDepth = getPrereqDepth(String(node.id));
       const decayRisk = estimateDecayRisk(node);
-      const attempts = Math.max(0, Number(node.attempts ?? 0));
-      const carelessCount = Math.max(0, Number(node.careless_count ?? 0));
+      const attempts = Math.max(0, Number(node.attemptCount ?? node.attempts ?? 0));
+      const carelessCount = Math.max(0, Number(node.carelessCount ?? node.careless_count ?? 0));
       const carelessFrequency = attempts > 0 ? clamp01(carelessCount / attempts) : 0;
       const estimatedMinutes = Math.max(
         6,
@@ -1088,8 +1097,8 @@ export default function StudyMissionPage() {
               title: n.title,
               mastery: n.mastery / 100, // Backend expects 0-1 range
               decay_rate: 0.02,
-              attempts: n.attempts ?? 0,
-              careless_count: n.careless_count ?? 0,
+              attempts: n.attemptCount ?? n.attempts ?? 0,
+              careless_count: n.carelessCount ?? n.careless_count ?? 0,
               estimated_minutes: 10,
             })),
             prerequisites,
@@ -1235,17 +1244,15 @@ export default function StudyMissionPage() {
           <GlowingEffect spread={250} glow={true} disabled={false} proximity={80} borderWidth={2} variant="cyan" />
           <h2 className="font-semibold mb-3 text-white">Select Course</h2>
           <div className="mb-6">
-            <select
+            <FluidDropdown
+              ariaLabel="Select course for study mission"
+              options={courses.map((course) => ({
+                value: course.id,
+                label: course.name,
+              }))}
               value={selectedCourse}
-              onChange={(event) => setSelectedCourse(event.target.value)}
-              className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm focus:border-[#03b2e6] focus:outline-none"
-            >
-              {courses.map((course) => (
-                <option key={course.id} value={course.id} className="text-slate-900">
-                  {course.name}
-                </option>
-              ))}
-            </select>
+              onValueChange={setSelectedCourse}
+            />
             <p className="text-xs text-white/70 mt-2">
               Study Mission and flashcards will be generated for this course.
             </p>
@@ -1253,23 +1260,23 @@ export default function StudyMissionPage() {
 
           <h2 className="font-semibold mb-3 text-white">Filter Topics (optional)</h2>
           <div className="mb-6">
-            <select
+            <FluidDropdown
+              ariaLabel="Filter study mission topics"
+              options={[
+                {
+                  value: 'all',
+                  label: selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`,
+                },
+                ...visibleTopics.map((topic) => ({
+                  value: topic.id,
+                  label: topic.name,
+                })),
+              ]}
               value={selectedTopics[0] ?? 'all'}
-              onChange={(event) => {
-                const nextValue = event.target.value;
+              onValueChange={(nextValue) => {
                 setSelectedTopics(nextValue === 'all' ? [] : [nextValue]);
               }}
-              className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm focus:border-[#03b2e6] focus:outline-none"
-            >
-              <option value="all" className="text-slate-900">
-                {selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`}
-              </option>
-              {visibleTopics.map((topic) => (
-                <option key={`${topic.courseId}-${topic.id}`} value={topic.id} className="text-slate-900">
-                  {topic.name}
-                </option>
-              ))}
-            </select>
+            />
             <p className="text-xs text-white/70 mt-2">
               {selectedTopics.length === 0 ? 'No topic filter selected.' : 'Filtering by one topic.'}
             </p>

@@ -124,10 +124,13 @@ class AssessmentEngine:
         # Disabled by design: force content-grounded LLM generation.
         self.fast_quiz_mode = False
         self.use_llm_for_comprehensive = True
-        self.skip_llm_classification_for_long_quiz = os.getenv(
-            "SKIP_LLM_CLASSIFICATION_FOR_LONG_QUIZ", "true"
+        self.prefer_llm_mistake_classification = os.getenv(
+            "PREFER_LLM_MISTAKE_CLASSIFICATION", "true"
         ).lower() == "true"
-        self.long_quiz_threshold = int(os.getenv("LONG_QUIZ_THRESHOLD", "1"))
+        self.skip_llm_classification_for_long_quiz = os.getenv(
+            "SKIP_LLM_CLASSIFICATION_FOR_LONG_QUIZ", "false"
+        ).lower() == "true"
+        self.long_quiz_threshold = int(os.getenv("LONG_QUIZ_THRESHOLD", "20"))
         self.client = (
             OpenAI(api_key=self.openai_key, timeout=self.llm_timeout_s)
             if self.openai_key and self.enable_llm_generation
@@ -194,7 +197,13 @@ class AssessmentEngine:
                 return node_id
         return None
 
-    def _sync_kg_mastery(self, concept: str, is_correct: bool, mistake_type: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _sync_kg_mastery(
+        self,
+        concept: str,
+        is_correct: bool,
+        mistake_type: Optional[str],
+        classification: Optional[MistakeClassification] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not self.enable_legacy_global_kg_sync:
             return None
         concept_id = self._resolve_kg_concept_id(concept)
@@ -205,11 +214,17 @@ class AssessmentEngine:
                 concept_id=concept_id,
                 is_correct=is_correct,
                 is_careless=(mistake_type == "careless"),
+                classification_source=classification.classification_source if classification else None,
+                classification_model=classification.classification_model if classification else None,
+                missing_concept=classification.missing_concept if classification else None,
+                classification_rationale=classification.rationale if classification else None,
             )
             return {
                 "concept_id": concept_id,
                 "is_correct": is_correct,
                 "mistake_type": mistake_type,
+                "classification_source": classification.classification_source if classification else None,
+                "classification_model": classification.classification_model if classification else None,
                 "status": "updated",
                 "node": result.get("node"),
             }
@@ -1185,6 +1200,7 @@ class AssessmentEngine:
                         },
                         {"role": "user", "content": json.dumps(payload)},
                     ],
+                    response_format={"type": "json_object"},
                 )
                 cls_content = None
                 if hasattr(completion, 'output_text') and completion.output_text:
@@ -1210,6 +1226,8 @@ class AssessmentEngine:
                     missing_concept=missing_concept,
                     error_span=error_span.strip()[:160],
                     rationale=rationale.strip()[:300],
+                    classification_source="openai",
+                    classification_model="gpt-5.2",
                 )
             except Exception:
                 continue
@@ -1237,6 +1255,7 @@ class AssessmentEngine:
                 missing_concept=None,
                 error_span=_safe_error_span(selected_answer),
                 rationale="High-confidence incorrect answer suggests likely careless execution.",
+                classification_source="fallback",
             )
         if confidence_1_to_5 <= 2:
             return MistakeClassification(
@@ -1245,6 +1264,7 @@ class AssessmentEngine:
                 missing_concept=tested_concept,
                 error_span=_safe_error_span(selected_answer),
                 rationale="Low-confidence incorrect answer suggests conceptual gap.",
+                classification_source="fallback",
             )
         return MistakeClassification(
             question_id=question["question_id"],
@@ -1252,6 +1272,7 @@ class AssessmentEngine:
             missing_concept=tested_concept,
             error_span=_safe_error_span(selected_answer),
             rationale="Fallback classification after LLM was unavailable.",
+            classification_source="fallback",
         )
 
     def classify_mistake(self, request: QuizSubmitRequest) -> ClassifyResponse:
@@ -1337,15 +1358,21 @@ class AssessmentEngine:
                 )
                 continue
 
+            allow_llm_classification = (
+                self.prefer_llm_mistake_classification
+                and not self.fast_quiz_mode
+                and not (
+                    self.skip_llm_classification_for_long_quiz
+                    and len(request.answers) >= self.long_quiz_threshold
+                )
+            )
+
             classification = self._classify_wrong_answer(
                 concept=request.concept,
                 question=question,
                 selected_answer=answer.selected_answer,
                 confidence_1_to_5=answer.confidence_1_to_5,
-                allow_llm=not (
-                    self.skip_llm_classification_for_long_quiz
-                    and len(request.answers) >= self.long_quiz_threshold
-                ),
+                allow_llm=allow_llm_classification,
             )
             previous = student_cls.get(answer.question_id)
             if not previous and classification.mistake_type == "conceptual":
@@ -1364,6 +1391,8 @@ class AssessmentEngine:
                     "is_correct": False,
                     "confidence_1_to_5": answer.confidence_1_to_5,
                     "mistake_type": classification.mistake_type,
+                    "classification_source": classification.classification_source,
+                    "classification_model": classification.classification_model,
                     "timestamp": _now_iso(),
                 }
             )
@@ -1372,6 +1401,8 @@ class AssessmentEngine:
                     "question_id": answer.question_id,
                     "mistake_type": classification.mistake_type,
                     "concept": question.get("concept", request.concept),
+                    "classification_source": classification.classification_source,
+                    "classification_model": classification.classification_model,
                     "rpkt_probe": {
                         "concept": question.get("concept", request.concept),
                         "missing_concept": classification.missing_concept,
@@ -1387,6 +1418,7 @@ class AssessmentEngine:
                 concept=question.get("concept", request.concept),
                 is_correct=False,
                 mistake_type=classification.mistake_type,
+                classification=classification,
             )
             if kg_sync:
                 integration_actions[-1]["kg_update"] = kg_sync
@@ -1402,6 +1434,8 @@ class AssessmentEngine:
                     "mistake_type": classification.mistake_type,
                     "missing_concept": classification.missing_concept,
                     "rationale": classification.rationale,
+                    "classification_source": classification.classification_source,
+                    "classification_model": classification.classification_model,
                 }
             )
 

@@ -451,6 +451,10 @@ def _apply_user_kg_update(
     is_correct: bool,
     mistake_type: Optional[str] = None,
     confidence_1_to_5: Optional[int] = None,
+    missing_concept: Optional[str] = None,
+    classification_rationale: Optional[str] = None,
+    classification_source: Optional[str] = None,
+    classification_model: Optional[str] = None,
 ) -> Optional[dict]:
     try:
         user_kg_engine = _get_user_kg_engine(student_id)
@@ -463,12 +467,19 @@ def _apply_user_kg_update(
             is_correct=is_correct,
             is_careless=(mistake_type == "careless"),
             confidence_1_to_5=confidence_1_to_5,
+            classification_source=classification_source,
+            classification_model=classification_model,
+            missing_concept=missing_concept,
+            classification_rationale=classification_rationale,
         )
         return {
             "concept_id": concept_id,
             "is_correct": is_correct,
             "mistake_type": mistake_type,
             "confidence_1_to_5": confidence_1_to_5,
+            "missing_concept": missing_concept,
+            "classification_source": classification_source,
+            "classification_model": classification_model,
             "status": "updated",
             "node": result.get("node"),
         }
@@ -478,6 +489,9 @@ def _apply_user_kg_update(
             "is_correct": is_correct,
             "mistake_type": mistake_type,
             "confidence_1_to_5": confidence_1_to_5,
+            "missing_concept": missing_concept,
+            "classification_source": classification_source,
+            "classification_model": classification_model,
             "status": "failed",
             "error": str(e),
         }
@@ -1561,6 +1575,10 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
                     is_correct=is_correct,
                     mistake_type=mistake_type,
                     confidence_1_to_5=answer.confidence_1_to_5,
+                    missing_concept=cls.missing_concept if cls is not None else None,
+                    classification_rationale=cls.rationale if cls is not None else None,
+                    classification_source=cls.classification_source if cls is not None else None,
+                    classification_model=cls.classification_model if cls is not None else None,
                 )
                 if not attempt_update:
                     continue

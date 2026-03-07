@@ -39,6 +39,7 @@ import {
 import { WebRTCVideo } from '@/components/groups/WebRTCVideo';
 import BossBattleScene3D from '@/components/groups/BossBattleScene3D';
 import { Spotlight } from '@/components/ui/spotlight';
+import { FluidDropdown } from '@/components/ui/fluid-dropdown';
 import { TutorMarkdown } from '@/components/ai/TutorMarkdown';
 
 interface KGNodeOption {
@@ -878,18 +879,23 @@ export default function PeerSessionPage() {
                   <>
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-white/40">Knowledge node</label>
-                      <select
+                      <FluidDropdown
+                        ariaLabel="Select knowledge node for this answer"
+                        className="w-full"
+                        options={[
+                          {
+                            value: '',
+                            label: `Use question concept (${currentQuestion.concept_id || currentQuestion.weak_concept})`,
+                          },
+                          ...conceptOptions.map((opt) => ({
+                            value: opt.id,
+                            label: `${opt.title} (${opt.id})`,
+                          })),
+                        ]}
                         value={selectedConceptId}
-                        onChange={(e) => setSelectedConceptId(e.target.value)}
-                        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm px-3 py-2 text-sm text-white focus:ring-2 focus:ring-cyan-500/40 focus:border-transparent outline-none"
-                      >
-                        <option value="">Use question concept ({currentQuestion.concept_id || currentQuestion.weak_concept})</option>
-                        {conceptOptions.map((opt) => (
-                          <option key={opt.id} value={opt.id}>
-                            {opt.title} ({opt.id})
-                          </option>
-                        ))}
-                      </select>
+                        onValueChange={setSelectedConceptId}
+                        placeholder={`Use question concept (${currentQuestion.concept_id || currentQuestion.weak_concept})`}
+                      />
                     </div>
                     {questionRemainingSec !== null && (
                       <p className={`text-xs flex items-center gap-1 ${timerUrgent ? 'text-red-300' : 'text-cyan-200/75'}`}>

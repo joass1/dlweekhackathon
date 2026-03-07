@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
+import { FluidDropdown } from '@/components/ui/fluid-dropdown';
 import { GlowingEffect } from '@/components/ui/glowing-effect';
 import { normalizeTopicRow, TopicOption, UserTopicApiRow } from '@/types/topics';
 
@@ -23,6 +24,8 @@ interface KGNode {
   topicIds?: string[];
   category?: string;
   decayTimestamp?: string | null;
+  decayRisk?: number;
+  dueForReview?: boolean;
 }
 
 interface KGLink {
@@ -256,6 +259,8 @@ export default function Page() {
               : undefined,
             category: String(n.category ?? 'General'),
             decayTimestamp: n.decayTimestamp ?? null,
+            decayRisk: Number(n.decayRisk ?? 0),
+            dueForReview: Boolean(n.dueForReview ?? false),
           }))
         );
         setLinks(
@@ -412,7 +417,7 @@ export default function Page() {
       );
     }
 
-    if (nextFocusConcept.decayTimestamp) {
+    if (nextFocusConcept.dueForReview || (nextFocusConcept.decayRisk ?? 0) >= 0.35) {
       reasons.push('This topic is due for review, so waiting longer increases the risk of forgetting it.');
     }
 
@@ -427,7 +432,7 @@ export default function Page() {
         status: concept.status,
         unlock_count: actionUnlockCounts.get(concept.id) ?? 0,
         prerequisite_count: actionPrerequisiteCounts.get(concept.id) ?? 0,
-        has_decay: Boolean(concept.decayTimestamp),
+        has_decay: Boolean(concept.dueForReview || (concept.decayRisk ?? 0) >= 0.35),
         rank_hint: index + 1,
       })),
     [actionFilteredConcepts, actionPrerequisiteCounts, actionUnlockCounts]
@@ -857,15 +862,17 @@ export default function Page() {
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#4cc9f0] flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5" /> Next Best Action
               </p>
-              <select
+              <FluidDropdown
+                ariaLabel="Filter next best action by course"
+                className="w-full sm:w-[240px]"
+                options={courses.map((course) => ({
+                  value: course.id,
+                  label: course.name,
+                }))}
+                triggerClassName="w-full"
                 value={actionCourse}
-                onChange={e => setActionCourse(e.target.value)}
-                className="text-sm p-1.5 border border-white/20 rounded-lg bg-[#1a1a2e] text-white w-auto"
-              >
-                {courses.map(c => (
-                  <option key={c.id} value={c.id} className="bg-[#1a1a2e] text-white">{c.name}</option>
-                ))}
-              </select>
+                onValueChange={setActionCourse}
+              />
             </div>
 
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -959,7 +966,7 @@ export default function Page() {
                       Builds on {actionPrerequisiteCounts.get(activeRecommendedConcept.id)} earlier topic{(actionPrerequisiteCounts.get(activeRecommendedConcept.id) ?? 0) === 1 ? '' : 's'}
                     </span>
                   )}
-                  {activeRecommendedConcept.decayTimestamp && (
+                  {(activeRecommendedConcept.dueForReview || (activeRecommendedConcept.decayRisk ?? 0) >= 0.35) && (
                     <span className="rounded-full border border-orange-300/25 bg-orange-400/10 px-2.5 py-1 text-orange-100">
                       Due for review
                     </span>
@@ -1181,30 +1188,32 @@ export default function Page() {
                 <p className="text-xs text-white/60 mt-1">Use labels toggle for a cleaner map when many topics are present.</p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <select
+                <FluidDropdown
+                  ariaLabel="Filter knowledge map by course"
+                  className="w-full sm:w-[220px]"
+                  options={courses.map((course) => ({
+                    value: course.id,
+                    label: course.name,
+                  }))}
                   value={selectedCourse}
-                  onChange={(event) => setSelectedCourse(event.target.value)}
-                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-[#1a1a2e] text-white"
-                >
-                  {courses.map((course) => (
-                    <option key={course.id} value={course.id} className="bg-[#1a1a2e] text-white">{course.name}</option>
-                  ))}
-                </select>
-                <select
+                  onValueChange={setSelectedCourse}
+                />
+                <FluidDropdown
+                  ariaLabel="Filter knowledge map by topic"
+                  className="w-full sm:min-w-[220px] sm:flex-1"
+                  options={[
+                    {
+                      value: 'all',
+                      label: selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`,
+                    },
+                    ...visibleTopics.map((topic) => ({
+                      value: topic.id,
+                      label: topic.name,
+                    })),
+                  ]}
                   value={selectedTopic}
-                  onChange={(event) => setSelectedTopic(event.target.value)}
-                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-[#1a1a2e] text-white min-w-[180px]"
-                  title="Filter by topic"
-                >
-                  <option value="all" className="bg-[#1a1a2e] text-white">
-                    {selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`}
-                  </option>
-                  {visibleTopics.map((topic) => (
-                    <option key={`${topic.courseId}-${topic.id}`} value={topic.id} className="bg-[#1a1a2e] text-white">
-                      {topic.name}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={setSelectedTopic}
+                />
                 <button
                   type="button"
                   onClick={() => setShowMapLabels(prev => !prev)}

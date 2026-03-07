@@ -65,6 +65,8 @@ class MistakeClassification(BaseModel):
     missing_concept: Optional[str] = None
     error_span: Optional[str] = None
     rationale: str
+    classification_source: Optional[Literal["openai", "fallback"]] = None
+    classification_model: Optional[str] = None
 
 
 class ClassifyResponse(BaseModel):

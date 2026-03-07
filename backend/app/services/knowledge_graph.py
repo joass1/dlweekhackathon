@@ -7,16 +7,50 @@ All other components call this API:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from math import exp, log
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
 
+from .adaptive_engine import AdaptiveEngine, ConceptState
+
 # ── Status thresholds ──────────────────────────────────────────────────────────
 MASTERED_THRESHOLD = 0.85
 LEARNING_THRESHOLD = 0.60
-DECAY_GRACE_DAYS   = 7     # days before decay kicks in
-DECAY_PER_DAY      = 0.05  # mastery lost per day after grace period
+DEFAULT_DECAY_RATE = 0.02
+LEGACY_DECAY_GRACE_DAYS = 7
+REVIEW_DUE_RISK_THRESHOLD = 0.35
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _ensure_utc(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return _ensure_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    return None
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
 
 
 def _compute_status(mastery: float) -> str:
@@ -48,6 +82,7 @@ class KnowledgeGraphEngine:
     def __init__(self, firestore_store=None) -> None:
         self._graph: nx.DiGraph = nx.DiGraph()
         self._fs_store = firestore_store  # FirestoreKnowledgeGraphStore or None
+        self._adaptive_engine = AdaptiveEngine()
 
     def _persist_concept(self, concept_id: str) -> None:
         """Write a concept node to Firestore if available."""
@@ -101,7 +136,11 @@ class KnowledgeGraphEngine:
         ]
 
         if concept_id in self._graph:
-            update_payload = {"title": title, "category": category}
+            update_payload = {
+                "title": title,
+                "category": category,
+                "decay_rate": float(self._graph.nodes[concept_id].get("decay_rate", DEFAULT_DECAY_RATE) or DEFAULT_DECAY_RATE),
+            }
             if course_id:
                 update_payload["course_id"] = course_id
             existing_topics = self._graph.nodes[concept_id].get("topic_ids") or self._graph.nodes[concept_id].get("topicIds") or []
@@ -117,6 +156,7 @@ class KnowledgeGraphEngine:
                 update_payload["topic_ids"] = merged_topics
             self._graph.nodes[concept_id].update(update_payload)
         else:
+            now = _utc_now()
             self._graph.add_node(
                 concept_id,
                 title=title,
@@ -127,10 +167,16 @@ class KnowledgeGraphEngine:
                 status=_compute_status(initial_mastery),
                 careless_badge=False,
                 decay_timestamp=None,
+                review_due_at=None,
+                updated_at=now.isoformat() if initial_mastery > 0 else None,
+                last_practice_at=now.isoformat() if initial_mastery > 0 else None,
+                decay_rate=DEFAULT_DECAY_RATE,
                 attempt_count=0,
                 correct_count=0,
                 careless_count=0,
             )
+            if initial_mastery > 0:
+                self._sync_review_schedule(self._graph.nodes[concept_id], now)
 
         if prerequisites:
             for prereq_id in prerequisites:
@@ -147,6 +193,11 @@ class KnowledgeGraphEngine:
         is_correct: bool,
         is_careless: bool = False,
         confidence_1_to_5: Optional[int] = None,
+        classification_source: Optional[str] = None,
+        classification_model: Optional[str] = None,
+        missing_concept: Optional[str] = None,
+        classification_rationale: Optional[str] = None,
+        classified_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Record an answer attempt and update mastery/status.
 
@@ -162,6 +213,8 @@ class KnowledgeGraphEngine:
             raise KeyError(f"Concept '{concept_id}' not found in graph")
 
         node = self._graph.nodes[concept_id]
+        now = _utc_now()
+        node["mastery_score"] = self._project_mastery(concept_id, node, as_of=now)
         node["attempt_count"] += 1
 
         root_gap: Optional[Dict[str, Any]] = None
@@ -181,9 +234,6 @@ class KnowledgeGraphEngine:
                 confidence_factor = 0.25 + 0.75 * ((clamped_conf - 1) / 4.0)
             gain = base_gain * confidence_factor
             node["mastery_score"] = min(1.0, prior + gain)
-            node["decay_timestamp"] = (
-                datetime.utcnow() + timedelta(days=DECAY_GRACE_DAYS)
-            ).isoformat()
 
         elif is_careless:
             # ── Careless mistake — badge only, mastery unchanged ──────────────
@@ -213,6 +263,19 @@ class KnowledgeGraphEngine:
                 node["status"] = "learning"
         else:
             node["status"] = "weak"
+
+        node["updated_at"] = now.isoformat()
+        node["last_practice_at"] = now.isoformat()
+        self._sync_review_schedule(node, now)
+
+        if not is_correct:
+            node["last_mistake_type"] = "careless" if is_careless else "conceptual"
+            node["last_missing_concept"] = missing_concept
+            node["last_classification_source"] = classification_source
+            node["last_classification_model"] = classification_model
+            node["last_classification_rationale"] = classification_rationale
+            node["last_classified_at"] = classified_at or now.isoformat()
+
         self._persist_concept(concept_id)
 
         # Collect downstream dependents (for chain-green cascade detection)
@@ -236,8 +299,12 @@ class KnowledgeGraphEngine:
 
         clamped = max(0.0, min(1.0, float(mastery_score)))
         node = self._graph.nodes[concept_id]
+        now = _utc_now()
         node["mastery_score"] = clamped
         node["status"] = _compute_status(clamped)
+        node["updated_at"] = now.isoformat()
+        node["last_practice_at"] = now.isoformat()
+        self._sync_review_schedule(node, now)
         self._persist_concept(concept_id)
         return self._node_dict(concept_id)
 
@@ -293,7 +360,15 @@ Return ONLY valid JSON:
         is_careless = classification.get("is_careless", False)
 
         # Now update mastery using the classification
-        mastery_result = self.update_mastery(concept_id, is_correct=False, is_careless=is_careless)
+        mastery_result = self.update_mastery(
+            concept_id,
+            is_correct=False,
+            is_careless=is_careless,
+            classification_source="openai",
+            classification_model="gpt-5.2",
+            missing_concept=classification.get("likely_missing_prerequisite"),
+            classification_rationale=classification.get("explanation"),
+        )
 
         return {
             "is_careless": is_careless,
@@ -346,7 +421,6 @@ Return ONLY valid JSON:
 
     def get_graph_data(self) -> Dict[str, Any]:
         """Serialize the entire graph as {nodes, links} for D3 consumption."""
-        self.apply_decay()
         nodes = [self._node_dict(n) for n in self._graph.nodes()]
         links = [
             {
@@ -419,19 +493,18 @@ Return ONLY valid JSON:
         return net.generate_html()
 
     def apply_decay(self) -> None:
-        """Reduce mastery for nodes whose decay_timestamp has passed."""
-        now = datetime.utcnow()
+        """Materialize projected exponential decay into stored mastery values."""
+        now = _utc_now()
         for node_id, data in self._graph.nodes(data=True):
-            ts = data.get("decay_timestamp")
-            if not ts:
+            projected_mastery = self._project_mastery(node_id, data, as_of=now)
+            if abs(projected_mastery - float(data.get("mastery_score", 0.0))) <= 1e-9:
                 continue
-            decay_start = datetime.fromisoformat(ts)
-            if now > decay_start:
-                days_overdue = (now - decay_start).days
-                loss = DECAY_PER_DAY * max(1, days_overdue)
-                data["mastery_score"] = max(0.0, data["mastery_score"] - loss)
-                data["status"] = _compute_status(data["mastery_score"])
-                self._persist_concept(node_id)
+            data["mastery_score"] = projected_mastery
+            data["status"] = _compute_status(projected_mastery)
+            data["updated_at"] = now.isoformat()
+            data["last_practice_at"] = now.isoformat()
+            self._sync_review_schedule(data, now)
+            self._persist_concept(node_id)
 
     def build_from_material(
         self,
@@ -504,6 +577,7 @@ Course material:
 
     def _node_dict(self, node_id: str) -> Dict[str, Any]:
         data = self._graph.nodes[node_id]
+        projected = self._project_decay_metrics(node_id, data)
         course_id = data.get("course_id") or data.get("courseId")
         topic_ids = data.get("topic_ids") or data.get("topicIds") or []
         normalized_topic_ids = [
@@ -517,13 +591,110 @@ Course material:
             "category": data.get("category", "General"),
             "courseId": course_id,
             "topicIds": normalized_topic_ids,
-            "mastery": round(data.get("mastery_score", 0.0) * 100),
-            "status": data.get("status", "not_started"),
+            "mastery": round(projected["mastery"] * 100),
+            "status": projected["status"],
             "carelessBadge": data.get("careless_badge", False),
             "carelessCount": data.get("careless_count", 0),
-            "decayTimestamp": data.get("decay_timestamp"),
+            "decayTimestamp": projected["review_due_at"],
+            "decayRisk": round(projected["decay_risk"], 4),
+            "dueForReview": projected["due_for_review"],
+            "updatedAt": data.get("updated_at"),
+            "lastPracticeAt": projected["last_practice_at"],
             "attemptCount": data.get("attempt_count", 0),
             "correctCount": data.get("correct_count", 0),
+            "lastMistakeType": data.get("last_mistake_type"),
+            "lastMissingConcept": data.get("last_missing_concept"),
+            "lastClassificationSource": data.get("last_classification_source"),
+            "lastClassificationModel": data.get("last_classification_model"),
+            "lastClassificationRationale": data.get("last_classification_rationale"),
+            "lastClassifiedAt": data.get("last_classified_at"),
+        }
+
+    def _sync_review_schedule(self, node: Dict[str, Any], reference_time: datetime) -> None:
+        mastery = _clamp(float(node.get("mastery_score", 0.0)))
+        if mastery <= 0:
+            node["review_due_at"] = None
+            node["decay_timestamp"] = None
+            return
+
+        decay_rate = max(0.0, float(node.get("decay_rate", DEFAULT_DECAY_RATE) or DEFAULT_DECAY_RATE))
+        review_due_at = _ensure_utc(reference_time) + timedelta(days=self._review_due_days(decay_rate))
+        node["decay_rate"] = decay_rate
+        node["review_due_at"] = review_due_at.isoformat()
+        node["decay_timestamp"] = node["review_due_at"]
+
+    def _review_due_days(self, decay_rate: float) -> float:
+        safe_rate = max(1e-6, float(decay_rate or DEFAULT_DECAY_RATE))
+        return -log(max(1e-6, 1.0 - REVIEW_DUE_RISK_THRESHOLD)) / safe_rate
+
+    def _last_practice_at(self, data: Dict[str, Any]) -> Optional[datetime]:
+        direct = _parse_dt(data.get("last_practice_at"))
+        if direct is not None:
+            return direct
+
+        updated = _parse_dt(data.get("updated_at"))
+        if updated is not None:
+            return updated
+
+        legacy_due = _parse_dt(data.get("decay_timestamp"))
+        if legacy_due is None:
+            return None
+        return legacy_due - timedelta(days=LEGACY_DECAY_GRACE_DAYS)
+
+    def _project_mastery(
+        self,
+        concept_id: str,
+        data: Dict[str, Any],
+        as_of: Optional[datetime] = None,
+    ) -> float:
+        mastery = _clamp(float(data.get("mastery_score", 0.0)))
+        last_practice_at = self._last_practice_at(data)
+        if mastery <= 0 or last_practice_at is None:
+            return mastery
+
+        state = ConceptState(
+            concept_id=concept_id,
+            mastery=mastery,
+            decay_rate=max(0.0, float(data.get("decay_rate", DEFAULT_DECAY_RATE) or DEFAULT_DECAY_RATE)),
+            last_updated=last_practice_at,
+            attempts=int(data.get("attempt_count", 0) or 0),
+            correct=int(data.get("correct_count", 0) or 0),
+            careless_count=int(data.get("careless_count", 0) or 0),
+        ).normalized()
+        projected = self._adaptive_engine.get_mastery(
+            state,
+            as_of=as_of,
+            include_decay_projection=True,
+        )
+        return _clamp(float(projected["mastery"]))
+
+    def _project_decay_metrics(
+        self,
+        concept_id: str,
+        data: Dict[str, Any],
+        as_of: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        now = _ensure_utc(as_of or _utc_now())
+        mastery = self._project_mastery(concept_id, data, as_of=now)
+        last_practice_at = self._last_practice_at(data)
+        decay_rate = max(0.0, float(data.get("decay_rate", DEFAULT_DECAY_RATE) or DEFAULT_DECAY_RATE))
+
+        elapsed_days = 0.0
+        if last_practice_at is not None:
+            elapsed_days = max(0.0, (now - last_practice_at).total_seconds() / 86400.0)
+
+        decay_risk = 0.0 if mastery <= 0 or last_practice_at is None else 1.0 - exp(-decay_rate * elapsed_days)
+        review_due_at = _parse_dt(data.get("review_due_at"))
+        if review_due_at is None and last_practice_at is not None and mastery > 0:
+            review_due_at = last_practice_at + timedelta(days=self._review_due_days(decay_rate))
+
+        return {
+            "mastery": mastery,
+            "status": _compute_status(mastery),
+            "decay_risk": _clamp(decay_risk),
+            "due_for_review": bool(review_due_at and now >= review_due_at and mastery > 0),
+            "review_due_at": review_due_at.isoformat() if review_due_at else None,
+            "last_practice_at": last_practice_at.isoformat() if last_practice_at else None,
         }
 
 

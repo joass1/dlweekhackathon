@@ -32,6 +32,8 @@ export interface MistakeClassificationClient {
   missing_concept?: string | null;
   error_span?: string | null;
   rationale: string;
+  classification_source?: 'openai' | 'fallback' | null;
+  classification_model?: string | null;
 }
 
 export interface ClassifyResult {
@@ -47,6 +49,8 @@ export interface ClassifyResult {
   integration_actions?: {
     question_id: string;
     mistake_type: 'careless' | 'conceptual';
+    classification_source?: 'openai' | 'fallback' | null;
+    classification_model?: string | null;
     rpkt_probe?: { concept?: string; missing_concept?: string | null };
     intervention?: { mistake_type?: 'careless' | 'conceptual'; concept?: string; missing_concept?: string | null };
   }[];
