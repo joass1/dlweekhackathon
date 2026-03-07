@@ -12,7 +12,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from openai import OpenAI
@@ -228,6 +228,7 @@ class PeerSessionService:
         self.knowledge_chunks_collection = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
         self.adaptive_engine = AdaptiveEngine()
         self._display_name_cache: Dict[str, str] = {}
+        self._concept_id_cache: Dict[Tuple[str, str], str] = {}
 
     def _resolve_display_name(self, student_id: str) -> Optional[str]:
         sid = str(student_id or "").strip()
@@ -1323,7 +1324,7 @@ class PeerSessionService:
                     "question_id": current_qid,
                     "student_id": sid,
                     "damage_taken": timeout_damage_per_member,
-                    "concept_id": concept_to_update,
+                    "concept_id": str(mastery_results[sid].get("concept_id") or concept_to_update),
                     "mistake_type": "conceptual",
                     "reason": "timeout",
                     "updated_mastery": mastery_results[sid].get("updated_mastery"),
@@ -1356,6 +1357,80 @@ class PeerSessionService:
         if ref is not None and updates:
             ref.update(updates)
         return updates
+
+    def _resolve_student_concept_id(self, student_id: str, concept_id: str) -> str:
+        raw = str(concept_id or "").strip()
+        normalized = _normalize_key(raw)
+        cache_key = (str(student_id or "").strip(), normalized)
+        if normalized and cache_key in self._concept_id_cache:
+            return self._concept_id_cache[cache_key]
+
+        candidate_values = [
+            raw,
+            normalized,
+            raw.replace(" ", "_"),
+            raw.replace("-", "_"),
+            _normalize_key(raw.replace("-", " ")),
+        ]
+        candidates: List[str] = []
+        for value in candidate_values:
+            candidate = str(value or "").strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        if not candidates:
+            return "general_topic"
+
+        if not self.db:
+            resolved = normalized or candidates[0]
+            if normalized:
+                self._concept_id_cache[cache_key] = resolved
+            return resolved
+
+        states_ref = (
+            self.db.collection("students")
+            .document(student_id)
+            .collection("concept_states")
+        )
+        for cid in candidates:
+            try:
+                if states_ref.document(cid).get().exists:
+                    if normalized:
+                        self._concept_id_cache[cache_key] = cid
+                    return cid
+            except Exception:
+                continue
+
+        concepts_ref = (
+            self.db.collection("knowledge_graphs")
+            .document(f"user_{student_id}")
+            .collection("concepts")
+        )
+        for cid in candidates:
+            try:
+                if concepts_ref.document(cid).get().exists:
+                    if normalized:
+                        self._concept_id_cache[cache_key] = cid
+                    return cid
+            except Exception:
+                continue
+
+        if normalized:
+            try:
+                for node_doc in concepts_ref.stream():
+                    node = node_doc.to_dict() or {}
+                    node_id = str(node_doc.id or "").strip()
+                    title = str(node.get("title") or "").strip()
+                    if _normalize_key(node_id) == normalized or _normalize_key(title) == normalized:
+                        self._concept_id_cache[cache_key] = node_id
+                        return node_id
+            except Exception:
+                pass
+
+        resolved = normalized or candidates[0]
+        if normalized:
+            self._concept_id_cache[cache_key] = resolved
+        return resolved
 
     def _load_student_concept_state(self, student_id: str, concept_id: str) -> ConceptState:
         default_state = ConceptState(concept_id=concept_id).normalized()
@@ -1470,6 +1545,7 @@ class PeerSessionService:
         is_correct: bool,
         mistake_type: str,
     ) -> Dict[str, Any]:
+        concept_id = self._resolve_student_concept_id(student_id, concept_id)
         state = self._load_student_concept_state(student_id, concept_id)
         bkt_result = self.adaptive_engine.update_bkt(
             state=state,
@@ -1989,6 +2065,7 @@ class PeerSessionService:
             is_correct=is_correct,
             mistake_type=mistake_type,
         )
+        resolved_concept_id = str(mastery_update.get("concept_id") or concept_to_update or "general_topic")
 
         score = float(evaluation.get("score", 0.0))
         damage_dealt = self._compute_boss_damage(score, is_correct, mistake_type)
@@ -2020,7 +2097,7 @@ class PeerSessionService:
                     "score": round(score, 4),
                     "is_correct": is_correct,
                     "mistake_type": mistake_type,
-                    "concept_id": concept_to_update,
+                    "concept_id": resolved_concept_id,
                 },
             )
 
@@ -2028,7 +2105,7 @@ class PeerSessionService:
             "question_id": question_id,
             "submitted_by": student_id,
             "answer_text": answer_text,
-            "concept_id": concept_to_update,
+            "concept_id": resolved_concept_id,
             "mistake_type": mistake_type,
             "is_correct": is_correct,
             "score": score,
@@ -2073,7 +2150,7 @@ class PeerSessionService:
         return {
             "question_id": question_id,
             "submitted_by": student_id,
-            "concept_id": concept_to_update,
+            "concept_id": resolved_concept_id,
             "mistake_type": mistake_type,
             "is_correct": is_correct,
             "score": score,
