@@ -317,6 +317,29 @@ export default function PeerSessionPage() {
 
   const currentQuestion: PeerQuestion | null =
     session?.questions?.[session.current_question_index] ?? null;
+  const autoConceptId =
+    String(
+      currentQuestion?.concept_id ||
+      currentQuestion?.weak_concept ||
+      session?.selected_concept_id ||
+      ''
+    ).trim();
+  const conceptDropdownOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    if (autoConceptId) {
+      byId.set(autoConceptId, `Auto-selected (${autoConceptId})`);
+    }
+    for (const opt of conceptOptions) {
+      if (!opt?.id) continue;
+      if (!byId.has(opt.id)) {
+        byId.set(opt.id, `${opt.title} (${opt.id})`);
+      }
+    }
+    return [
+      { value: '', label: 'Auto fallback (question/topic)' },
+      ...Array.from(byId.entries()).map(([value, label]) => ({ value, label })),
+    ];
+  }, [autoConceptId, conceptOptions]);
   const currentMcqOptions = useMemo(
     () => sanitizeMcqOptions(currentQuestion?.options),
     [currentQuestion?.options],
@@ -327,6 +350,10 @@ export default function PeerSessionPage() {
       setMcqSelection(null);
     }
   }, [mcqSelection, currentMcqOptions.length]);
+
+  useEffect(() => {
+    setSelectedConceptId(autoConceptId);
+  }, [currentQuestion?.question_id, autoConceptId]);
 
   const answersForCurrentQuestion = currentQuestion
     ? (session?.answers?.filter((a) => a.question_id === currentQuestion.question_id) ?? [])
@@ -365,17 +392,6 @@ export default function PeerSessionPage() {
     return detail || 'Could not advance yet.';
   };
 
-  useEffect(() => {
-    const defaultConcept =
-      currentQuestion?.concept_id ||
-      currentQuestion?.weak_concept ||
-      session?.selected_concept_id ||
-      '';
-    if (defaultConcept) {
-      setSelectedConceptId(defaultConcept);
-    }
-  }, [currentQuestion?.question_id, currentQuestion?.concept_id, currentQuestion?.weak_concept, session?.selected_concept_id]);
-
   const handleSubmitAnswer = async () => {
     if (!session || !currentQuestion) return;
     const text = currentQuestion.type === 'mcq' && mcqSelection !== null
@@ -390,7 +406,7 @@ export default function PeerSessionPage() {
         session.session_id,
         currentQuestion.question_id,
         text,
-        selectedConceptId || currentQuestion.concept_id || session.selected_concept_id || null,
+        selectedConceptId || autoConceptId || null,
         token,
       );
       setFeedback(result);
@@ -908,20 +924,14 @@ export default function PeerSessionPage() {
                       <FluidDropdown
                         ariaLabel="Select knowledge node for this answer"
                         className="w-full"
-                        options={[
-                          {
-                            value: '',
-                            label: `Use question concept (${currentQuestion.concept_id || currentQuestion.weak_concept})`,
-                          },
-                          ...conceptOptions.map((opt) => ({
-                            value: opt.id,
-                            label: `${opt.title} (${opt.id})`,
-                          })),
-                        ]}
+                        options={conceptDropdownOptions}
                         value={selectedConceptId}
                         onValueChange={setSelectedConceptId}
-                        placeholder={`Use question concept (${currentQuestion.concept_id || currentQuestion.weak_concept})`}
+                        placeholder={autoConceptId || 'Auto fallback (question/topic)'}
                       />
+                      <p className="text-[11px] text-white/35">
+                        Auto-selected default: <span className="text-white/60">{autoConceptId || 'Current topic'}</span>
+                      </p>
                     </div>
                     {questionRemainingSec !== null && (
                       <p className={`text-xs flex items-center gap-1 ${timerUrgent ? 'text-red-300' : 'text-cyan-200/75'}`}>
