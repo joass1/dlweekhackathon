@@ -644,7 +644,7 @@ export default function PeerSessionPage() {
             lobbyId={session.session_id || sessionId}
             forcedBossId={forcedBossId}
             bossAttackTrigger={bossAttackTrigger}
-            allowAmbientAttacks={!hasPartyHealth}
+            allowAmbientAttacks={true}
           />
         ) : (
           <>
