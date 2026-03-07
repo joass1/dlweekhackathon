@@ -454,8 +454,14 @@ export default function StudyMissionPage() {
   );
 
   useEffect(() => {
-    if (visibleTopics.length === 0) return;
-    setSelectedTopics((prev) => prev.filter((topicId) => visibleTopics.some((topic) => topic.id === topicId)));
+    setSelectedTopics((prev) => {
+      const filtered = prev.filter((topicId) => visibleTopics.some((topic) => topic.id === topicId));
+      if (filtered.length > 1) return [filtered[0]];
+      if (filtered.length === prev.length && filtered.every((topicId, index) => topicId === prev[index])) {
+        return prev;
+      }
+      return filtered;
+    });
   }, [visibleTopics]);
 
   const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
@@ -1248,32 +1254,25 @@ export default function StudyMissionPage() {
           <h2 className="font-semibold mb-3 text-white">Filter Topics (optional)</h2>
           <div className="mb-6">
             <select
-              multiple
-              value={selectedTopics}
+              value={selectedTopics[0] ?? 'all'}
               onChange={(event) => {
-                const next = Array.from(event.target.selectedOptions).map((option) => option.value);
-                setSelectedTopics(next);
+                const nextValue = event.target.value;
+                setSelectedTopics(nextValue === 'all' ? [] : [nextValue]);
               }}
-              className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm focus:border-[#03b2e6] focus:outline-none h-[120px]"
+              className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm focus:border-[#03b2e6] focus:outline-none"
             >
+              <option value="all" className="text-slate-900">
+                {selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`}
+              </option>
               {visibleTopics.map((topic) => (
                 <option key={`${topic.courseId}-${topic.id}`} value={topic.id} className="text-slate-900">
                   {topic.name}
                 </option>
               ))}
             </select>
-            <div className="mt-2 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedTopics([])}
-                className="rounded-full border border-white/25 px-3 py-1 text-xs text-white/85 hover:border-[#03b2e6]"
-              >
-                All Topics
-              </button>
-              <p className="text-xs text-white/70">
-                {selectedTopics.length === 0 ? 'No topic filter selected.' : `${selectedTopics.length} topic(s) selected.`}
-              </p>
-            </div>
+            <p className="text-xs text-white/70 mt-2">
+              {selectedTopics.length === 0 ? 'No topic filter selected.' : 'Filtering by one topic.'}
+            </p>
           </div>
 
           <h2 className="font-semibold mb-4 text-white">How much time do you have?</h2>
