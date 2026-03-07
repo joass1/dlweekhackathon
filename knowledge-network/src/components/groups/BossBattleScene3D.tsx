@@ -477,6 +477,27 @@ function SciFiModel({
   );
 }
 
+function resolveAttackCandidates(
+  actions: Record<string, THREE.AnimationAction | null> | undefined,
+  configuredAttackClips: string[],
+  hitClip: string
+): string[] {
+  if (!actions) return [];
+  const direct = configuredAttackClips.filter((name) => !!actions[name]);
+  if (direct.length > 0) return direct;
+
+  const dynamic = Object.keys(actions).filter((name) => {
+    const lower = name.toLowerCase();
+    if (/(idle|death|die|hitrecieve|hit_receive|hit receive|walk|run|jump|fall)/.test(lower)) return false;
+    return /(attack|punch|kick|shoot|slash|fire|melee|combo|smash|strike)/.test(lower);
+  });
+  if (dynamic.length > 0) return dynamic;
+
+  if (hitClip && actions[hitClip]) return [hitClip];
+  if (actions.HitRecieve) return ['HitRecieve'];
+  return [];
+}
+
 /* ── Boss Model (unchanged logic) ─────────────────────────────────────── */
 
 function BossModel({
@@ -753,8 +774,7 @@ function BossModel({
       return;
     }
 
-    const attackCandidates = preset.attackClips
-      .filter((name) => !!actions?.[name]);
+    const attackCandidates = resolveAttackCandidates(actions, preset.attackClips, preset.hitClip);
 
     if (attackCandidates.length === 0) return;
 

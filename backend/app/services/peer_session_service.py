@@ -12,6 +12,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -244,6 +245,84 @@ class PeerSessionService:
         self._display_name_cache: Dict[str, str] = {}
         self._concept_id_cache: Dict[Tuple[str, str], str] = {}
         self._concept_presence_cache: Dict[Tuple[str, str], bool] = {}
+        self._round_model = str(os.getenv("PEER_OPENAI_ROUND_MODEL", "gpt-4.1-mini")).strip() or "gpt-4.1-mini"
+        self._eval_model = str(os.getenv("PEER_OPENAI_EVAL_MODEL", "gpt-4.1-mini")).strip() or "gpt-4.1-mini"
+        self._round_max_completion_tokens = self._read_env_int("PEER_OPENAI_ROUND_MAX_TOKENS", 920, min_value=300, max_value=2200)
+        self._round_timeout_sec = self._read_env_float("PEER_OPENAI_ROUND_TIMEOUT_SEC", 22.0, min_value=6.0, max_value=90.0)
+        self._eval_fast_max_completion_tokens = self._read_env_int("PEER_OPENAI_EVAL_FAST_MAX_TOKENS", 180, min_value=80, max_value=800)
+        self._eval_deep_max_completion_tokens = self._read_env_int("PEER_OPENAI_EVAL_DEEP_MAX_TOKENS", 260, min_value=120, max_value=1200)
+        self._eval_fast_timeout_sec = self._read_env_float("PEER_OPENAI_EVAL_FAST_TIMEOUT_SEC", 8.0, min_value=3.0, max_value=60.0)
+        self._eval_deep_timeout_sec = self._read_env_float("PEER_OPENAI_EVAL_DEEP_TIMEOUT_SEC", 12.0, min_value=4.0, max_value=90.0)
+        self._round_context_limit = self._read_env_int("PEER_ROUND_CONTEXT_LIMIT", 6, min_value=3, max_value=12)
+        self._context_cache_ttl_sec = self._read_env_float("PEER_CONTEXT_CACHE_TTL_SEC", 240.0, min_value=0.0, max_value=3600.0)
+        self._context_cache_max_entries = self._read_env_int("PEER_CONTEXT_CACHE_MAX_ENTRIES", 256, min_value=32, max_value=5000)
+        self._answer_eval_cache_ttl_sec = self._read_env_float("PEER_ANSWER_EVAL_CACHE_TTL_SEC", 600.0, min_value=0.0, max_value=3600.0)
+        self._answer_eval_cache_max_entries = self._read_env_int("PEER_ANSWER_EVAL_CACHE_MAX_ENTRIES", 512, min_value=64, max_value=8000)
+        self._context_cache: Dict[Tuple[str, str, str, str, str, int], Tuple[float, List[Dict[str, str]]]] = {}
+        self._answer_eval_cache: Dict[Tuple[str, str, str, str], Tuple[float, Dict[str, Any]]] = {}
+
+    @staticmethod
+    def _read_env_int(name: str, default: int, *, min_value: int, max_value: int) -> int:
+        try:
+            parsed = int(str(os.getenv(name, default)).strip())
+        except (TypeError, ValueError):
+            parsed = default
+        return max(min_value, min(max_value, parsed))
+
+    @staticmethod
+    def _read_env_float(name: str, default: float, *, min_value: float, max_value: float) -> float:
+        try:
+            parsed = float(str(os.getenv(name, default)).strip())
+        except (TypeError, ValueError):
+            parsed = default
+        return max(min_value, min(max_value, parsed))
+
+    @staticmethod
+    def _normalize_free_text(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @classmethod
+    def _cache_trim(cls, cache: Dict[Any, Any], max_entries: int) -> None:
+        while len(cache) > max_entries:
+            cache.pop(next(iter(cache)))
+
+    def _get_cached_answer_evaluation(self, question: Dict[str, Any], answer_text: str) -> Optional[Dict[str, Any]]:
+        if self._answer_eval_cache_ttl_sec <= 0:
+            return None
+        cache_key = (
+            str(question.get("question_id") or "").strip(),
+            self._normalize_free_text(question.get("stem")),
+            self._normalize_free_text(question.get("correct_answer")),
+            self._normalize_free_text(answer_text),
+        )
+        if not any(cache_key):
+            return None
+        entry = self._answer_eval_cache.get(cache_key)
+        if not entry:
+            return None
+        now_mono = time.monotonic()
+        if (now_mono - entry[0]) > self._answer_eval_cache_ttl_sec:
+            self._answer_eval_cache.pop(cache_key, None)
+            return None
+        return dict(entry[1])
+
+    def _cache_answer_evaluation(self, question: Dict[str, Any], answer_text: str, result: Dict[str, Any]) -> None:
+        if self._answer_eval_cache_ttl_sec <= 0:
+            return
+        cache_key = (
+            str(question.get("question_id") or "").strip(),
+            self._normalize_free_text(question.get("stem")),
+            self._normalize_free_text(question.get("correct_answer")),
+            self._normalize_free_text(answer_text),
+        )
+        if not any(cache_key):
+            return
+        self._answer_eval_cache[cache_key] = (time.monotonic(), dict(result))
+        self._cache_trim(self._answer_eval_cache, self._answer_eval_cache_max_entries)
 
     def _resolve_display_name(self, student_id: str) -> Optional[str]:
         sid = str(student_id or "").strip()
@@ -548,6 +627,26 @@ class PeerSessionService:
         if not self.db or not user_id:
             return []
 
+        normalized_concept = _normalize_key(str(concept_id or ""))
+        normalized_topic = _normalize_key(topic)
+        normalized_course_id = str(course_id or "").strip().lower()
+        normalized_course_name = str(course_name or "").strip().lower()
+        cache_key = (
+            str(user_id).strip(),
+            normalized_concept,
+            normalized_topic,
+            normalized_course_id,
+            normalized_course_name,
+            int(limit),
+        )
+        if self._context_cache_ttl_sec > 0:
+            cached = self._context_cache.get(cache_key)
+            if cached:
+                now_mono = time.monotonic()
+                if (now_mono - cached[0]) <= self._context_cache_ttl_sec:
+                    return [dict(row) for row in cached[1]]
+                self._context_cache.pop(cache_key, None)
+
         col = self.db.collection(self.knowledge_chunks_collection)
         concept_candidates: List[str] = []
         if concept_id:
@@ -634,7 +733,11 @@ class PeerSessionService:
             if len(rows) >= limit:
                 break
 
-        return rows[:limit]
+        result = rows[:limit]
+        if self._context_cache_ttl_sec > 0:
+            self._context_cache[cache_key] = (time.monotonic(), [dict(row) for row in result])
+            self._cache_trim(self._context_cache, self._context_cache_max_entries)
+        return result
 
     @staticmethod
     def _format_context(chunks: List[Dict[str, str]], max_chars: int = 4000) -> str:
@@ -1346,11 +1449,12 @@ class PeerSessionService:
                 created_by,
                 selected_concept_id,
                 topic,
-                limit=8,
+                limit=self._round_context_limit,
                 course_id=course_id,
                 course_name=course_name,
             )
-        context_text = str(context_text or "").strip() or self._format_context(context_chunks)
+        context_text = str(context_text or "").strip() or self._format_context(context_chunks, max_chars=2400)
+        prompt_context = context_text[:2400]
 
         if not self.openai:
             return self._fallback_questions(
@@ -1417,7 +1521,7 @@ class PeerSessionService:
             f"Members (weakest first):\n{chr(10).join(members_desc)}\n\n"
             "Use the course context below when available. Keep questions faithful to it.\n"
             "If context is empty, generate high-quality domain-appropriate questions for the concept.\n\n"
-            f"Course context:\n{context_text or '(no context found)'}\n\n"
+            f"Course context:\n{prompt_context or '(no context found)'}\n\n"
             f"Generate exactly {len(sorted_members)} shared discussion questions (one question inspired by each member's preferred concept).\n"
             "Return ONLY JSON object: {\"questions\":[...]} with items:\n"
             "{"
@@ -1453,12 +1557,14 @@ class PeerSessionService:
             "- No markdown, no prose outside JSON."
         )
 
+        started = time.perf_counter()
         try:
             resp = self.openai.chat.completions.create(
-                model="gpt-5.2",
+                model=self._round_model,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_completion_tokens=1800,
+                max_completion_tokens=self._round_max_completion_tokens,
+                timeout=self._round_timeout_sec,
             )
             raw = resp.choices[0].message.content or "{}"
             parsed = json.loads(raw)
@@ -1482,6 +1588,9 @@ class PeerSessionService:
                 topic=topic,
                 preferred_concept_by_member=preferred_concept_by_member,
             )
+            elapsed = time.perf_counter() - started
+            if elapsed > 4.0:
+                print(f"[PeerSessionService] Round generation latency {elapsed:.2f}s (model={self._round_model})")
             return linked_questions
         except Exception as e:
             print(f"[PeerSessionService] AI question generation failed: {e}")
@@ -1781,14 +1890,16 @@ class PeerSessionService:
         prompt: str,
         *,
         max_completion_tokens: int,
+        timeout_sec: float,
     ) -> Dict[str, Any]:
         if not self.openai:
             raise RuntimeError("OpenAI client unavailable")
         resp = self.openai.chat.completions.create(
-            model="gpt-5.2",
+            model=self._eval_model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=max_completion_tokens,
+            timeout=timeout_sec,
         )
         raw = resp.choices[0].message.content or "{}"
         parsed = json.loads(raw)
@@ -1812,6 +1923,55 @@ class PeerSessionService:
             return True
         return False
 
+    @staticmethod
+    def _extract_mcq_choice_index(answer_text: str, options: List[str]) -> Optional[int]:
+        raw = str(answer_text or "").strip()
+        if not raw or not options:
+            return None
+
+        m = re.match(r"^\s*(?:option|choice)?\s*[\(\[]?([A-Za-z])[\)\].:\-]?\s*$", raw)
+        if m:
+            idx = ord(m.group(1).upper()) - ord("A")
+            if 0 <= idx < len(options):
+                return idx
+
+        m_num = re.match(r"^\s*(\d+)\s*$", raw)
+        if m_num:
+            idx = int(m_num.group(1)) - 1
+            if 0 <= idx < len(options):
+                return idx
+        return None
+
+    def _evaluate_mcq_answer(self, question: Dict[str, Any], answer_text: str) -> Dict[str, Any]:
+        options = self._normalize_mcq_options(question.get("options")) or []
+        expected = self._normalize_mcq_correct_answer(question.get("correct_answer"), options)
+
+        answer_raw = str(answer_text or "").strip()
+        picked_idx = self._extract_mcq_choice_index(answer_raw, options)
+        if picked_idx is not None and 0 <= picked_idx < len(options):
+            answer_raw = options[picked_idx]
+
+        answer_norm = self._normalize_free_text(answer_raw)
+        expected_norm = self._normalize_free_text(expected)
+        is_correct = bool(answer_norm and expected_norm and answer_norm == expected_norm)
+
+        explanation = str(question.get("explanation") or "").strip()
+        if is_correct:
+            feedback = explanation or "Correct choice."
+            hint = ""
+        else:
+            feedback = "That option does not match the best answer for this question."
+            hint = f"Re-check the option that best matches: {expected}" if expected else "Re-check the strongest option."
+
+        return {
+            "is_correct": is_correct,
+            "score": 1.0 if is_correct else 0.0,
+            "feedback": feedback,
+            "hint": hint,
+            "mistake_type": "normal" if is_correct else "conceptual",
+            "confidence": 1.0,
+        }
+
     def _evaluate_answer(
         self,
         question: Dict[str, Any],
@@ -1819,14 +1979,20 @@ class PeerSessionService:
         context_chunks: List[Dict[str, str]],
     ) -> Dict[str, Any]:
         """Evaluate answer quality and classify mistake type."""
+        cached = self._get_cached_answer_evaluation(question, answer_text)
+        if cached:
+            return cached
+
         if not self.openai:
-            return {
+            fallback = {
                 "is_correct": True,
                 "score": 0.7,
                 "feedback": "Answer received. AI evaluation unavailable.",
                 "hint": "",
                 "mistake_type": "normal",
             }
+            self._cache_answer_evaluation(question, answer_text, fallback)
+            return fallback
 
         rubric = {
             "key_points": self._coerce_string_list(question.get("key_points"), limit=4),
@@ -1863,9 +2029,11 @@ class PeerSessionService:
         )
 
         try:
+            started = time.perf_counter()
             parsed = self._call_peer_json_chat(
                 fast_prompt,
-                max_completion_tokens=260,
+                max_completion_tokens=self._eval_fast_max_completion_tokens,
+                timeout_sec=self._eval_fast_timeout_sec,
             )
             fast_score = _clamp(float(parsed.get("score", 0.0)))
             if self._should_escalate_peer_evaluation(
@@ -1901,8 +2069,12 @@ class PeerSessionService:
                 )
                 parsed = self._call_peer_json_chat(
                     deep_prompt,
-                    max_completion_tokens=360,
+                    max_completion_tokens=self._eval_deep_max_completion_tokens,
+                    timeout_sec=self._eval_deep_timeout_sec,
                 )
+            elapsed = time.perf_counter() - started
+            if elapsed > 2.0:
+                print(f"[PeerSessionService] Answer eval latency {elapsed:.2f}s (model={self._eval_model})")
         except Exception as e:
             print(f"[PeerSessionService] AI evaluation failed: {e}")
             parsed = {
@@ -1923,7 +2095,7 @@ class PeerSessionService:
         if is_correct:
             mistake_type = "normal"
 
-        return {
+        result = {
             "is_correct": is_correct,
             "score": score,
             "feedback": feedback,
@@ -1931,6 +2103,8 @@ class PeerSessionService:
             "mistake_type": mistake_type,
             "confidence": _clamp(_to_float(parsed.get("confidence"), 0.55)),
         }
+        self._cache_answer_evaluation(question, answer_text, result)
+        return result
 
     @staticmethod
     def _compute_boss_damage(score: float, is_correct: bool, mistake_type: str) -> float:
@@ -3181,16 +3355,20 @@ class PeerSessionService:
         if not concept_to_update:
             concept_to_update = "general_topic"
 
-        session_context_chunks, _ = self._ensure_session_evidence_pack(ref, data)
-        eval_context = session_context_chunks or self._fetch_concept_context(
-            student_id,
-            concept_to_update,
-            data.get("topic", concept_to_update),
-            limit=5,
-            course_id=data.get("course_id"),
-            course_name=data.get("course_name"),
-        )
-        evaluation = self._evaluate_answer(question, answer_text, eval_context)
+        question_type = str(question.get("type") or "open").strip().lower()
+        if question_type == "mcq":
+            evaluation = self._evaluate_mcq_answer(question, answer_text)
+        else:
+            session_context_chunks, _ = self._ensure_session_evidence_pack(ref, data)
+            eval_context = session_context_chunks or self._fetch_concept_context(
+                student_id,
+                concept_to_update,
+                data.get("topic", concept_to_update),
+                limit=4,
+                course_id=data.get("course_id"),
+                course_name=data.get("course_name"),
+            )
+            evaluation = self._evaluate_answer(question, answer_text, eval_context)
         is_correct = bool(evaluation.get("is_correct", False))
         mistake_type = str(evaluation.get("mistake_type", "normal")).strip().lower()
         if mistake_type not in {"normal", "careless", "conceptual"}:

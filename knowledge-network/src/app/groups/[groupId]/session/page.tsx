@@ -305,6 +305,7 @@ export default function PeerSessionPage() {
   const [completionRevealReady, setCompletionRevealReady] = useState(false);
   const lastBossAttackCountRef = useRef(0);
   const lastAutoQuestionIdRef = useRef<string>('');
+  const timeoutSyncKeyRef = useRef<string>('');
   const completionRevealTimerRef = useRef<number | null>(null);
   const lastCompletionKeyRef = useRef('');
   const forcedBossId = resolveBossCharacterId(session);
@@ -480,6 +481,7 @@ export default function PeerSessionPage() {
   useEffect(() => {
     lastBossAttackCountRef.current = 0;
     setBossAttackTrigger(0);
+    timeoutSyncKeyRef.current = '';
   }, [sessionId]);
 
   // ── Reset answer state when question changes ──────────────────────────
@@ -737,12 +739,28 @@ export default function PeerSessionPage() {
       : (session?.battle_outcome ?? 'pending');
   const bossDisplayCurrent = bossDefeated ? 0 : bossCurrent;
   const bossPct = Math.max(0, Math.min(100, (bossDisplayCurrent / bossMax) * 100));
-  const timeLimitSec = levelNumber >= 3 ? Number(session?.question_time_limit_sec ?? 120) : null;
+  const activeQuestionId = session?.questions?.[session.current_question_index]?.question_id ?? '';
+  const timeLimitSec = session?.status === 'active' && levelNumber >= 3 ? Number(session?.question_time_limit_sec ?? 120) : null;
   const questionRemainingSec =
     timeLimitSec && Number.isFinite(timeLimitSec)
       ? Math.max(0, timeLimitSec - questionElapsed)
       : null;
   const timerUrgent = questionRemainingSec !== null && questionRemainingSec <= 30;
+
+  useEffect(() => {
+    if (!session || session.status !== 'active') return;
+    if (!activeQuestionId) return;
+    if (questionRemainingSec === null || questionRemainingSec > 0) return;
+    const key = `${session.session_id}:${activeQuestionId}:${Number(session.boss_attack_count ?? 0)}`;
+    if (timeoutSyncKeyRef.current === key) return;
+    timeoutSyncKeyRef.current = key;
+    void fetchSession();
+  }, [
+    activeQuestionId,
+    fetchSession,
+    questionRemainingSec,
+    session,
+  ]);
 
   // Helper to get member display name
   const getMemberName = (memberId: string) => {
