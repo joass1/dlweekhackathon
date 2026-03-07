@@ -158,7 +158,7 @@ export default function GroupsPage() {
 
   return pageShell(
     <>
-      <Card className={`glow-card relative overflow-hidden ${glassCardClass} p-6 md:p-8 text-white`}>
+      <Card className={`glow-card relative overflow-hidden ${glassCardClass} p-6 md:p-8 mb-8 text-white`}>
         <GlowingEffect spread={240} glow={true} disabled={false} proximity={84} borderWidth={2} variant="cyan" />
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
