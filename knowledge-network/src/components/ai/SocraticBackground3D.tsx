@@ -1,9 +1,10 @@
 'use client';
 
-import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { TutorMarkdown } from '@/components/ai/TutorMarkdown';
 import { Typewriter } from '@/components/ui/typewriter';
 
@@ -52,7 +53,18 @@ function renderSpeechSections(
 
 function CharacterModel({ isSpeaking }: CharacterModelProps) {
   const gltf = useGLTF('/models/king.gltf');
-  const { actions } = useAnimations(gltf.animations, gltf.scene);
+  const modelScene = useMemo(() => {
+    const cloned = skeletonClone(gltf.scene) as THREE.Object3D;
+    cloned.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+    });
+    return cloned;
+  }, [gltf.scene]);
+  const { actions } = useAnimations(gltf.animations, modelScene);
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const headPitchRef = useRef(0);
@@ -101,7 +113,7 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
 
     fitGroupRef.current.scale.setScalar(scale);
     fitGroupRef.current.position.set(-center.x * scale, -center.y * scale - 1.753, -1.45);
-  }, [gltf]);
+  }, [modelScene]);
 
   useFrame(({ clock }, delta) => {
     if (!motionGroupRef.current) return;
@@ -153,7 +165,7 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
             shouldWaveRef.current = true;
           }}
         >
-          <primitive object={gltf.scene} />
+          <primitive object={modelScene} />
         </group>
       </group>
     </group>
@@ -256,8 +268,9 @@ export default function SocraticBackground3D({
     <BackgroundErrorBoundary>
       <div className="absolute inset-0 pointer-events-auto" aria-hidden>
         <Canvas
-          dpr={[1, 1.5]}
-          gl={{ alpha: true }}
+          dpr={[1, 1.35]}
+          gl={{ alpha: true, antialias: true, powerPreference: 'high-performance' }}
+          performance={{ min: 0.6 }}
           camera={{ position: [0, 0.5, 6], fov: 35 }}
           fallback={<StaticFallback />}
           style={{ pointerEvents: 'auto' }}

@@ -1,13 +1,25 @@
 'use client';
 
-import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 function AdventurerModel() {
   const gltf = useGLTF('/models/adventurer.gltf');
-  const { actions } = useAnimations(gltf.animations, gltf.scene);
+  const modelScene = useMemo(() => {
+    const cloned = skeletonClone(gltf.scene) as THREE.Object3D;
+    cloned.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+    });
+    return cloned;
+  }, [gltf.scene]);
+  const { actions } = useAnimations(gltf.animations, modelScene);
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const isWavingRef = useRef(false);
@@ -25,7 +37,7 @@ function AdventurerModel() {
 
     fitGroupRef.current.scale.setScalar(scale);
     fitGroupRef.current.position.set(-center.x * scale + 0.42, -center.y * scale - 0.95, -1.2);
-  }, [gltf]);
+  }, [modelScene]);
 
   useEffect(() => {
     const idle = actions?.Idle_Neutral ?? actions?.Idle;
@@ -103,7 +115,7 @@ function AdventurerModel() {
             shouldWaveRef.current = true;
           }}
         >
-          <primitive object={gltf.scene} />
+          <primitive object={modelScene} />
         </group>
       </group>
     </group>
@@ -153,8 +165,9 @@ export default function UploadCharacter3D({ className }: UploadCharacter3DProps)
     <ErrorBoundary>
       <div className={className ?? 'w-full h-[340px] pointer-events-auto'} aria-hidden>
         <Canvas
-          dpr={[1, 1.5]}
-          gl={{ alpha: true }}
+          dpr={[1, 1.35]}
+          gl={{ alpha: true, antialias: true, powerPreference: 'high-performance' }}
+          performance={{ min: 0.6 }}
           camera={{ position: [0, 0.75, 6], fov: 35 }}
           style={{ pointerEvents: 'auto' }}
         >

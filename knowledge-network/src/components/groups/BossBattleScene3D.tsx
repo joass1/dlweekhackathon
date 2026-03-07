@@ -456,7 +456,17 @@ function SciFiModel({
   scale?: number | [number, number, number];
 }) {
   const gltf = useGLTF(url);
-  const scene = useMemo(() => gltf.scene.clone(), [gltf.scene]);
+  const scene = useMemo(() => {
+    const cloned = gltf.scene.clone(true);
+    cloned.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+    });
+    return cloned;
+  }, [gltf.scene]);
   return (
     <primitive
       object={scene}
@@ -483,12 +493,13 @@ function BossModel({
   allowAmbientAttacks: boolean;
 }) {
   const gltf = useGLTF(preset.modelUrl);
+  const modelScene = useMemo(() => skeletonClone(gltf.scene) as THREE.Object3D, [gltf.scene]);
   const horseHead = useFBX('/models/horse_head.fbx');
   const weaponSciFiSword = useGLTF('/models/scifi/Sword_Bronze.gltf');
   const weaponFantasySword = useGLTF('/models/fantasy/Sword_Bronze.gltf');
   const weaponFantasyAxe = useGLTF('/models/fantasy/Axe_Bronze.gltf');
   const weaponUmmPistol = useFBX('/models/umm-weapons/pistol.fbx');
-  const { actions } = useAnimations(gltf.animations, gltf.scene);
+  const { actions } = useAnimations(gltf.animations, modelScene);
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const prevHealthRef = useRef<number>(healthCurrent);
@@ -509,7 +520,7 @@ function BossModel({
 
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
-    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const box = new THREE.Box3().setFromObject(modelScene);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
@@ -517,19 +528,19 @@ function BossModel({
     fitGroupRef.current.scale.setScalar(scale);
     fitGroupRef.current.position.set(-center.x * scale, -center.y * scale - 1.45, -0.8);
     swordAttachedRef.current = false;
-  }, [gltf]);
+  }, [modelScene]);
 
   useEffect(() => {
     restoreNodes(hiddenHeadNodesRef.current);
     hiddenHeadNodesRef.current = [];
-    removeNamedChild(gltf.scene, '__boss_head_swap__');
+    removeNamedChild(modelScene, '__boss_head_swap__');
 
     if (preset.headVariant !== 'horse') return;
 
-    const headTarget = findHeadTarget(gltf.scene);
-    const parent = headTarget ?? gltf.scene;
-    const headMeshes = collectHeadMeshes(gltf.scene, headTarget);
-    const placementBox = getHeadPlacementBox(gltf.scene, headMeshes);
+    const headTarget = findHeadTarget(modelScene);
+    const parent = headTarget ?? modelScene;
+    const headMeshes = collectHeadMeshes(modelScene, headTarget);
+    const placementBox = getHeadPlacementBox(modelScene, headMeshes);
     if (!placementBox) return;
 
     hiddenHeadNodesRef.current = hideNodes(headMeshes);
@@ -545,7 +556,7 @@ function BossModel({
       restoreNodes(hiddenHeadNodesRef.current);
       hiddenHeadNodesRef.current = [];
     };
-  }, [gltf.scene, horseHead, preset.headVariant]);
+  }, [horseHead, modelScene, preset.headVariant]);
 
   useEffect(() => {
     const idle = actions?.[preset.idleClip] ?? actions?.Idle_Neutral ?? actions?.Idle;
@@ -647,8 +658,8 @@ function BossModel({
   useFrame(({ clock }) => {
     // Attach weapon on first frame when world matrices are ready
     if (!swordAttachedRef.current) {
-      const attachTarget = findHandTarget(gltf.scene, preset.weaponId) ?? gltf.scene;
-      const fallback = attachTarget === gltf.scene;
+      const attachTarget = findHandTarget(modelScene, preset.weaponId) ?? modelScene;
+      const fallback = attachTarget === modelScene;
 
       if (attachTarget) {
         const existing = attachTarget.getObjectByName('__boss_sword__');
@@ -667,7 +678,7 @@ function BossModel({
 
           const weapon = source.clone();
           const transform = getWeaponTransform(preset.weaponId);
-          const charBox = new THREE.Box3().setFromObject(gltf.scene);
+          const charBox = new THREE.Box3().setFromObject(modelScene);
           const charSize = charBox.getSize(new THREE.Vector3());
           const charHeight = Math.max(charSize.y, 1);
           const weaponBox = new THREE.Box3().setFromObject(weapon);
@@ -778,7 +789,7 @@ function BossModel({
   return (
     <group ref={motionGroupRef}>
       <group ref={fitGroupRef}>
-        <primitive object={gltf.scene} />
+        <primitive object={modelScene} />
       </group>
     </group>
   );
@@ -1033,7 +1044,12 @@ export default function BossBattleScene3D({
         />
       )}
       <div className="relative z-10 h-full w-full">
-        <Canvas dpr={[1, 1.5]} gl={{ alpha: true }} camera={{ position: [0, 0.35, 4.6], fov: 33 }}>
+        <Canvas
+          dpr={[1, 1.35]}
+          gl={{ alpha: true, antialias: true, powerPreference: 'high-performance' }}
+          performance={{ min: 0.6 }}
+          camera={{ position: [0, 0.35, 4.6], fov: 33 }}
+        >
           <ambientLight intensity={0.5} />
           <directionalLight position={[4, 5, 4]} intensity={1.4} />
           <directionalLight position={[-4, 2, -2]} intensity={0.6} color="#ff6b6b" />
