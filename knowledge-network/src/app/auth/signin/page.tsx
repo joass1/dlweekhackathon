@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
@@ -29,7 +29,7 @@ import { Mail, Loader2, Phone, ShieldCheck } from "lucide-react";
 type Tab = "signin" | "signup";
 type MfaStep = "none" | "verify-email" | "enroll-phone" | "enroll-code" | "challenge-code";
 
-/* ── Shared sub-components for the dark glassmorphic theme ── */
+/* â”€â”€ Shared sub-components for the dark glassmorphic theme â”€â”€ */
 
 function GlassCard({ children }: { children: React.ReactNode }) {
   return (
@@ -99,7 +99,36 @@ function GhostButton({ children, ...props }: React.ButtonHTMLAttributes<HTMLButt
   );
 }
 
-/* ── Main page ── */
+/* â”€â”€ Main page â”€â”€ */
+
+function AuthPageWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="flex min-h-screen items-center justify-center px-4"
+      style={{
+        backgroundImage: "url('/backgrounds/dashboardback2.png')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }}
+    >
+      <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-md">
+        <div className="flex flex-col items-center mb-8">
+          <Image
+            src="/logo-images/logo.png"
+            alt="Mentora"
+            width={320}
+            height={100}
+            className="h-20 w-auto mb-3 drop-shadow-[0_0_20px_rgba(3,178,230,0.3)]"
+            priority
+          />
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function SignInPage() {
   const router = useRouter();
@@ -200,7 +229,7 @@ export default function SignInPage() {
     }
   }, [router]);
 
-  // ── Helpers ──────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function isMultiFactorError(err: unknown): err is MultiFactorError {
     return (
@@ -211,7 +240,7 @@ export default function SignInPage() {
     );
   }
 
-  // ── Auth handlers ────────────────────────────────────────
+  // â”€â”€ Auth handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -220,7 +249,7 @@ export default function SignInPage() {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
       if (!cred.user.emailVerified) {
-        // Block unverified users — show verification screen
+        // Block unverified users â€” show verification screen
         setSkipRedirect(true);
         setMfaStep("verify-email");
         setMessage("Please verify your email before continuing. Check your inbox for the verification link.");
@@ -491,35 +520,8 @@ export default function SignInPage() {
     }
   };
 
-  // ── Shared page wrapper ────────────────────────────────────
-  const PageWrapper = ({ children }: { children: React.ReactNode }) => (
-    <div
-      className="flex min-h-screen items-center justify-center px-4"
-      style={{
-        backgroundImage: "url('/backgrounds/dashboardback2.png')",
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }}
-    >
-      <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" />
-      <div className="relative z-10 w-full max-w-md">
-        <div className="flex flex-col items-center mb-8">
-          <Image
-            src="/logo-images/logo.png"
-            alt="Mentora"
-            width={320}
-            height={100}
-            className="h-20 w-auto mb-3 drop-shadow-[0_0_20px_rgba(3,178,230,0.3)]"
-            priority
-          />
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-
-  // ── Render ───────────────────────────────────────────────
+  // â”€â”€ Shared page wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   if (authLoading) {
     return (
@@ -532,7 +534,7 @@ export default function SignInPage() {
   // Email verification step
   if (mfaStep === "verify-email") {
     return (
-      <PageWrapper>
+      <AuthPageWrapper>
         <GlassCard>
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-2 text-lg font-semibold text-white">
@@ -548,7 +550,7 @@ export default function SignInPage() {
           <div className="space-y-3">
             <PrimaryButton onClick={handleCheckEmailVerified} disabled={loading}>
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2 inline" /> : null}
-              I&apos;ve Verified My Email — Continue
+              I&apos;ve Verified My Email â€” Continue
             </PrimaryButton>
             <OutlineButton onClick={handleResendVerification} disabled={loading}>
               Resend Verification Email
@@ -567,14 +569,14 @@ export default function SignInPage() {
             </GhostButton>
           </div>
         </GlassCard>
-      </PageWrapper>
+      </AuthPageWrapper>
     );
   }
 
   // MFA enrollment (phone setup after signup)
   if (mfaStep === "enroll-phone" || mfaStep === "enroll-code") {
     return (
-      <PageWrapper>
+      <AuthPageWrapper>
         <GlassCard>
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-2 text-lg font-semibold text-white">
@@ -639,14 +641,14 @@ export default function SignInPage() {
           )}
         </GlassCard>
         <div id="recaptcha-container" />
-      </PageWrapper>
+      </AuthPageWrapper>
     );
   }
 
   // MFA challenge (during sign-in)
   if (mfaStep === "challenge-code") {
     return (
-      <PageWrapper>
+      <AuthPageWrapper>
         <GlassCard>
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-2 text-lg font-semibold text-white">
@@ -686,14 +688,14 @@ export default function SignInPage() {
           </div>
         </GlassCard>
         <div id="recaptcha-container" />
-      </PageWrapper>
+      </AuthPageWrapper>
     );
   }
 
-  // ── Default sign-in / sign-up form ──────────────────────
+  // â”€â”€ Default sign-in / sign-up form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   return (
-    <PageWrapper>
+    <AuthPageWrapper>
       <GlassCard>
         {/* Tab switcher */}
         <div className="flex rounded-full bg-white/5 border border-white/10 p-1 mb-6">
@@ -891,6 +893,7 @@ export default function SignInPage() {
 
       {/* Invisible reCAPTCHA container */}
       <div id="recaptcha-container" />
-    </PageWrapper>
+    </AuthPageWrapper>
   );
 }
+
