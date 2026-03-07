@@ -422,6 +422,64 @@ Return ONLY valid JSON:
             return []
         return list(nx.ancestors(self._graph, concept_id))
 
+    def remove_nodes_by_course(self, course_id: str) -> int:
+        """Remove all KG nodes belonging to a course. Returns count removed."""
+        to_remove = [
+            n for n in self._graph.nodes()
+            if str(self._graph.nodes[n].get("course_id") or "").strip() == str(course_id).strip()
+        ]
+        for node_id in to_remove:
+            for neighbor in list(self._graph.predecessors(node_id)) + list(self._graph.successors(node_id)):
+                if self._fs_store:
+                    try:
+                        self._fs_store.delete_edge(neighbor, node_id)
+                        self._fs_store.delete_edge(node_id, neighbor)
+                    except Exception:
+                        pass
+            self._graph.remove_node(node_id)
+            if self._fs_store:
+                try:
+                    self._fs_store.delete_concept(node_id)
+                except Exception:
+                    pass
+        return len(to_remove)
+
+    def remove_nodes_by_topic(self, topic_id: str) -> int:
+        """Remove topic_id from all nodes. Delete nodes that have no remaining topics."""
+        to_remove = []
+        to_update = []
+        for n in self._graph.nodes():
+            data = self._graph.nodes[n]
+            topic_ids = list(data.get("topic_ids") or data.get("topicIds") or [])
+            if topic_id not in topic_ids:
+                continue
+            remaining = [t for t in topic_ids if t != topic_id]
+            if not remaining:
+                to_remove.append(n)
+            else:
+                to_update.append((n, remaining))
+
+        for node_id in to_remove:
+            for neighbor in list(self._graph.predecessors(node_id)) + list(self._graph.successors(node_id)):
+                if self._fs_store:
+                    try:
+                        self._fs_store.delete_edge(neighbor, node_id)
+                        self._fs_store.delete_edge(node_id, neighbor)
+                    except Exception:
+                        pass
+            self._graph.remove_node(node_id)
+            if self._fs_store:
+                try:
+                    self._fs_store.delete_concept(node_id)
+                except Exception:
+                    pass
+
+        for node_id, remaining in to_update:
+            self._graph.nodes[node_id]["topic_ids"] = remaining
+            self._persist_concept(node_id)
+
+        return len(to_remove)
+
     def get_graph_data(self) -> Dict[str, Any]:
         """Serialize the entire graph as {nodes, links} for D3 consumption."""
         nodes = [self._node_dict(n) for n in self._graph.nodes()]

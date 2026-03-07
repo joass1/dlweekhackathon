@@ -789,6 +789,14 @@ async def delete_course(course_id: str, student_id: str = Depends(get_student_id
         except Exception as exc:
             print(f"Warning: cascade delete of user_topics failed for course={normalized_course_id}: {exc}")
 
+        # Remove KG nodes belonging to this course
+        try:
+            user_kg_engine = _get_user_kg_engine(student_id)
+            removed = user_kg_engine.remove_nodes_by_course(normalized_course_id)
+            print(f"Removed {removed} KG nodes for course={normalized_course_id}")
+        except Exception as exc:
+            print(f"Warning: KG node removal failed for course={normalized_course_id}: {exc}")
+
         return {"status": "deleted", "course_id": normalized_course_id}
     except HTTPException:
         raise
@@ -2276,6 +2284,14 @@ async def delete_user_topic(doc_id: str, student_id: str = Depends(get_student_i
             batch.commit()
         except Exception as e:
             print(f"Warning: cascade delete failed for topic={topic_alias}: {e}")
+    # Remove KG nodes belonging to this topic
+    if topic_alias:
+        try:
+            user_kg_engine = _get_user_kg_engine(student_id)
+            removed = user_kg_engine.remove_nodes_by_topic(topic_alias)
+            print(f"Removed {removed} KG nodes for topic={topic_alias}")
+        except Exception as e:
+            print(f"Warning: KG node removal failed for topic={topic_alias}: {e}")
     ref.delete()
     return {"status": "deleted", "doc_id": doc_id}
 

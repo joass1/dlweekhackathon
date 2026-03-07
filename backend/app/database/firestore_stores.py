@@ -198,6 +198,9 @@ class FirestoreKnowledgeGraphStore:
     def get_all_edges(self) -> List[dict]:
         return [doc.to_dict() for doc in self._base.collection("edges").stream()]
 
+    def delete_concept(self, concept_id: str) -> None:
+        self._base.collection("concepts").document(concept_id).delete()
+
     def delete_edge(self, source: str, target: str) -> None:
         edge_id = f"{source}__{target}"
         self._base.collection("edges").document(edge_id).delete()
