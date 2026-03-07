@@ -753,10 +753,10 @@ export default function Page() {
               <select
                 value={actionCourse}
                 onChange={e => setActionCourse(e.target.value)}
-                className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white w-auto"
+                className="text-sm p-1.5 border border-white/20 rounded-lg bg-slate-800 text-white w-auto"
               >
                 {courses.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id} className="bg-slate-800 text-white">{c.name}</option>
                 ))}
               </select>
             </div>
@@ -1077,23 +1077,23 @@ export default function Page() {
                 <select
                   value={selectedCourse}
                   onChange={(event) => setSelectedCourse(event.target.value)}
-                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white"
+                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-slate-800 text-white"
                 >
                   {courses.map((course) => (
-                    <option key={course.id} value={course.id}>{course.name}</option>
+                    <option key={course.id} value={course.id} className="bg-slate-800 text-white">{course.name}</option>
                   ))}
                 </select>
                 <select
                   value={selectedTopic}
                   onChange={(event) => setSelectedTopic(event.target.value)}
-                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white min-w-[180px]"
+                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-slate-800 text-white min-w-[180px]"
                   title="Filter by topic"
                 >
                   <option value="all">
                     {selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`}
                   </option>
                   {visibleTopics.map((topic) => (
-                    <option key={`${topic.courseId}-${topic.id}`} value={topic.id}>
+                    <option key={`${topic.courseId}-${topic.id}`} value={topic.id} className="bg-slate-800 text-white">
                       {topic.name}
                     </option>
                   ))}
