@@ -769,14 +769,30 @@ export default function PeerSessionPage() {
     const incorrectAnswers = session.answers.filter((a) => !a.is_correct);
     const myAnswers = session.answers.filter((a) => a.submitted_by === studentId);
     const myTimeoutRows = timeoutRows.filter((row) => String(row.student_id || '') === studentId);
-    const myNetMasteryDelta =
-      myAnswers.reduce((sum, answer) => sum + Number(answer.mastery_delta ?? 0), 0) +
-      myTimeoutRows.reduce((sum, row) => sum + Number(row.mastery_delta ?? 0), 0);
-    const myLatestMasteryEvent = [...myAnswers]
-      .filter((answer) => typeof answer.updated_mastery === 'number')
+    const myAnswerMasteryDelta = myAnswers.reduce((sum, answer) => sum + Number(answer.mastery_delta ?? 0), 0);
+    const myTimeoutMasteryDelta = myTimeoutRows.reduce((sum, row) => sum + Number(row.mastery_delta ?? 0), 0);
+    const myNetMasteryDelta = myAnswerMasteryDelta + myTimeoutMasteryDelta;
+    const myLatestMasteryEvent = [
+      ...myAnswers
+        .filter((answer) => typeof answer.updated_mastery === 'number')
+        .map((answer) => ({
+          updated_mastery: Number(answer.updated_mastery ?? 0),
+          mastery_status: answer.mastery_status ?? null,
+          concept_id: answer.concept_id ?? null,
+          timestamp: new Date((answer as { submitted_at?: string }).submitted_at || 0).getTime(),
+        })),
+      ...myTimeoutRows
+        .filter((row) => typeof row.updated_mastery === 'number')
+        .map((row) => ({
+          updated_mastery: Number(row.updated_mastery ?? 0),
+          mastery_status: typeof row.mastery_status === 'string' ? row.mastery_status : null,
+          concept_id: typeof row.concept_id === 'string' ? row.concept_id : null,
+          timestamp: new Date(String(row.applied_at || 0)).getTime(),
+        })),
+    ]
       .sort((a, b) => {
-        const aTime = new Date((a as { submitted_at?: string }).submitted_at || 0).getTime();
-        const bTime = new Date((b as { submitted_at?: string }).submitted_at || 0).getTime();
+        const aTime = Number.isFinite(a.timestamp) ? a.timestamp : 0;
+        const bTime = Number.isFinite(b.timestamp) ? b.timestamp : 0;
         return bTime - aTime;
       })[0];
 
@@ -857,6 +873,39 @@ export default function PeerSessionPage() {
                     </div>
                   )}
                 </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2">
+                    <p className="text-xs uppercase tracking-wide text-emerald-200/80">Answer gains</p>
+                    <p className={`mt-1 text-sm font-semibold ${myAnswerMasteryDelta >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {myAnswerMasteryDelta >= 0 ? '+' : ''}{(myAnswerMasteryDelta * 100).toFixed(1)} pts
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2">
+                    <p className="text-xs uppercase tracking-wide text-amber-100/80">Timeout penalties</p>
+                    <p className={`mt-1 text-sm font-semibold ${myTimeoutMasteryDelta >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {myTimeoutMasteryDelta >= 0 ? '+' : ''}{(myTimeoutMasteryDelta * 100).toFixed(1)} pts
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-3 py-2">
+                    <p className="text-xs uppercase tracking-wide text-cyan-100/80">Net shift</p>
+                    <p className={`mt-1 text-sm font-semibold ${myNetMasteryDelta >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {myNetMasteryDelta >= 0 ? '+' : ''}{(myNetMasteryDelta * 100).toFixed(1)} pts
+                    </p>
+                  </div>
+                </div>
+                {myTimeoutRows.length > 0 && (
+                  <div className="mt-4 space-y-2 rounded-xl border border-amber-400/15 bg-amber-500/[0.08] p-3">
+                    <p className="text-xs uppercase tracking-wide text-amber-100/80">Applied timeout penalties</p>
+                    {myTimeoutRows.map((row, idx) => (
+                      <p key={`${String(row.question_id || 'timeout')}-${idx}`} className="text-xs text-white/70">
+                        {typeof row.mastery_delta === 'number' && Number(row.mastery_delta) < 0
+                          ? `${(Number(row.mastery_delta) * 100).toFixed(1)} pts`
+                          : `${(Number(row.mastery_delta ?? 0) * 100).toFixed(1)} pts`}
+                        {' '}on {getConceptLabel(String(row.concept_id || 'current concept'))}
+                      </p>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
