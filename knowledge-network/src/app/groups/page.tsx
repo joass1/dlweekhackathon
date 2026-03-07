@@ -119,7 +119,7 @@ export default function GroupsPage() {
     <div className="relative min-h-full overflow-hidden">
       <div
         className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+        style={{ backgroundImage: "url('/backgrounds/peerhubbackground.png')" }}
         aria-hidden
       />
       <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
@@ -182,7 +182,9 @@ export default function GroupsPage() {
                       {s.topic}
                     </CardTitle>
                     <p className="text-xs text-white/60">
-                      {s.status === 'waiting' ? 'Waiting for players...' : 'In progress'} &middot; {s.members.length}/{s.expected_members} joined &middot; {s.question_count} questions
+                      {s.status === 'waiting' ? 'Waiting for players...' : 'In progress'}
+                      {s.level ? ` · Level ${s.level}` : ''}
+                      {' '}· {s.members.length}/{s.expected_members} joined · {s.question_count} questions
                     </p>
                   </CardHeader>
                   <CardContent>

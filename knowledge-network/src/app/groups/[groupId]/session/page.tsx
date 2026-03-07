@@ -43,6 +43,25 @@ interface KGNodeOption {
   title: string;
 }
 
+type BossCharacterId = 'punk' | 'spacesuit' | 'swat' | 'suit';
+
+const LEVEL_TO_BOSS: Record<number, BossCharacterId> = {
+  1: 'punk',
+  2: 'spacesuit',
+  3: 'swat',
+  4: 'suit',
+};
+
+function resolveBossCharacterId(session: SessionState | null): BossCharacterId | undefined {
+  const explicit = session?.boss_character_id;
+  if (explicit === 'punk' || explicit === 'spacesuit' || explicit === 'swat' || explicit === 'suit') {
+    return explicit;
+  }
+  const level = Number(session?.level);
+  if (!Number.isFinite(level)) return undefined;
+  return LEVEL_TO_BOSS[level];
+}
+
 // ── Glass card style ──────────────────────────────────────────────────────
 const glass = 'rounded-2xl border border-white/[0.08] bg-black/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]';
 const glassLight = 'rounded-2xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-xl';
@@ -84,6 +103,7 @@ export default function PeerSessionPage() {
   const [selectedConceptId, setSelectedConceptId] = useState('');
   const [advanceError, setAdvanceError] = useState<string | null>(null);
   const [videoCollapsed, setVideoCollapsed] = useState(false);
+  const forcedBossId = resolveBossCharacterId(session);
 
   // ── Poll session state every 3s ──────────────────────────────────────
 
@@ -373,7 +393,12 @@ export default function PeerSessionPage() {
     <div className="fixed inset-0 bg-slate-950 overflow-hidden text-white">
       {/* ── Fullscreen 3D Boss Background ─────────────────────────────── */}
       <div className="absolute inset-0 z-0">
-        <BossBattleScene3D healthCurrent={bossCurrent} healthMax={bossMax} />
+        <BossBattleScene3D
+          healthCurrent={bossCurrent}
+          healthMax={bossMax}
+          lobbyId={session.session_id || sessionId}
+          forcedBossId={forcedBossId}
+        />
       </div>
 
       {/* ── Ambient glow effects ──────────────────────────────────────── */}

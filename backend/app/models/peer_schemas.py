@@ -56,6 +56,7 @@ class CreateSessionRequest(BaseModel):
     concept_id: Optional[str] = None
     course_id: Optional[str] = None
     course_name: Optional[str] = None
+    level: int = Field(default=1, ge=1, le=4)
     member_profiles: List[MemberProfile]
 
 
@@ -83,6 +84,8 @@ class SessionStateResponse(BaseModel):
     session_id: str
     hub_id: str
     topic: str
+    level: Optional[int] = None
+    boss_character_id: Optional[str] = None
     selected_concept_id: Optional[str] = None
     course_id: Optional[str] = None
     course_name: Optional[str] = None

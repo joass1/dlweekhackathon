@@ -19,6 +19,13 @@ from openai import OpenAI
 
 from app.services.adaptive_engine import AdaptiveEngine, ConceptState
 
+LEVEL_TO_BOSS_CHARACTER: Dict[int, str] = {
+    1: "punk",
+    2: "spacesuit",
+    3: "swat",
+    4: "suit",
+}
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -73,6 +80,20 @@ def _status_from_mastery(mastery: float) -> str:
     if mastery > 0:
         return "weak"
     return "not_started"
+
+
+def _normalize_level(value: Any, default: int = 1) -> int:
+    try:
+        level = int(value)
+    except (TypeError, ValueError):
+        return default
+    if level < 1 or level > 4:
+        return default
+    return level
+
+
+def _boss_character_for_level(level: int) -> str:
+    return LEVEL_TO_BOSS_CHARACTER.get(level, LEVEL_TO_BOSS_CHARACTER[1])
 
 
 class PeerSessionService:
@@ -797,6 +818,7 @@ class PeerSessionService:
         concept_id: Optional[str],
         course_id: Optional[str],
         course_name: Optional[str],
+        level: int,
         member_profiles: List[Dict[str, Any]],
         created_by: str,
     ) -> Dict[str, Any]:
@@ -847,10 +869,14 @@ class PeerSessionService:
         now = _utc_now()
         total_expected_answers = max(1, max(2, len(normalized_profiles)) * max(1, len(questions)))
         boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
+        normalized_level = _normalize_level(level, default=1)
+        boss_character_id = _boss_character_for_level(normalized_level)
         session_doc = {
             "session_id": session_id,
             "hub_id": hub_id,
             "topic": resolved_topic,
+            "level": normalized_level,
+            "boss_character_id": boss_character_id,
             "selected_concept_id": resolved_concept_id,
             "course_id": resolved_course_id,
             "course_name": resolved_course_name,
@@ -988,6 +1014,21 @@ class PeerSessionService:
                     "boss_defeated": data["boss_defeated"],
                 }
             )
+
+        raw_level = data.get("level", None)
+        if raw_level is not None:
+            normalized_level = _normalize_level(raw_level, default=1)
+            expected_boss_character = _boss_character_for_level(normalized_level)
+            stored_boss_character = str(data.get("boss_character_id") or "").strip()
+            data["level"] = normalized_level
+            data["boss_character_id"] = expected_boss_character
+            if raw_level != normalized_level or stored_boss_character != expected_boss_character:
+                ref.update(
+                    {
+                        "level": normalized_level,
+                        "boss_character_id": expected_boss_character,
+                    }
+                )
 
         return data
 
@@ -1289,6 +1330,8 @@ class PeerSessionService:
                         "session_id": data.get("session_id"),
                         "hub_id": data.get("hub_id"),
                         "topic": data.get("topic"),
+                        "level": data.get("level"),
+                        "boss_character_id": data.get("boss_character_id"),
                         "course_id": data.get("course_id"),
                         "course_name": data.get("course_name"),
                         "status": data.get("status"),

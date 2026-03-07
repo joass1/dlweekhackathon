@@ -449,6 +449,7 @@ export default function Page() {
     }
 
     const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     const loadRecommendation = async () => {
       setRecommendationPending(true);
       try {
@@ -483,6 +484,7 @@ export default function Page() {
         setAiRecommendation(null);
         setRecommendationSource('heuristic');
       } finally {
+        clearTimeout(timeoutId);
         if (!controller.signal.aborted) {
           setRecommendationPending(false);
         }
@@ -491,7 +493,10 @@ export default function Page() {
 
     void loadRecommendation();
 
-    return () => controller.abort();
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [
     actionAttentionTotal,
     actionCourse,
