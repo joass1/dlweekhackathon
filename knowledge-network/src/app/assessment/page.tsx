@@ -272,17 +272,17 @@ export default function AssessmentSelectionPage() {
         {!loading && !error && concepts.length > 0 && !selectedCourse ? (
           <div>
             <h2 className="text-xl font-semibold mb-4 text-white">Select A Course</h2>
-            <div className="grid md:grid-cols-3 gap-6">
+            <div className="grid md:grid-cols-3 md:auto-rows-fr gap-6">
               {coursesWithCounts.map((course) => (
                 <button
                   key={course.id}
-                  className={`glow-card relative text-left ${glassCardClass} overflow-hidden transition-all ${
+                  className={`glow-card relative h-full text-left ${glassCardClass} overflow-hidden transition-all flex flex-col ${
                     course.topicCount > 0 ? 'hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] hover:-translate-y-0.5' : 'opacity-70'
                   }`}
                   onClick={() => setSelectedCourse(course.id)}
                 >
                   <GlowingEffect spread={40} glow={true} disabled={false} proximity={64} inactiveZone={0.01} borderWidth={2} />
-                  <div className="p-6">
+                  <div className="p-6 flex-1">
                     <h3 className="text-xl font-semibold mb-2 text-white">{course.name}</h3>
                     <p className="text-sm text-white/75">
                       {course.topicCount} topic{course.topicCount === 1 ? '' : 's'} ready
@@ -320,14 +320,14 @@ export default function AssessmentSelectionPage() {
                 No topics found for this course yet.
               </div>
             ) : (
-              <div className="grid md:grid-cols-3 gap-6">
+              <div className="grid md:grid-cols-3 md:auto-rows-fr gap-6">
                 {selectedCourseConcepts.map((concept) => (
                   <div
                     key={concept.id}
-                    className={`glow-card relative ${glassCardClass} overflow-hidden hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] transition-all`}
+                    className={`glow-card relative h-full ${glassCardClass} overflow-hidden hover:shadow-[0_28px_70px_-24px_rgba(2,6,23,0.95)] transition-all flex flex-col`}
                   >
                     <GlowingEffect spread={40} glow={true} disabled={false} proximity={64} inactiveZone={0.01} borderWidth={2} />
-                    <div className="p-6">
+                    <div className="p-6 flex-1">
                       <h3 className="text-xl font-semibold mb-2 text-white">{concept.title}</h3>
                       <p className="text-white/75 mb-3">{concept.category}</p>
                       <div className="flex items-center justify-between text-sm text-white/70">
@@ -385,5 +385,4 @@ export default function AssessmentSelectionPage() {
     </div>
   );
 }
-
 

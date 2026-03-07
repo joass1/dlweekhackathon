@@ -436,8 +436,7 @@ export default function UploadPage() {
         </Card>
       </div>
 
-      <UploadCharacter3D className="pointer-events-none absolute bottom-4 right-4 z-20 h-[320px] w-[260px] transform -translate-y-[20%] block" />
+      <UploadCharacter3D className="absolute bottom-4 right-4 z-20 h-[320px] w-[260px] transform -translate-y-[20%] block cursor-pointer" />
     </div>
   );
 }
-

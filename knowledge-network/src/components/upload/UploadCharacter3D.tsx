@@ -11,7 +11,7 @@ function AdventurerModel() {
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const isWavingRef = useRef(false);
-  const nextWaveAtRef = useRef(3);
+  const shouldWaveRef = useRef(false);
 
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
@@ -30,26 +30,30 @@ function AdventurerModel() {
   useEffect(() => {
     const idle = actions?.Idle_Neutral ?? actions?.Idle;
     const wave = actions?.Wave;
-    if (!idle || !wave) return;
+    if (!idle) return;
 
     idle.reset();
     idle.setLoop(THREE.LoopRepeat, Infinity);
     idle.clampWhenFinished = false;
     idle.fadeIn(0.2).play();
-
-    wave.reset();
-    wave.enabled = true;
-    wave.setLoop(THREE.LoopOnce, 1);
-    wave.clampWhenFinished = true;
-    wave.stop();
     isWavingRef.current = false;
-    nextWaveAtRef.current = 3;
+    shouldWaveRef.current = false;
+
+    if (wave) {
+      wave.reset();
+      wave.enabled = true;
+      wave.setLoop(THREE.LoopOnce, 1);
+      wave.clampWhenFinished = true;
+      wave.stop();
+    }
 
     return () => {
       idle.fadeOut(0.2);
       idle.stop();
-      wave.fadeOut(0.2);
-      wave.stop();
+      if (wave) {
+        wave.fadeOut(0.2);
+        wave.stop();
+      }
     };
   }, [actions]);
 
@@ -69,7 +73,8 @@ function AdventurerModel() {
 
     if (!idle || !wave) return;
 
-    if (!isWavingRef.current && t >= nextWaveAtRef.current) {
+    if (!isWavingRef.current && shouldWaveRef.current) {
+      shouldWaveRef.current = false;
       isWavingRef.current = true;
       idle.fadeOut(0.15);
       wave.reset();
@@ -83,7 +88,6 @@ function AdventurerModel() {
         wave.stop();
         idle.reset().fadeIn(0.15).play();
         isWavingRef.current = false;
-        nextWaveAtRef.current = t + 3;
       }
     }
   });
@@ -91,7 +95,14 @@ function AdventurerModel() {
   return (
     <group>
       <group ref={motionGroupRef}>
-        <group ref={fitGroupRef}>
+        <group
+          ref={fitGroupRef}
+          onPointerEnter={(event) => {
+            event.stopPropagation();
+            if (isWavingRef.current || shouldWaveRef.current) return;
+            shouldWaveRef.current = true;
+          }}
+        >
           <primitive object={gltf.scene} />
         </group>
       </group>
@@ -140,12 +151,12 @@ interface UploadCharacter3DProps {
 export default function UploadCharacter3D({ className }: UploadCharacter3DProps) {
   return (
     <ErrorBoundary>
-      <div className={className ?? 'w-full h-[340px] pointer-events-none'} aria-hidden>
+      <div className={className ?? 'w-full h-[340px] pointer-events-auto'} aria-hidden>
         <Canvas
           dpr={[1, 1.5]}
           gl={{ alpha: true }}
           camera={{ position: [0, 0.75, 6], fov: 35 }}
-          style={{ pointerEvents: 'none' }}
+          style={{ pointerEvents: 'auto' }}
         >
           <ambientLight intensity={0.9} />
           <directionalLight position={[4, 5, 4]} intensity={1.25} />

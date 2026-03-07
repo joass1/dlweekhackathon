@@ -56,19 +56,36 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const headPitchRef = useRef(0);
+  const isWavingRef = useRef(false);
+  const shouldWaveRef = useRef(false);
 
   useEffect(() => {
     const idleNeutral = actions?.Idle_Neutral ?? actions?.Idle;
+    const wave = actions?.Wave;
     if (!idleNeutral) return;
 
     idleNeutral.reset();
     idleNeutral.setLoop(THREE.LoopRepeat, Infinity);
     idleNeutral.clampWhenFinished = false;
     idleNeutral.fadeIn(0.25).play();
+    isWavingRef.current = false;
+    shouldWaveRef.current = false;
+
+    if (wave) {
+      wave.reset();
+      wave.enabled = true;
+      wave.setLoop(THREE.LoopOnce, 1);
+      wave.clampWhenFinished = true;
+      wave.stop();
+    }
 
     return () => {
       idleNeutral.fadeOut(0.2);
       idleNeutral.stop();
+      if (wave) {
+        wave.fadeOut(0.2);
+        wave.stop();
+      }
     };
   }, [actions]);
 
@@ -89,6 +106,8 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
   useFrame(({ clock }, delta) => {
     if (!motionGroupRef.current) return;
     const t = clock.getElapsedTime();
+    const idleNeutral = actions?.Idle_Neutral ?? actions?.Idle;
+    const wave = actions?.Wave;
     const breathe = 1 + Math.sin(t * 0.7) * 0.0005;
     const sway = Math.sin(t * 0.22) * 0.0006;
     const bob = Math.sin(t * 0.3) * 0.0005;
@@ -101,12 +120,39 @@ function CharacterModel({ isSpeaking }: CharacterModelProps) {
     const targetPitch = isSpeaking ? Math.sin(t * 4.2) * 0.004 : 0;
     headPitchRef.current += (targetPitch - headPitchRef.current) * Math.min(1, delta * 8);
     motionGroupRef.current.rotation.x = headPitchRef.current;
+
+    if (!idleNeutral || !wave) return;
+
+    if (!isWavingRef.current && shouldWaveRef.current) {
+      shouldWaveRef.current = false;
+      isWavingRef.current = true;
+      idleNeutral.fadeOut(0.18);
+      wave.reset();
+      wave.fadeIn(0.18).play();
+      return;
+    }
+
+    if (isWavingRef.current) {
+      const duration = wave.getClip().duration;
+      if (wave.time >= duration - 0.03) {
+        wave.stop();
+        idleNeutral.reset().fadeIn(0.18).play();
+        isWavingRef.current = false;
+      }
+    }
   });
 
   return (
     <group>
       <group ref={motionGroupRef}>
-        <group ref={fitGroupRef}>
+        <group
+          ref={fitGroupRef}
+          onPointerEnter={(event) => {
+            event.stopPropagation();
+            if (isWavingRef.current || shouldWaveRef.current) return;
+            shouldWaveRef.current = true;
+          }}
+        >
           <primitive object={gltf.scene} />
         </group>
       </group>
@@ -208,13 +254,13 @@ export default function SocraticBackground3D({
 
   return (
     <BackgroundErrorBoundary>
-      <div className="absolute inset-0 pointer-events-none" aria-hidden>
+      <div className="absolute inset-0 pointer-events-auto" aria-hidden>
         <Canvas
           dpr={[1, 1.5]}
           gl={{ alpha: true }}
           camera={{ position: [0, 0.5, 6], fov: 35 }}
           fallback={<StaticFallback />}
-          style={{ pointerEvents: 'none' }}
+          style={{ pointerEvents: 'auto' }}
         >
           <ambientLight intensity={0.9} />
           <directionalLight position={[4, 5, 4]} intensity={1.25} />

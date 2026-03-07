@@ -574,7 +574,7 @@ export default function AIAssistantPage() {
             }}
           />
 
-          <div className="relative z-10 flex-1" />
+          <div className="relative z-10 pointer-events-none flex-1" />
           <div className="relative z-10 px-4 pb-0 md:px-6">
             <div className="rounded-2xl border border-white/20 bg-slate-950/68 px-4 py-3 text-white shadow-lg backdrop-blur-md">
               <div className="flex items-start gap-3">
@@ -642,4 +642,3 @@ export default function AIAssistantPage() {
     </div>
   );
 }
-
