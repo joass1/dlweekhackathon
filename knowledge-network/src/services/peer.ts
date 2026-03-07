@@ -25,6 +25,11 @@ export interface PeerQuestion {
   options?: string[] | null;
   correct_answer: string;
   explanation: string;
+  key_points?: string[];
+  must_mention?: string[];
+  allowed_equivalents?: string[];
+  common_misconceptions?: string[];
+  grading_notes?: string | null;
 }
 
 export interface SubmittedAnswer {

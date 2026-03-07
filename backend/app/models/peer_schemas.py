@@ -31,6 +31,11 @@ class PeerQuestion(BaseModel):
     options: Optional[List[str]] = None
     correct_answer: str
     explanation: str
+    key_points: List[str] = []
+    must_mention: List[str] = []
+    allowed_equivalents: List[str] = []
+    common_misconceptions: List[str] = []
+    grading_notes: Optional[str] = None
 
 
 class SubmittedAnswer(BaseModel):

@@ -586,6 +586,9 @@ export default function PeerSessionPage() {
 
   const toFriendlyAdvanceError = (err: unknown): string => {
     const detail = extractApiDetail(err);
+    if (/only the session creator can continue the shared round/i.test(detail)) {
+      return 'Waiting for the session creator to continue the shared round.';
+    }
     const waitingMatch = detail.match(/^Waiting for answers from:\s*(.+)$/i);
     if (waitingMatch) {
       const rawNames = waitingMatch[1]
@@ -631,6 +634,10 @@ export default function PeerSessionPage() {
 
   const handleAdvance = async () => {
     if (!session) return;
+    if (!isSessionCreator) {
+      setAdvanceError('Waiting for the session creator to continue the shared round.');
+      return;
+    }
     setAdvancing(true);
     setAdvanceError(null);
     try {
@@ -694,6 +701,7 @@ export default function PeerSessionPage() {
   const getMemberName = (memberId: string) => {
     return resolveDisplayNameFromId(memberId);
   };
+  const isSessionCreator = Boolean(studentId && session?.created_by === studentId);
 
   const getQuestionTargetName = (question: PeerQuestion) => {
     const raw = String(question.target_member_name || '').trim();
@@ -967,7 +975,7 @@ export default function PeerSessionPage() {
                       )}
                     </div>
                     <p className="text-xs text-white/40 mt-1">
-                      Targeting: {getQuestionTargetName(q)}&apos;s gap in {q.weak_concept}
+                      Shared prompt inspired by {getQuestionTargetName(q)}&apos;s gap in {q.weak_concept}
                     </p>
                     {answers.length > 0 && (
                       <div className="mt-2 text-sm">
@@ -1226,11 +1234,11 @@ export default function PeerSessionPage() {
                   </span>
                     <span className="text-xs bg-cyan-500/15 text-cyan-300 px-2.5 py-1 rounded-full">
                       <Zap className="w-3 h-3 inline mr-1" />
-                    {getQuestionTargetName(currentQuestion)}&apos;s turn
+                    Shared discussion
                   </span>
                 </div>
                 <p className="text-xs text-white/40">
-                  Gap: <span className="text-white/60">{currentQuestion.weak_concept}</span>
+                  Inspired by: <span className="text-white/60">{getQuestionTargetName(currentQuestion)}&apos;s gap in {currentQuestion.weak_concept}</span>
                 </p>
               </div>
 
@@ -1437,9 +1445,15 @@ export default function PeerSessionPage() {
                     Waiting for: {waitingMembers.map((m) => getMemberName(m.student_id)).join(', ')}
                   </p>
                 )}
+                {allMembersAnswered && !bossDefeated && !isSessionCreator && (
+                  <p className="text-xs text-cyan-200/75 flex items-center gap-1">
+                    <Clock3 className="w-3 h-3" />
+                    Waiting for the session creator to continue the shared round.
+                  </p>
+                )}
 
                 {/* Next question / generate round */}
-                {allMembersAnswered && session.current_question_index < session.questions.length - 1 && (
+                {allMembersAnswered && isSessionCreator && session.current_question_index < session.questions.length - 1 && (
                   <Button
                     onClick={handleAdvance}
                     disabled={advancing}
@@ -1453,7 +1467,7 @@ export default function PeerSessionPage() {
                     Next Question
                   </Button>
                 )}
-                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && !bossDefeated && (
+                {allMembersAnswered && isSessionCreator && session.current_question_index >= session.questions.length - 1 && !bossDefeated && (
                   <Button
                     onClick={handleAdvance}
                     disabled={advancing}

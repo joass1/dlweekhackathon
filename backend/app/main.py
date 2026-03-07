@@ -2884,7 +2884,7 @@ async def advance_peer_question(
     student_id: str = Depends(get_student_id),
 ):
     """Advance to the next round-robin question."""
-    result = peer_session_service.advance_question(session_id)
+    result = peer_session_service.advance_question(session_id, student_id=student_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result

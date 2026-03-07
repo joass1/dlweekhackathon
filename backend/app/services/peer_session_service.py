@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -656,6 +657,199 @@ class PeerSessionService:
             total += len(snippet)
         return "\n\n---\n\n".join(out)
 
+    @staticmethod
+    def _coerce_string_list(value: Any, *, limit: int = 4) -> List[str]:
+        items: List[str] = []
+        if isinstance(value, list):
+            raw_items = value
+        elif isinstance(value, str):
+            raw_items = re.split(r"(?:\r?\n|;|\u2022|- )+", value)
+        else:
+            raw_items = []
+        for raw in raw_items:
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            if text in items:
+                continue
+            items.append(text[:180])
+            if len(items) >= limit:
+                break
+        return items
+
+    @staticmethod
+    def _derive_brief_points(*sources: str, limit: int = 3) -> List[str]:
+        points: List[str] = []
+        for source in sources:
+            text = str(source or "").strip()
+            if not text:
+                continue
+            for raw_part in re.split(r"(?<=[.!?])\s+|;|\r?\n", text):
+                part = str(raw_part or "").strip(" -\t\r\n")
+                if len(part) < 8:
+                    continue
+                if part in points:
+                    continue
+                points.append(part[:180])
+                if len(points) >= limit:
+                    return points
+        return points
+
+    def _build_session_evidence_pack(
+        self,
+        user_id: str,
+        concept_id: Optional[str],
+        topic: str,
+        *,
+        course_id: Optional[str] = None,
+        course_name: Optional[str] = None,
+        limit: int = 8,
+    ) -> Dict[str, Any]:
+        chunks = self._fetch_concept_context(
+            user_id,
+            concept_id,
+            topic,
+            limit=limit,
+            course_id=course_id,
+            course_name=course_name,
+        )
+        return {
+            "session_context_chunks": chunks,
+            "session_context_text": self._format_context(chunks),
+            "session_context_generated_at": _utc_now().isoformat(),
+        }
+
+    @staticmethod
+    def _read_session_context_chunks(data: Dict[str, Any]) -> List[Dict[str, str]]:
+        raw = data.get("session_context_chunks") or []
+        if not isinstance(raw, list):
+            return []
+        chunks: List[Dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            chunks.append(
+                {
+                    "text": text,
+                    "concept_id": str(item.get("concept_id") or "").strip(),
+                    "source": str(item.get("source") or "").strip(),
+                }
+            )
+        return chunks
+
+    def _ensure_session_evidence_pack(
+        self,
+        ref: Any,
+        data: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, str]], str]:
+        chunks = self._read_session_context_chunks(data)
+        context_text = str(data.get("session_context_text") or "").strip()
+        if chunks and context_text:
+            return chunks, context_text
+
+        pack = self._build_session_evidence_pack(
+            user_id=str(data.get("created_by") or "").strip(),
+            concept_id=data.get("selected_concept_id"),
+            topic=str(data.get("topic") or ""),
+            course_id=data.get("course_id"),
+            course_name=data.get("course_name"),
+            limit=8,
+        )
+        data.update(pack)
+        try:
+            ref.update(pack)
+        except Exception:
+            pass
+        return self._read_session_context_chunks(data), str(data.get("session_context_text") or "").strip()
+
+    def _schedule_next_round_prefetch(self, session_id: str) -> None:
+        if not self.db or not self.openai:
+            return
+        ref = self.db.collection(self.collection).document(session_id)
+        doc = ref.get()
+        if not doc.exists:
+            return
+        data = doc.to_dict() or {}
+        if str(data.get("status") or "").strip().lower() != "active":
+            return
+        if bool(data.get("boss_defeated", False)) or bool(data.get("party_defeated", False)):
+            return
+        if data.get("prefetched_next_round_questions"):
+            return
+        if str(data.get("next_round_prefetch_status") or "").strip().lower() == "pending":
+            return
+
+        current_round = max(1, int(data.get("round_index", 1) or 1))
+        try:
+            ref.update(
+                {
+                    "next_round_prefetch_status": "pending",
+                    "prefetched_for_round_index": current_round,
+                }
+            )
+        except Exception:
+            return
+
+        thread = threading.Thread(
+            target=self._prefetch_next_round_worker,
+            args=(session_id, current_round),
+            daemon=True,
+        )
+        thread.start()
+
+    def _prefetch_next_round_worker(self, session_id: str, current_round: int) -> None:
+        if not self.db:
+            return
+        ref = self.db.collection(self.collection).document(session_id)
+        try:
+            doc = ref.get()
+            if not doc.exists:
+                return
+            data = doc.to_dict() or {}
+            if str(data.get("status") or "").strip().lower() != "active":
+                ref.update({"next_round_prefetch_status": "idle"})
+                return
+            if bool(data.get("boss_defeated", False)) or bool(data.get("party_defeated", False)):
+                ref.update({"next_round_prefetch_status": "idle"})
+                return
+            if max(1, int(data.get("round_index", 1) or 1)) != current_round:
+                ref.update({"next_round_prefetch_status": "idle"})
+                return
+
+            context_chunks, context_text = self._ensure_session_evidence_pack(ref, data)
+            questions = self._generate_round_robin_questions(
+                member_profiles=self._build_member_profiles_from_session(data),
+                topic=str(data.get("topic") or "general topic"),
+                selected_concept_id=data.get("selected_concept_id"),
+                created_by=str(data.get("created_by") or ""),
+                course_id=data.get("course_id"),
+                course_name=data.get("course_name"),
+                context_chunks=context_chunks,
+                context_text=context_text,
+            )
+
+            ref.update(
+                {
+                    "prefetched_next_round_questions": questions,
+                    "prefetched_for_round_index": current_round,
+                    "next_round_prefetch_status": "ready",
+                    "prefetched_generated_at": _utc_now().isoformat(),
+                }
+            )
+        except Exception as exc:
+            try:
+                ref.update(
+                    {
+                        "next_round_prefetch_status": "error",
+                        "next_round_prefetch_error": str(exc)[:200],
+                    }
+                )
+            except Exception:
+                pass
+
     def _build_member_profiles(
         self,
         member_profiles: List[Dict[str, Any]],
@@ -1143,17 +1337,20 @@ class PeerSessionService:
         created_by: str,
         course_id: Optional[str] = None,
         course_name: Optional[str] = None,
+        context_chunks: Optional[List[Dict[str, str]]] = None,
+        context_text: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Generate one question per member, grounded by concept-tagged chunks."""
-        context_chunks = self._fetch_concept_context(
-            created_by,
-            selected_concept_id,
-            topic,
-            limit=8,
-            course_id=course_id,
-            course_name=course_name,
-        )
-        context_text = self._format_context(context_chunks)
+        if context_chunks is None:
+            context_chunks = self._fetch_concept_context(
+                created_by,
+                selected_concept_id,
+                topic,
+                limit=8,
+                course_id=course_id,
+                course_name=course_name,
+            )
+        context_text = str(context_text or "").strip() or self._format_context(context_chunks)
 
         if not self.openai:
             return self._fallback_questions(
@@ -1221,7 +1418,7 @@ class PeerSessionService:
             "Use the course context below when available. Keep questions faithful to it.\n"
             "If context is empty, generate high-quality domain-appropriate questions for the concept.\n\n"
             f"Course context:\n{context_text or '(no context found)'}\n\n"
-            f"Generate exactly {len(sorted_members)} questions (one per member).\n"
+            f"Generate exactly {len(sorted_members)} shared discussion questions (one question inspired by each member's preferred concept).\n"
             "Return ONLY JSON object: {\"questions\":[...]} with items:\n"
             "{"
             "\"question_id\":\"q_0\","
@@ -1233,14 +1430,22 @@ class PeerSessionService:
             "\"stem\":\"<question>\","
             "\"options\":[\"<full option text>\",\"<full option text>\",\"<full option text>\",\"<full option text>\"] or null,"
             "\"correct_answer\":\"<ground-truth answer>\","
-            "\"explanation\":\"<why correct>\""
+            "\"explanation\":\"<why correct>\","
+            "\"key_points\":[\"2-4 short grading points\"],"
+            "\"must_mention\":[\"0-3 essential terms or ideas\"],"
+            "\"allowed_equivalents\":[\"accepted paraphrases or legal/technical synonyms\"],"
+            "\"common_misconceptions\":[\"common confusion to watch for\"],"
+            "\"grading_notes\":\"brief grading instruction for answer evaluation\""
             "}\n"
             "Rules:\n"
             "- Set concept_id to a specific topic-level concept id, not a broad slide/week title.\n"
-            "- Use each member's preferred_concept when provided.\n"
+            "- Use each member's preferred_concept when provided, but write the stem as a shared prompt for the whole group.\n"
+            "- Every question must be answerable and discussable by every member in the room.\n"
+            "- Do not address a specific student in the stem. The same question content is shared with all members.\n"
             "- Make each question answerable from provided context when available.\n"
             "- Stay strictly inside the selected course/topic. Do not import concepts from other courses or domains.\n"
             "- Do not create cross-domain analogies unless both sides of the analogy appear in the provided context.\n"
+            "- Rubric fields must be concise and directly usable for grading later.\n"
             "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
             "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
             "- For math type, format formulas/equations using LaTeX delimiters: inline `$...$`, display `$$...$$`.\n"
@@ -1359,6 +1564,11 @@ class PeerSessionService:
                 weak_concept = preferred_concept
             explanation = str(q.get("explanation") or f"This question checks understanding of {concept_id}.")
             correct_answer = str(q.get("correct_answer") or "").strip()
+            key_points = self._coerce_string_list(q.get("key_points"), limit=4)
+            must_mention = self._coerce_string_list(q.get("must_mention"), limit=3)
+            allowed_equivalents = self._coerce_string_list(q.get("allowed_equivalents"), limit=4)
+            common_misconceptions = self._coerce_string_list(q.get("common_misconceptions"), limit=3)
+            grading_notes = str(q.get("grading_notes") or "").strip()
             options = None
 
             if q_type == "mcq":
@@ -1377,6 +1587,15 @@ class PeerSessionService:
                 correct_answer = explanation or f"A complete, context-grounded answer about {concept_id}."
             if not correct_answer:
                 continue
+            if not key_points:
+                key_points = self._derive_brief_points(correct_answer, explanation, limit=3)
+            if not must_mention:
+                must_mention = key_points[:2]
+            if not grading_notes:
+                grading_notes = (
+                    "Accept semantically correct paraphrases that cover the key points "
+                    "and reject answers that miss the central legal/technical distinction."
+                )
 
             if q_type == "math":
                 stem = _latexify_math_text(stem)
@@ -1395,6 +1614,11 @@ class PeerSessionService:
                     "options": options,
                     "correct_answer": correct_answer,
                     "explanation": explanation,
+                    "key_points": key_points,
+                    "must_mention": must_mention,
+                    "allowed_equivalents": allowed_equivalents,
+                    "common_misconceptions": common_misconceptions,
+                    "grading_notes": grading_notes,
                 }
             )
 
@@ -1434,9 +1658,14 @@ class PeerSessionService:
                 context_chunks,
                 allowed_concepts=allowed_concepts,
             )
-            stem = f"Explain the key ideas of '{member_concept}' and how they relate to '{topic}'."
+            stem = f"Shared discussion prompt: explain the key ideas of '{member_concept}' and how they relate to '{topic}'."
             if anchor:
                 stem += f" Use this course fact in your explanation: \"{anchor}\"."
+            key_points = self._derive_brief_points(
+                f"Explain the core idea of {member_concept}",
+                anchor,
+                limit=3,
+            )
             questions.append(
                 {
                     "question_id": f"q_{i}",
@@ -1449,6 +1678,11 @@ class PeerSessionService:
                     "options": None,
                     "correct_answer": f"A correct explanation grounded in the course material for {member_concept}.",
                     "explanation": f"This checks understanding of {member_concept}.",
+                    "key_points": key_points,
+                    "must_mention": key_points[:2],
+                    "allowed_equivalents": [],
+                    "common_misconceptions": [],
+                    "grading_notes": "Reward conceptually accurate explanations grounded in the study material.",
                 }
             )
         if created_by:
@@ -1542,6 +1776,42 @@ class PeerSessionService:
 
         return retargeted, changed
 
+    def _call_peer_json_chat(
+        self,
+        prompt: str,
+        *,
+        max_completion_tokens: int,
+    ) -> Dict[str, Any]:
+        if not self.openai:
+            raise RuntimeError("OpenAI client unavailable")
+        resp = self.openai.chat.completions.create(
+            model="gpt-5.2",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_completion_tokens=max_completion_tokens,
+        )
+        raw = resp.choices[0].message.content or "{}"
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _should_escalate_peer_evaluation(
+        *,
+        parsed: Dict[str, Any],
+        score: float,
+        answer_text: str,
+    ) -> bool:
+        confidence = _clamp(_to_float(parsed.get("confidence"), 0.55))
+        if bool(parsed.get("needs_escalation", False)):
+            return True
+        if confidence < 0.68:
+            return True
+        if 0.45 <= score <= 0.8:
+            return True
+        if len(str(answer_text or "").strip()) <= 12 and score >= 0.35:
+            return True
+        return False
+
     def _evaluate_answer(
         self,
         question: Dict[str, Any],
@@ -1558,36 +1828,81 @@ class PeerSessionService:
                 "mistake_type": "normal",
             }
 
-        context_text = self._format_context(context_chunks, max_chars=2600)
-        prompt = (
-            "Evaluate this student answer.\n\n"
+        rubric = {
+            "key_points": self._coerce_string_list(question.get("key_points"), limit=4),
+            "must_mention": self._coerce_string_list(question.get("must_mention"), limit=3),
+            "allowed_equivalents": self._coerce_string_list(question.get("allowed_equivalents"), limit=4),
+            "common_misconceptions": self._coerce_string_list(question.get("common_misconceptions"), limit=3),
+            "grading_notes": str(question.get("grading_notes") or "").strip(),
+        }
+        evidence_text = self._format_context(context_chunks, max_chars=900)
+        fast_prompt = (
+            "Evaluate this student answer for a shared peer-learning discussion.\n\n"
             f"Question: {question.get('stem', '')}\n"
             f"Expected answer: {question.get('correct_answer', '')}\n"
+            f"Question explanation: {question.get('explanation', '')}\n"
+            f"Grading rubric: {json.dumps(rubric, ensure_ascii=False)}\n"
             f"Student answer: {answer_text}\n"
             f"Question type: {question.get('type', 'open')}\n"
             f"Concept: {question.get('concept_id') or question.get('weak_concept')}\n\n"
-            f"Course context:\n{context_text or '(no context)'}\n\n"
             "Return ONLY JSON:\n"
             "{"
             "\"is_correct\": true|false,"
             "\"score\": 0.0 to 1.0,"
             "\"feedback\": \"short constructive feedback\","
             "\"hint\": \"hint if wrong else empty\","
-            "\"mistake_type\": \"normal|careless|conceptual\""
+            "\"mistake_type\": \"normal|careless|conceptual\","
+            "\"confidence\": 0.0 to 1.0,"
+            "\"needs_escalation\": true|false"
             "}\n"
+            "Use the rubric as the primary grading authority. "
+            "Accept semantically correct paraphrases when they satisfy the rubric. "
+            "Set needs_escalation=true only when the answer is borderline, underspecified, or a synonym/paraphrase judgment is genuinely uncertain. "
             "Use \"normal\" when correct. If wrong, choose careless only for obvious slip; otherwise conceptual."
             " If question type is math, render equations in feedback/hint using LaTeX delimiters (`$...$` or `$$...$$`)."
         )
 
         try:
-            resp = self.openai.chat.completions.create(
-                model="gpt-5.2",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=500,
+            parsed = self._call_peer_json_chat(
+                fast_prompt,
+                max_completion_tokens=260,
             )
-            raw = resp.choices[0].message.content or "{}"
-            parsed = json.loads(raw)
+            fast_score = _clamp(float(parsed.get("score", 0.0)))
+            if self._should_escalate_peer_evaluation(
+                parsed=parsed,
+                score=fast_score,
+                answer_text=answer_text,
+            ):
+                deep_prompt = (
+                    "Re-evaluate this borderline student answer for a shared peer-learning discussion.\n\n"
+                    f"Question: {question.get('stem', '')}\n"
+                    f"Expected answer: {question.get('correct_answer', '')}\n"
+                    f"Question explanation: {question.get('explanation', '')}\n"
+                    f"Grading rubric: {json.dumps(rubric, ensure_ascii=False)}\n"
+                    f"Student answer: {answer_text}\n"
+                    f"Question type: {question.get('type', 'open')}\n"
+                    f"Concept: {question.get('concept_id') or question.get('weak_concept')}\n"
+                    f"First-pass evaluation: {json.dumps(parsed, ensure_ascii=False)}\n\n"
+                    f"Evidence snippets:\n{evidence_text or '(no evidence snippets)'}\n\n"
+                    "Return ONLY JSON:\n"
+                    "{"
+                    "\"is_correct\": true|false,"
+                    "\"score\": 0.0 to 1.0,"
+                    "\"feedback\": \"short constructive feedback\","
+                    "\"hint\": \"hint if wrong else empty\","
+                    "\"mistake_type\": \"normal|careless|conceptual\","
+                    "\"confidence\": 0.0 to 1.0"
+                    "}\n"
+                    "Use the rubric first, then use the evidence snippets only to resolve ambiguity. "
+                    "Do not invent facts beyond the snippets. "
+                    "Accept semantically correct paraphrases that satisfy the rubric. "
+                    "Use \"normal\" when correct. If wrong, choose careless only for obvious slip; otherwise conceptual."
+                    " If question type is math, render equations in feedback/hint using LaTeX delimiters (`$...$` or `$$...$$`)."
+                )
+                parsed = self._call_peer_json_chat(
+                    deep_prompt,
+                    max_completion_tokens=360,
+                )
         except Exception as e:
             print(f"[PeerSessionService] AI evaluation failed: {e}")
             parsed = {
@@ -1614,6 +1929,7 @@ class PeerSessionService:
             "feedback": feedback,
             "hint": hint,
             "mistake_type": mistake_type,
+            "confidence": _clamp(_to_float(parsed.get("confidence"), 0.55)),
         }
 
     @staticmethod
@@ -2311,6 +2627,14 @@ class PeerSessionService:
 
         session_id = str(uuid4())[:12]
         normalized_profiles = self._build_member_profiles(member_profiles, created_by)
+        evidence_pack = self._build_session_evidence_pack(
+            user_id=created_by,
+            concept_id=resolved_concept_id,
+            topic=resolved_topic,
+            course_id=resolved_course_id,
+            course_name=resolved_course_name,
+            limit=8,
+        )
         questions = self._generate_round_robin_questions(
             member_profiles=normalized_profiles,
             topic=resolved_topic,
@@ -2318,13 +2642,15 @@ class PeerSessionService:
             created_by=created_by,
             course_id=resolved_course_id,
             course_name=resolved_course_name,
+            context_chunks=evidence_pack.get("session_context_chunks"),
+            context_text=evidence_pack.get("session_context_text"),
         )
         if not questions:
             questions = self._fallback_questions(
                 normalized_profiles,
                 resolved_topic,
                 resolved_concept_id,
-                [],
+                list(evidence_pack.get("session_context_chunks") or []),
                 created_by=created_by,
             )
         questions = self._assign_question_ids(questions, start_index=0)
@@ -2374,6 +2700,10 @@ class PeerSessionService:
             "current_question_index": 0,
             "round_index": 1,
             "answers": [],
+            **evidence_pack,
+            "prefetched_next_round_questions": [],
+            "prefetched_for_round_index": None,
+            "next_round_prefetch_status": "idle",
             "pending_mastery_states": {},
             "pending_mastery_meta": {},
             "mastery_updates_applied_at": None,
@@ -2426,7 +2756,12 @@ class PeerSessionService:
             updates["current_question_index"] = 0
 
         ref.update(updates)
-        return {"status": updates.get("status", data.get("status", "waiting")), "already_joined": False}
+        final_status = updates.get("status", data.get("status", "waiting"))
+        data.update(updates)
+        self._ensure_session_evidence_pack(ref, data)
+        if str(final_status).strip().lower() == "active":
+            self._schedule_next_round_prefetch(session_id)
+        return {"status": final_status, "already_joined": False}
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get full session state."""
@@ -2693,6 +3028,12 @@ class PeerSessionService:
             }
         )
 
+        context_chunks, context_text = self._ensure_session_evidence_pack(ref, data)
+        if not str(data.get("session_context_text") or "").strip() and context_text:
+            updates["session_context_text"] = context_text
+        if not self._read_session_context_chunks(data) and context_chunks:
+            updates["session_context_chunks"] = context_chunks
+
         if updates:
             ref.update(updates)
 
@@ -2704,6 +3045,8 @@ class PeerSessionService:
             flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
             if flush_updates:
                 data.update(flush_updates)
+        elif str(data.get("status", "")).strip().lower() == "active":
+            self._schedule_next_round_prefetch(session_id)
 
         return data
 
@@ -2838,7 +3181,8 @@ class PeerSessionService:
         if not concept_to_update:
             concept_to_update = "general_topic"
 
-        eval_context = self._fetch_concept_context(
+        session_context_chunks, _ = self._ensure_session_evidence_pack(ref, data)
+        eval_context = session_context_chunks or self._fetch_concept_context(
             student_id,
             concept_to_update,
             data.get("topic", concept_to_update),
@@ -2991,8 +3335,8 @@ class PeerSessionService:
             "mastery_status": mastery_update.get("mastery_status"),
         }
 
-    def advance_question(self, session_id: str) -> Dict[str, Any]:
-        """Move to the next question only after all members answer current one."""
+    def advance_question(self, session_id: str, student_id: Optional[str] = None) -> Dict[str, Any]:
+        """Move to the next shared question only after all members answer current one."""
         if not self.db:
             return {"error": "Database unavailable"}
 
@@ -3002,6 +3346,9 @@ class PeerSessionService:
             return {"error": "Session not found"}
 
         data = doc.to_dict() or {}
+        created_by = str(data.get("created_by") or "").strip()
+        if student_id and created_by and student_id != created_by:
+            return {"error": "Only the session creator can continue the shared round."}
         names_changed, name_by_id = self._normalize_session_member_names(data)
         if names_changed:
             updates: Dict[str, Any] = {}
@@ -3133,24 +3480,27 @@ class PeerSessionService:
         selected_concept_id = data.get("selected_concept_id")
         course_id = data.get("course_id")
         course_name = data.get("course_name")
+        context_chunks, context_text = self._ensure_session_evidence_pack(ref, data)
 
-        new_questions = self._generate_round_robin_questions(
+        prefetched_round = max(1, int(data.get("prefetched_for_round_index", 0) or 0))
+        prefetched_questions_raw = data.get("prefetched_next_round_questions") or []
+        use_prefetched = (
+            isinstance(prefetched_questions_raw, list)
+            and bool(prefetched_questions_raw)
+            and prefetched_round == max(1, int(data.get("round_index", 1) or 1))
+        )
+
+        new_questions = list(prefetched_questions_raw) if use_prefetched else self._generate_round_robin_questions(
             member_profiles=member_profiles,
             topic=topic,
             selected_concept_id=selected_concept_id,
             created_by=created_by,
             course_id=course_id,
             course_name=course_name,
+            context_chunks=context_chunks,
+            context_text=context_text,
         )
         if not new_questions:
-            context_chunks = self._fetch_concept_context(
-                created_by,
-                selected_concept_id,
-                topic,
-                limit=8,
-                course_id=course_id,
-                course_name=course_name,
-            )
             new_questions = self._fallback_questions(
                 member_profiles,
                 topic,
@@ -3173,14 +3523,18 @@ class PeerSessionService:
                 "current_question_started_at": _utc_now().isoformat(),
                 "member_profiles": member_profiles,
                 "round_index": round_index,
+                "prefetched_next_round_questions": [],
+                "prefetched_for_round_index": None,
+                "next_round_prefetch_status": "idle",
             }
         )
+        self._schedule_next_round_prefetch(session_id)
         return {
             "status": "active",
             "current_question_index": next_idx,
             "at_last_question": False,
             "boss_defeated": False,
-            "generated_new_round": True,
+            "generated_new_round": not use_prefetched,
             "round_index": round_index,
         }
 
