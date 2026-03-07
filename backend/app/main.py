@@ -2273,6 +2273,7 @@ async def create_peer_session(
         concept_id=req.concept_id,
         course_id=req.course_id,
         course_name=req.course_name,
+        level=req.level,
         member_profiles=member_profiles,
         created_by=student_id,
     )

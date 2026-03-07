@@ -509,6 +509,7 @@ class TutorService:
                 {"role": "user", "content": user_prompt},
             ],
             max_completion_tokens=350,
+            timeout=25,
         )
         raw = self._clean_text(response.choices[0].message.content, "", 4000)
         return self._normalize_recommendation_payload(raw, clean_candidates)

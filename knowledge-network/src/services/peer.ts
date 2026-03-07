@@ -46,6 +46,8 @@ export interface SessionState {
   session_id: string;
   hub_id: string;
   topic: string;
+  level?: number | null;
+  boss_character_id?: 'punk' | 'spacesuit' | 'swat' | 'suit' | null;
   selected_concept_id?: string | null;
   course_id?: string | null;
   course_name?: string | null;
@@ -99,6 +101,7 @@ export interface TwilioVideoTokenResponse {
 export async function createSession(
   hubId: string,
   topic: string,
+  level: number,
   conceptId: string | null,
   courseId: string | null,
   courseName: string | null,
@@ -110,6 +113,7 @@ export async function createSession(
     body: JSON.stringify({
       hub_id: hubId,
       topic,
+      level,
       concept_id: conceptId,
       course_id: courseId,
       course_name: courseName,
@@ -213,6 +217,8 @@ export interface SessionSummary {
   session_id: string;
   hub_id: string;
   topic: string;
+  level?: number | null;
+  boss_character_id?: 'punk' | 'spacesuit' | 'swat' | 'suit' | null;
   status: 'waiting' | 'active' | 'completed';
   created_by: string;
   created_at?: string;

@@ -23,6 +23,12 @@ interface Props {
   concepts?: { id: string; title: string; courseId?: string }[];
 }
 
+const LEVEL_OPTIONS = [
+  { value: 1, label: 'Level 1 - Punk' },
+  { value: 2, label: 'Level 2 - Spacesuit' },
+  { value: 3, label: 'Level 3 - SWAT' },
+  { value: 4, label: 'Level 4 - Suit' },
+] as const;
 const panelClass =
   'glow-card relative overflow-hidden rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md shadow-xl text-white';
 const fieldClass =
@@ -38,6 +44,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [selectedTopic, setSelectedTopic] = useState('');
+  const [selectedLevel, setSelectedLevel] = useState<number>(1);
   const [courses, setCourses] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedCourse, setSelectedCourse] = useState('');
   const [startError, setStartError] = useState<string | null>(null);
@@ -108,6 +115,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
       const result = await createSession(
         groupId,
         topicLabel,
+        selectedLevel,
         conceptId,
         selectedCourse || null,
         selectedCourseRow?.name || null,
@@ -163,6 +171,11 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         <CardContent className="space-y-4">
           <div className="text-sm text-white/80">
             <p><span className="font-medium text-white">Topic:</span> {activeSession.topic}</p>
+            {activeSession.level && (
+              <p className="mt-1 text-white/55">
+                <span className="font-medium text-white/75">Level:</span> {activeSession.level}
+              </p>
+            )}
             {(activeSession.course_name || activeSession.course_id) && (
               <p className="mt-1 text-white/55">
                 <span className="font-medium text-white/75">Course:</span> {activeSession.course_name || activeSession.course_id}
@@ -232,6 +245,21 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
             </select>
           </div>
         )}
+
+        <div>
+          <label className="text-sm font-medium block mb-2">Select level:</label>
+          <select
+            value={selectedLevel}
+            onChange={(e) => setSelectedLevel(Number(e.target.value))}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+          >
+            {LEVEL_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {filteredConcepts.length > 0 ? (
           <div>

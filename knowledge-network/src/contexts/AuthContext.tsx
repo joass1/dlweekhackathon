@@ -52,22 +52,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, []);
 
-  // Block unverified users from protected routes, but avoid global sign-out side effects across tabs.
-  useEffect(() => {
-    if (loading || skipRedirect || !user) return;
-    if (user.emailVerified) return;
-    if (pathname !== "/auth/signin") {
-      router.replace("/auth/signin?verifyEmail=1");
-    }
-  }, [loading, skipRedirect, user, pathname, router]);
-
-  // Route guard: redirect unauthenticated users to sign-in
+  // Route guard: redirect unauthenticated or unverified users to sign-in
   useEffect(() => {
     if (loading || skipRedirect) return;
-    if (!user && pathname !== "/auth/signin") {
+    const isVerified = user?.emailVerified ?? false;
+    if ((!user || !isVerified) && pathname !== "/auth/signin") {
       router.replace("/auth/signin");
     }
-    if (user && user.emailVerified && pathname === "/auth/signin") {
+    if (user && isVerified && pathname === "/auth/signin") {
       router.replace("/");
     }
   }, [user, loading, skipRedirect, pathname, router]);
@@ -89,7 +81,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Don't render protected pages until auth resolves and user is available
   // (or we're already on the sign-in page)
   const isAuthPage = pathname === "/auth/signin";
-  const showChildren = !loading && (isAuthPage || (user && (user.emailVerified || skipRedirect)));
+  const isVerified = user?.emailVerified ?? false;
+  const showChildren = !loading && ((user && isVerified) || isAuthPage);
 
   return (
     <AuthContext.Provider value={{ user, loading, isMfaEnrolled, skipRedirect, setSkipRedirect, signOut, getIdToken }}>

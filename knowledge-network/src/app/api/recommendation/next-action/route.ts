@@ -64,18 +64,34 @@ export async function POST(request: Request) {
     }
 
     const authHeader = request.headers.get('Authorization') || '';
-    const backendResponse = await fetch(`${API_BASE}/api/tutor/recommend-next-action`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authHeader ? { Authorization: authHeader } : {}),
-      },
-      body: JSON.stringify({
-        course_name: body.course_name ?? 'All Courses',
-        candidates,
-        attention_summary: body.attention_summary ?? {},
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    let backendResponse: Response;
+    try {
+      backendResponse = await fetch(`${API_BASE}/api/tutor/recommend-next-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({
+          course_name: body.course_name ?? 'All Courses',
+          candidates,
+          attention_summary: body.attention_summary ?? {},
+        }),
+        signal: controller.signal,
+      });
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
+        return NextResponse.json(
+          { error: 'Recommendation request timed out. Please try again.' },
+          { status: 504 }
+        );
+      }
+      throw fetchError;
+    }
+    clearTimeout(timeoutId);
 
     if (!backendResponse.ok) {
       const detail = await backendResponse.text();

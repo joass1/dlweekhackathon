@@ -9,7 +9,26 @@
       "Bash(cd /Applications/MAMP/htdocs/dlweekhackathon/knowledge-network && npx tsc --noEmit --pretty 2>&1 | head -60)",
       "Bash(git -C /c/Users/Projo/OneDrive/Documents/GitHub/dlweekhackathon ls-files --cached \"*.DS_Store\" \"**/.DS_Store\")",
       "Bash(npm install motion)",
-      "Bash(npm install @splinetool/runtime @splinetool/react-spline framer-motion)"
+      "Bash(npm install @splinetool/runtime @splinetool/react-spline framer-motion)",
+      "Bash(uvicorn app.main:app --reload --port 8000)",
+      "Bash(npm run dev)",
+      "Bash(npm install framer-motion)",
+      "Bash(lsof -ti:3000)",
+      "Bash(xargs kill -9)",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Platforms/Platform_Round1.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Columns/Column_Astra.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Props/Prop_Computer.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Props/Prop_AccessPoint.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Platforms/Door_Frame_A.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Props/Prop_Crate3.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/glTF/Props/Prop_Barrel_Large.\"* \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/Textures/T_Trim_01_BaseColor.png\" \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/Textures/T_Trim_01_Normal.png\" \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(cp \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/Modular SciFi MegaKit[Standard]/Textures/T_Trim_01_Emissive.png\" \"/Applications/MAMP/htdocs/dlweekhackathon/knowledge-network/public/models/scifi/\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in [''images'',''textures'',''materials''] if k in d}, indent=2\\)\\)\")",
+      "Bash(for f in *.gltf)",
+      "Bash(do python3 -c \"import json,sys; d=json.load\\(open\\(''$f''\\)\\); imgs=d.get\\(''images'',[]\\); [print\\(i.get\\(''uri'',''''\\)\\) for i in imgs if i.get\\(''uri''\\)]\")",
+      "Bash(done)"
     ]
   }
 }
