@@ -1128,8 +1128,8 @@ export default function Page() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-6">
-        <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
+      <div className="mt-6 grid grid-cols-1 gap-6">
+        <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
           <Link href="/upload" className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Card className="glow-card p-5 rounded-2xl bg-gradient-to-br from-slate-900/70 via-fuchsia-950/25 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white relative overflow-hidden transition-all hover:shadow-fuchsia-500/10 hover:shadow-2xl">
               <GlowingEffect spread={180} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
