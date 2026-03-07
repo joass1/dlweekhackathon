@@ -43,6 +43,7 @@ export default function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [isStartingAssessment, setIsStartingAssessment] = useState(false);
   const [isCreatingCourse, setIsCreatingCourse] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [topics, setTopics] = useState<TopicOption[]>([]);
@@ -102,6 +103,14 @@ export default function UploadPage() {
       return courseTopics[0]?.id ?? '';
     });
   }, [courseTopics, selectedCourse]);
+
+  const handleStageFiles = (files: FileList) => {
+    const incoming = Array.from(files);
+    setStagedFiles((prev) => {
+      const existingNames = new Set(prev.map((f) => f.name));
+      return [...prev, ...incoming.filter((f) => !existingNames.has(f.name))];
+    });
+  };
 
   const handleAddCourse = async () => {
     const name = newCourseName.trim();
@@ -165,7 +174,8 @@ export default function UploadPage() {
     setNewTopicName('');
   };
 
-  const handleUpload = async (files: FileList) => {
+  const handleUpload = async () => {
+    if (stagedFiles.length === 0) return;
     setUploadError(null);
     const selectedCourseRow = courses.find((course) => course.id === selectedCourse);
     if (!selectedCourse || !selectedCourseRow) {
@@ -215,7 +225,7 @@ export default function UploadPage() {
 
     setIsUploading(true);
     const formData = new FormData();
-    Array.from(files).forEach((file) => formData.append('files', file));
+    stagedFiles.forEach((file) => formData.append('files', file));
     formData.append('course_id', selectedCourseRow.id);
     formData.append('course_name', selectedCourseRow.name);
     formData.append('topic_id', resolvedTopicId);
@@ -241,6 +251,7 @@ export default function UploadPage() {
 
       const hasSuccess = normalized.some((file) => file.status === 'success');
       if (hasSuccess) {
+        setStagedFiles([]);
         setIsStartingAssessment(true);
         setSelectedTopic(resolvedTopicId);
         setNewTopicName('');
@@ -269,7 +280,7 @@ export default function UploadPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed';
       setUploadError(message);
-      Array.from(files).forEach((file) => {
+      stagedFiles.forEach((file) => {
         setUploadedFiles((prev) => [...prev, { filename: file.name, chunks: 0, status: 'error', error: message }]);
       });
     } finally {
@@ -290,33 +301,47 @@ export default function UploadPage() {
         </p>
 
         <Card className="border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg text-white p-5 mb-6">
-          <label className="block text-sm font-medium text-white/80 mb-2">Select Course</label>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={selectedCourse}
-              onChange={(event) => setSelectedCourse(event.target.value)}
-              className="p-2 rounded-lg w-64 bg-white/10 border border-white/20 text-white focus:outline-none focus:border-[#03b2e6]/60"
-            >
-              {courses.map((course) => (
-                <option key={course.id} value={course.id} className="bg-slate-900 text-white">
-                  {course.name}
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              value={newCourseName}
-              onChange={(event) => setNewCourseName(event.target.value)}
-              placeholder="Add new course"
-              className="p-2 rounded-lg w-56 bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-[#03b2e6]/60"
-            />
-            <button
-              type="button"
-              onClick={handleAddCourse}
-              className="px-4 py-2 rounded-full bg-[#03b2e6] text-white font-medium hover:bg-[#029ad0] transition-colors"
-            >
-              Add Course
-            </button>
+          <div className="grid sm:grid-cols-2 gap-5">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-white/50 mb-2">
+                Select Existing Course
+              </label>
+              <select
+                value={selectedCourse}
+                onChange={(event) => setSelectedCourse(event.target.value)}
+                className="w-full p-2.5 rounded-lg bg-slate-800 border border-white/20 text-white focus:outline-none focus:border-[#03b2e6]/60"
+              >
+                {courses.map((c) => (
+                  <option key={c.id} value={c.id} className="bg-slate-800 text-white">{c.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-xs text-white/40">Files will be added to this course.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-white/50 mb-2">
+                Create New Course
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCourseName}
+                  onChange={(event) => setNewCourseName(event.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddCourse()}
+                  placeholder="e.g. Algorithms 101"
+                  className="flex-1 p-2.5 rounded-lg bg-slate-800 border border-white/20 text-white placeholder-white/30 focus:outline-none focus:border-[#03b2e6]/60"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCourse}
+                  disabled={!newCourseName.trim() || isCreatingCourse}
+                  className="px-4 py-2 rounded-lg bg-[#03b2e6] text-white font-medium hover:bg-[#029ad0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  {isCreatingCourse ? 'Creating...' : '+ Add'}
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs text-white/40">Creates the course and selects it automatically.</p>
+            </div>
           </div>
 
           <label className="block text-sm font-medium text-white/80 mt-4 mb-2">Select Topic</label>
@@ -324,7 +349,7 @@ export default function UploadPage() {
             <select
               value={selectedTopic}
               onChange={(event) => setSelectedTopic(event.target.value)}
-              className="p-2 rounded-lg w-64 bg-white/10 border border-white/20 text-white focus:outline-none focus:border-[#03b2e6]/60"
+              className="p-2 rounded-lg w-64 bg-slate-800 border border-white/20 text-white focus:outline-none focus:border-[#03b2e6]/60"
             >
               {courseTopics.map((topic) => (
                 <option key={`${topic.courseId}-${topic.id}`} value={topic.id} className="bg-slate-900 text-white">
@@ -337,7 +362,7 @@ export default function UploadPage() {
               value={newTopicName}
               onChange={(event) => setNewTopicName(event.target.value)}
               placeholder="Add new topic"
-              className="p-2 rounded-lg w-56 bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-[#03b2e6]/60"
+              className="p-2 rounded-lg w-56 bg-slate-800 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-[#03b2e6]/60"
             />
             <button
               type="button"
@@ -360,7 +385,7 @@ export default function UploadPage() {
             event.preventDefault();
             setIsDragging(false);
             if (isCreatingCourse) return;
-            handleUpload(event.dataTransfer.files);
+            handleStageFiles(event.dataTransfer.files);
           }}
         >
           <Upload className="w-12 h-12 mx-auto text-white/40 mb-4" />
@@ -369,7 +394,9 @@ export default function UploadPage() {
               ? 'Uploading & processing...'
               : isStartingAssessment
                 ? 'Upload complete. Starting comprehensive assessment...'
-                : 'Drop files here or click to upload'}
+                : stagedFiles.length > 0
+                  ? `${stagedFiles.length} file${stagedFiles.length > 1 ? 's' : ''} ready — add more or upload`
+                  : 'Drop files here or click to browse'}
           </p>
           <p className="text-sm text-white/50 mb-4">PDF, TXT, MD supported</p>
           <input
@@ -378,20 +405,60 @@ export default function UploadPage() {
             id="upload-input"
             multiple
             accept=".pdf,.txt,.md"
-            disabled={isCreatingCourse}
-            onChange={(event) => event.target.files && handleUpload(event.target.files)}
+            disabled={isCreatingCourse || isUploading}
+            onChange={(event) => { if (event.target.files) { handleStageFiles(event.target.files); event.target.value = ''; } }}
           />
           <label
             htmlFor="upload-input"
             className={`inline-block px-6 py-2 rounded-full font-medium transition-colors ${
-              isCreatingCourse
+              isCreatingCourse || isUploading
                 ? 'bg-slate-500/70 text-white/80 cursor-not-allowed'
-                : 'bg-[#03b2e6] text-white cursor-pointer hover:bg-[#029ad0]'
+                : 'bg-white/15 border border-white/30 text-white cursor-pointer hover:bg-white/25'
             }`}
           >
             {isCreatingCourse ? 'Saving Course...' : 'Browse Files'}
           </label>
         </Card>
+
+        {stagedFiles.length > 0 && !isUploading && !isStartingAssessment && (
+          <Card className="p-4 mb-4 border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg text-white">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-white">Files to Upload</h3>
+              <button
+                type="button"
+                onClick={() => setStagedFiles([])}
+                className="text-xs text-white/50 hover:text-white/80 transition-colors"
+              >
+                Clear all
+              </button>
+            </div>
+            <div className="space-y-2 mb-4">
+              {stagedFiles.map((file, i) => (
+                <div key={i} className="flex items-center gap-3 p-2 rounded-lg bg-white/5">
+                  <FileText className="w-4 h-4 text-white/50 flex-shrink-0" />
+                  <span className="flex-1 text-white/90 text-sm truncate">{file.name}</span>
+                  <span className="text-xs text-white/40">{(file.size / 1024).toFixed(0)} KB</span>
+                  <button
+                    type="button"
+                    onClick={() => setStagedFiles((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-white/40 hover:text-white/80 transition-colors ml-1"
+                    aria-label="Remove file"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={handleUpload}
+              disabled={isCreatingCourse}
+              className="w-full py-2.5 rounded-full font-medium bg-[#03b2e6] text-white hover:bg-[#029ad0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Upload {stagedFiles.length} File{stagedFiles.length > 1 ? 's' : ''}
+            </button>
+          </Card>
+        )}
 
         {uploadedFiles.length > 0 && (
           <Card className="p-4 mb-6 border-white/20 bg-slate-900/55 backdrop-blur-sm shadow-lg text-white">
@@ -440,4 +507,3 @@ export default function UploadPage() {
     </div>
   );
 }
-
