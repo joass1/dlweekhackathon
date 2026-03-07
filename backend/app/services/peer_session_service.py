@@ -940,10 +940,20 @@ class PeerSessionService:
         focus_concept: str,
         topic: str,
         context_chunks: List[Dict[str, str]],
+        allowed_concepts: Optional[List[str]] = None,
     ) -> str:
         focus_norm = _normalize_key(focus_concept)
         topic_norm = _normalize_key(topic)
         context_freq = self._context_concept_frequency(context_chunks)
+        allowed_norms = {
+            _normalize_key(value)
+            for value in (allowed_concepts or [])
+            if _normalize_key(value)
+        }
+        if focus_norm:
+            allowed_norms.add(focus_norm)
+        if topic_norm:
+            allowed_norms.add(topic_norm)
 
         # Prefer weakest concepts that are also present in current context chunks.
         profile = member_profile.get("concept_profile", {}) or {}
@@ -953,6 +963,8 @@ class PeerSessionService:
                 cid = str(raw_cid or "").strip()
                 norm = _normalize_key(cid)
                 if not norm:
+                    continue
+                if allowed_norms and norm not in allowed_norms:
                     continue
                 try:
                     mastery = float(raw_mastery)
@@ -972,12 +984,20 @@ class PeerSessionService:
         for norm, (raw, _) in ordered_context:
             if norm == focus_norm or norm == topic_norm:
                 continue
+            if allowed_norms and norm not in allowed_norms:
+                continue
             return raw or norm
 
         # Next, pick weakest non-focus concept from member profile.
         for cid, norm, _ in weak_candidates:
             if norm != focus_norm:
                 return cid
+
+        if allowed_concepts:
+            for candidate in allowed_concepts:
+                normalized = _normalize_key(candidate)
+                if normalized and normalized not in {focus_norm, topic_norm}:
+                    return candidate
 
         fallback = str(focus_concept or "").strip()
         if fallback:
@@ -1007,6 +1027,7 @@ class PeerSessionService:
         focus_norm = _normalize_key(focus_concept)
         topic_norm = _normalize_key(topic)
         specific_pool = self._collect_focus_subconcept_nodes(sid, focus_concept, topic)
+        pool_norms = {_normalize_key(cid): cid for cid in specific_pool}
 
         changed = False
         linked: List[Dict[str, Any]] = []
@@ -1025,6 +1046,7 @@ class PeerSessionService:
                         profile.items(),
                         key=lambda item: _to_float(item[1], 1.0),
                     )
+                    if not specific_pool or _normalize_key(str(k or "").strip()) in pool_norms
                 ]
 
             candidate_order: List[str] = [
@@ -1046,7 +1068,6 @@ class PeerSessionService:
             if specific_pool and (not resolved or _normalize_key(resolved) in {focus_norm, topic_norm}):
                 # Prefer an actually weak member concept if it intersects this session's sub-topic pool.
                 weak_pool_match: Optional[str] = None
-                pool_norms = {_normalize_key(cid): cid for cid in specific_pool}
                 for raw_weak in weak_profile_ids:
                     existing = self._resolve_existing_student_concept_id(sid, raw_weak)
                     if not existing:
@@ -1056,6 +1077,9 @@ class PeerSessionService:
                         weak_pool_match = hit
                         break
                 resolved = weak_pool_match or specific_pool[idx % len(specific_pool)]
+
+            if specific_pool and resolved and _normalize_key(resolved) not in pool_norms and _normalize_key(resolved) not in {focus_norm, topic_norm}:
+                resolved = specific_pool[idx % len(specific_pool)]
 
             if not resolved:
                 resolved = self._resolve_student_concept_id(sid, q.get("concept_id") or focus_concept or topic or "general_topic")
@@ -1141,6 +1165,22 @@ class PeerSessionService:
             )
 
         focus_concept = selected_concept_id or _normalize_key(topic) or topic
+        specific_pool = self._collect_focus_subconcept_nodes(created_by, focus_concept, topic)
+        allowed_question_concepts = list(dict.fromkeys([
+            *[cid for cid in specific_pool if str(cid).strip()],
+            *[
+                str(chunk.get("concept_id") or "").strip()
+                for chunk in context_chunks
+                if str(chunk.get("concept_id") or "").strip()
+            ],
+            str(focus_concept or "").strip(),
+            str(topic or "").strip(),
+        ]))
+        allowed_question_norms = {
+            _normalize_key(value)
+            for value in allowed_question_concepts
+            if str(value).strip()
+        }
 
         def avg_mastery(p: Dict[str, Any]) -> float:
             vals = [float(v) for v in (p.get("concept_profile", {}) or {}).values()]
@@ -1151,9 +1191,19 @@ class PeerSessionService:
         members_desc: List[str] = []
         for m in sorted_members:
             profile = m.get("concept_profile", {}) or {}
-            weakest = sorted(profile.items(), key=lambda x: x[1])[:3]
+            weakest = [
+                (cid, mastery)
+                for cid, mastery in sorted(profile.items(), key=lambda x: x[1])
+                if _normalize_key(str(cid)) in allowed_question_norms
+            ][:3]
             weak_str = ", ".join(f"{c}:{float(v):.0%}" for c, v in weakest) if weakest else "no profile data"
-            preferred_concept = self._pick_member_question_concept(m, focus_concept, topic, context_chunks)
+            preferred_concept = self._pick_member_question_concept(
+                m,
+                focus_concept,
+                topic,
+                context_chunks,
+                allowed_concepts=allowed_question_concepts,
+            )
             sid = str(m.get("student_id") or "")
             if sid:
                 preferred_concept_by_member[sid] = preferred_concept
@@ -1189,6 +1239,8 @@ class PeerSessionService:
             "- Set concept_id to a specific topic-level concept id, not a broad slide/week title.\n"
             "- Use each member's preferred_concept when provided.\n"
             "- Make each question answerable from provided context when available.\n"
+            "- Stay strictly inside the selected course/topic. Do not import concepts from other courses or domains.\n"
+            "- Do not create cross-domain analogies unless both sides of the analogy appear in the provided context.\n"
             "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
             "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
             "- For math type, format formulas/equations using LaTeX delimiters: inline `$...$`, display `$$...$$`.\n"
@@ -1255,6 +1307,15 @@ class PeerSessionService:
         topic_norm = _normalize_key(topic)
         context_chunks = context_chunks or []
         preferred_concept_by_member = preferred_concept_by_member or {}
+        allowed_concepts = list(dict.fromkeys([
+            *[
+                str(chunk.get("concept_id") or "").strip()
+                for chunk in context_chunks
+                if str(chunk.get("concept_id") or "").strip()
+            ],
+            str(focus_concept or "").strip(),
+            str(topic or "").strip(),
+        ]))
         normalized: List[Dict[str, Any]] = []
 
         for i, q in enumerate(questions):
@@ -1281,6 +1342,7 @@ class PeerSessionService:
                     focus_concept,
                     topic,
                     context_chunks,
+                    allowed_concepts=allowed_concepts,
                 )
             ).strip()
 
@@ -1353,10 +1415,25 @@ class PeerSessionService:
         anchor = ""
         if context_chunks:
             anchor = context_chunks[0].get("text", "")[:220].strip()
+        allowed_concepts = list(dict.fromkeys([
+            *[
+                str(chunk.get("concept_id") or "").strip()
+                for chunk in context_chunks
+                if str(chunk.get("concept_id") or "").strip()
+            ],
+            str(focus or "").strip(),
+            str(topic or "").strip(),
+        ]))
 
         questions: List[Dict[str, Any]] = []
         for i, m in enumerate(member_profiles):
-            member_concept = self._pick_member_question_concept(m, focus, topic, context_chunks)
+            member_concept = self._pick_member_question_concept(
+                m,
+                focus,
+                topic,
+                context_chunks,
+                allowed_concepts=allowed_concepts,
+            )
             stem = f"Explain the key ideas of '{member_concept}' and how they relate to '{topic}'."
             if anchor:
                 stem += f" Use this course fact in your explanation: \"{anchor}\"."
@@ -1398,6 +1475,15 @@ class PeerSessionService:
         focus_norm = _normalize_key(focus_concept)
         topic_norm = _normalize_key(topic)
         by_id = {str(m.get("student_id") or "").strip(): m for m in member_profiles if str(m.get("student_id") or "").strip()}
+        allowed_concepts = list(dict.fromkeys([
+            *[
+                str(chunk.get("concept_id") or "").strip()
+                for chunk in context_chunks
+                if str(chunk.get("concept_id") or "").strip()
+            ],
+            str(focus_concept or "").strip(),
+            str(topic or "").strip(),
+        ]))
 
         changed = False
         retargeted: List[Dict[str, Any]] = []
@@ -1411,6 +1497,7 @@ class PeerSessionService:
                 focus_concept,
                 topic,
                 context_chunks,
+                allowed_concepts=allowed_concepts,
             )
             preferred_norm = _normalize_key(preferred)
             if not preferred_norm:

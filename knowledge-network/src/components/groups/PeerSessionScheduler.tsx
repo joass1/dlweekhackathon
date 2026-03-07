@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Video, Users, Loader2, Play, Sparkles } from 'lucide-react';
@@ -151,6 +151,23 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
     ? concepts.filter((c) => !c.courseId || c.courseId === selectedCourse)
     : concepts;
 
+  const scopedMemberProfiles = useMemo(() => {
+    const allowedConceptIds = new Set(filteredConcepts.map((concept) => concept.id));
+    if (!allowedConceptIds.size) {
+      return memberProfiles;
+    }
+
+    return memberProfiles.map((profile) => {
+      const scopedConceptProfile = Object.fromEntries(
+        Object.entries(profile.concept_profile || {}).filter(([conceptId]) => allowedConceptIds.has(conceptId)),
+      );
+      return {
+        ...profile,
+        concept_profile: scopedConceptProfile,
+      };
+    });
+  }, [filteredConcepts, memberProfiles]);
+
   useEffect(() => {
     if (!selectedTopic || concepts.length === 0) return;
     const exists = filteredConcepts.some((c) => c.id === selectedTopic);
@@ -176,7 +193,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         conceptId,
         selectedCourse || null,
         selectedCourseRow?.name || null,
-        memberProfiles,
+        scopedMemberProfiles,
         token,
       );
       router.push(`/groups/${groupId}/session?id=${result.session_id}`);
