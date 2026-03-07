@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles, ShieldCheck } from 'lucide-react';
+import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles, ShieldCheck, Upload, Folder, FileText, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
@@ -12,6 +12,7 @@ import { useSidebar } from '@/contexts/SidebarContext';
 import { CourseOption, DEFAULT_COURSES } from '@/lib/courses';
 import { useAuthedApi } from '@/hooks/useAuthedApi';
 import { GlowingEffect } from '@/components/ui/glowing-effect';
+import { normalizeTopicRow, TopicOption, UserTopicApiRow } from '@/types/topics';
 
 interface KGNode {
   id: string;
@@ -19,6 +20,7 @@ interface KGNode {
   mastery: number;
   status: 'mastered' | 'learning' | 'weak' | 'not_started';
   courseId?: string;
+  topicIds?: string[];
   category?: string;
   decayTimestamp?: string | null;
 }
@@ -52,6 +54,12 @@ interface AIRecommendation {
   disclaimer: string;
   provider?: string;
   model: string;
+}
+
+interface CourseTopicGroup {
+  id: string;
+  name: string;
+  topics: TopicOption[];
 }
 
 function formatLearningStatus(status: KGNode['status']) {
@@ -138,11 +146,22 @@ export default function Page() {
   const [progress, setProgress] = useState<StudentProgress | null>(null);
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }, ...DEFAULT_COURSES]);
+  const [topics, setTopics] = useState<TopicOption[]>([]);
   const [selectedCourse, setSelectedCourse] = useState('all');
+  const [selectedTopic, setSelectedTopic] = useState<string>('all');
   const [isKGExpanded, setIsKGExpanded] = useState(false);
   const [isNeedsAttentionOpen, setIsNeedsAttentionOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isCourseProgressOpen, setIsCourseProgressOpen] = useState(false);
+  const [isCourseTopicManagerOpen, setIsCourseTopicManagerOpen] = useState(false);
+  const [expandedManagerCourses, setExpandedManagerCourses] = useState<Set<string>>(new Set());
+  const [renamingCourseId, setRenamingCourseId] = useState<string | null>(null);
+  const [renamingCourseName, setRenamingCourseName] = useState('');
+  const [savingCourseId, setSavingCourseId] = useState<string | null>(null);
+  const [renamingTopicKey, setRenamingTopicKey] = useState<string | null>(null);
+  const [renamingTopicName, setRenamingTopicName] = useState('');
+  const [savingTopicKey, setSavingTopicKey] = useState<string | null>(null);
+  const [courseTopicManagerError, setCourseTopicManagerError] = useState<string | null>(null);
   const [showMapLabels, setShowMapLabels] = useState(false);
   const [actionCourse, setActionCourse] = useState('all');
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
@@ -166,10 +185,11 @@ export default function Page() {
     async function loadData() {
       setLoadWarning(null);
       try {
-        const [graphResult, courseResult, progressResult] = await Promise.allSettled([
+        const [graphResult, courseResult, progressResult, topicResult] = await Promise.allSettled([
           apiFetchWithAuth<{ nodes: KGNode[]; links: KGLink[] }>('/api/kg/graph'),
           apiFetchWithAuth<{ courses: CourseOption[] }>('/api/courses'),
           apiFetchWithAuth<StudentProgress>(`/api/students/${studentId}/progress`),
+          apiFetchWithAuth<{ topics?: UserTopicApiRow[] }>('/api/user-topics'),
         ]);
 
         const graphData =
@@ -184,6 +204,10 @@ export default function Page() {
           progressResult.status === 'fulfilled'
             ? progressResult.value
             : null;
+        const topicRows =
+          topicResult.status === 'fulfilled' && Array.isArray(topicResult.value.topics)
+            ? topicResult.value.topics
+            : [];
 
         if (graphResult.status === 'rejected') {
           setLoadWarning(
@@ -197,6 +221,17 @@ export default function Page() {
 
         const incoming: CourseOption[] = Array.isArray(courseData.courses) ? courseData.courses : DEFAULT_COURSES;
         setCourses([{ id: 'all', name: 'All Courses' }, ...incoming]);
+        setTopics(
+          Object.values(
+            topicRows
+              .map(normalizeTopicRow)
+              .filter((topic) => topic.id)
+              .reduce<Record<string, TopicOption>>((acc, topic) => {
+                acc[`${topic.courseId}::${topic.id}`] = topic;
+                return acc;
+              }, {})
+          )
+        );
 
         setNodes(
           (graphData.nodes ?? []).map((n: any) => ({
@@ -205,6 +240,9 @@ export default function Page() {
             mastery: Number(n.mastery ?? 0),
             status: (n.status ?? 'not_started') as KGNode['status'],
             courseId: n.courseId ? String(n.courseId) : undefined,
+            topicIds: Array.isArray((n as unknown as { topicIds?: unknown[] }).topicIds)
+              ? ((n as unknown as { topicIds?: unknown[] }).topicIds || []).map((topicId) => String(topicId))
+              : undefined,
             category: String(n.category ?? 'General'),
             decayTimestamp: n.decayTimestamp ?? null,
           }))
@@ -228,21 +266,49 @@ export default function Page() {
     loadData();
   }, [studentId, apiFetchWithAuth]);
 
+  const visibleTopics = useMemo(
+    () => (selectedCourse === 'all' ? topics : topics.filter((topic) => topic.courseId === selectedCourse)),
+    [selectedCourse, topics]
+  );
+  const selectedCourseName = useMemo(
+    () => courses.find((course) => course.id === selectedCourse)?.name ?? 'Course',
+    [courses, selectedCourse]
+  );
+
+  useEffect(() => {
+    if (selectedTopic === 'all') return;
+    if (!visibleTopics.some((topic) => topic.id === selectedTopic)) {
+      setSelectedTopic('all');
+    }
+  }, [selectedTopic, visibleTopics]);
+
   const filteredNodes = useMemo(() => {
-    if (selectedCourse === 'all') return nodes;
-    const selected = courses.find(c => c.id === selectedCourse);
-    if (!selected) return nodes;
-
     const normalize = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    const courseNameNorm = normalize(selected.name).replace(/\b\d+\b/g, '').trim();
-
-    return nodes.filter(n => {
-      if (n.courseId) return n.courseId === selectedCourse;
-      const categoryNorm = normalize(n.category ?? '');
+    const selectedCourseMeta = courses.find((course) => course.id === selectedCourse);
+    const courseNameNorm = normalize(selectedCourseMeta?.name ?? '').replace(/\b\d+\b/g, '').trim();
+    const courseScopedNodes = nodes.filter((node) => {
+      if (selectedCourse === 'all') return true;
+      if (node.courseId) return node.courseId === selectedCourse;
+      const categoryNorm = normalize(node.category ?? '');
       if (!categoryNorm || !courseNameNorm) return false;
-      return categoryNorm === courseNameNorm || categoryNorm.includes(courseNameNorm) || courseNameNorm.includes(categoryNorm);
+      return (
+        categoryNorm === courseNameNorm ||
+        categoryNorm.includes(courseNameNorm) ||
+        courseNameNorm.includes(categoryNorm)
+      );
     });
-  }, [nodes, selectedCourse, courses]);
+
+    if (selectedTopic === 'all') {
+      return courseScopedNodes;
+    }
+
+    const topicSet = new Set([selectedTopic]);
+    return courseScopedNodes.filter((node) => {
+      const nodeTopics = Array.isArray(node.topicIds) ? node.topicIds : [];
+      if (nodeTopics.some((topicId) => topicSet.has(topicId))) return true;
+      return topicSet.has(node.id);
+    });
+  }, [courses, nodes, selectedCourse, selectedTopic]);
 
   const filteredNodeIds = useMemo(() => new Set(filteredNodes.map(n => n.id)), [filteredNodes]);
   const linkNodeId = (end: string | { id?: string }) => typeof end === 'string' ? end : String(end?.id ?? '');
@@ -412,6 +478,156 @@ export default function Page() {
       .sort((a, b) => b.total - a.total);
   }, [nodes, courses]);
 
+  const dashboardCourseOptions = useMemo(
+    () => courses.filter((course) => course.id !== 'all'),
+    [courses]
+  );
+
+  const courseTopicGroups = useMemo<CourseTopicGroup[]>(() => {
+    const grouped = new Map<string, CourseTopicGroup>();
+
+    for (const course of dashboardCourseOptions) {
+      grouped.set(course.id, { id: course.id, name: course.name, topics: [] });
+    }
+
+    for (const topic of topics) {
+      const existing = grouped.get(topic.courseId);
+      if (existing) {
+        existing.topics.push(topic);
+      } else {
+        grouped.set(topic.courseId, {
+          id: topic.courseId,
+          name: topic.courseName || topic.courseId,
+          topics: [topic],
+        });
+      }
+    }
+
+    return Array.from(grouped.values())
+      .map((group) => ({
+        ...group,
+        topics: [...group.topics].sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [dashboardCourseOptions, topics]);
+
+  const topicRowKey = (topic: TopicOption) => topic.docId || `${topic.courseId}::${topic.id}`;
+
+  const openCourseTopicManager = () => {
+    setCourseTopicManagerError(null);
+    setIsCourseTopicManagerOpen(true);
+    setExpandedManagerCourses(new Set(courseTopicGroups.map((group) => group.id)));
+  };
+
+  const closeCourseTopicManager = () => {
+    setIsCourseTopicManagerOpen(false);
+    setCourseTopicManagerError(null);
+    setRenamingCourseId(null);
+    setRenamingCourseName('');
+    setSavingCourseId(null);
+    setRenamingTopicKey(null);
+    setRenamingTopicName('');
+    setSavingTopicKey(null);
+  };
+
+  const toggleManagerCourse = (courseId: string) => {
+    setExpandedManagerCourses((prev) => {
+      const next = new Set(prev);
+      if (next.has(courseId)) next.delete(courseId);
+      else next.add(courseId);
+      return next;
+    });
+  };
+
+  const startCourseRename = (courseId: string, courseName: string) => {
+    setCourseTopicManagerError(null);
+    setRenamingCourseId(courseId);
+    setRenamingCourseName(courseName);
+  };
+
+  const cancelCourseRename = () => {
+    setRenamingCourseId(null);
+    setRenamingCourseName('');
+    setSavingCourseId(null);
+  };
+
+  const saveCourseRename = async (courseId: string) => {
+    const nextName = renamingCourseName.trim();
+    if (!nextName) {
+      setCourseTopicManagerError('Course name cannot be empty.');
+      return;
+    }
+
+    setSavingCourseId(courseId);
+    setCourseTopicManagerError(null);
+    try {
+      await apiFetchWithAuth<{ course: CourseOption }>(
+        `/api/courses/${encodeURIComponent(courseId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ name: nextName }),
+        }
+      );
+
+      setCourses((prev) =>
+        prev.map((course) => (course.id === courseId ? { ...course, name: nextName } : course))
+      );
+      setTopics((prev) =>
+        prev.map((topic) => (topic.courseId === courseId ? { ...topic, courseName: nextName } : topic))
+      );
+      cancelCourseRename();
+    } catch (error) {
+      setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to rename course.');
+      setSavingCourseId(null);
+    }
+  };
+
+  const startTopicRename = (topic: TopicOption) => {
+    setCourseTopicManagerError(null);
+    setRenamingTopicKey(topicRowKey(topic));
+    setRenamingTopicName(topic.name);
+  };
+
+  const cancelTopicRename = () => {
+    setRenamingTopicKey(null);
+    setRenamingTopicName('');
+    setSavingTopicKey(null);
+  };
+
+  const saveTopicRename = async (topic: TopicOption) => {
+    const nextName = renamingTopicName.trim();
+    if (!nextName) {
+      setCourseTopicManagerError('Topic name cannot be empty.');
+      return;
+    }
+
+    if (!topic.docId) {
+      setCourseTopicManagerError('This topic cannot be renamed because its record id is missing.');
+      return;
+    }
+
+    const key = topicRowKey(topic);
+    setSavingTopicKey(key);
+    setCourseTopicManagerError(null);
+    try {
+      await apiFetchWithAuth(
+        `/api/user-topics/${encodeURIComponent(topic.docId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ topic_name: nextName }),
+        }
+      );
+
+      setTopics((prev) =>
+        prev.map((entry) => (topicRowKey(entry) === key ? { ...entry, name: nextName } : entry))
+      );
+      cancelTopicRename();
+    } catch (error) {
+      setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to rename topic.');
+      setSavingTopicKey(null);
+    }
+  };
+
   const faded = 'opacity-0 pointer-events-none';
   const visible = 'opacity-100';
   const BounceLoader = ({ size = 20 }: { size?: number }) => (
@@ -426,19 +642,20 @@ export default function Page() {
   );
 
   useEffect(() => {
-    if (!isNeedsAttentionOpen && !isActivityOpen && !isCourseProgressOpen) return;
+    if (!isNeedsAttentionOpen && !isActivityOpen && !isCourseProgressOpen && !isCourseTopicManagerOpen) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsNeedsAttentionOpen(false);
         setIsActivityOpen(false);
         setIsCourseProgressOpen(false);
+        closeCourseTopicManager();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isNeedsAttentionOpen, isActivityOpen, isCourseProgressOpen]);
+  }, [isNeedsAttentionOpen, isActivityOpen, isCourseProgressOpen, isCourseTopicManagerOpen]);
 
   useEffect(() => {
     if (loading || recommendationCandidates.length === 0) {
@@ -809,7 +1026,47 @@ export default function Page() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-6 mt-8">
+      <div className="grid grid-cols-1 gap-6">
+        <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
+          <Link href="/upload" className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Card className="glow-card p-5 rounded-2xl bg-gradient-to-br from-slate-900/70 via-fuchsia-950/25 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white relative overflow-hidden transition-all hover:shadow-fuchsia-500/10 hover:shadow-2xl">
+              <GlowingEffect spread={180} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
+              <div className="absolute top-0 left-0 w-1 h-full bg-fuchsia-400 rounded-l-xl" />
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-white/75">Upload Materials</p>
+                  <p className="text-lg font-semibold mt-1">Go To Upload Documents</p>
+                  <p className="text-xs text-white/60 mt-1">Add new files to any course and topic.</p>
+                </div>
+                <div className="p-2.5 rounded-xl bg-fuchsia-500/20">
+                  <Upload className="h-5 w-5 text-fuchsia-300" />
+                </div>
+              </div>
+            </Card>
+          </Link>
+
+          <button
+            type="button"
+            onClick={openCourseTopicManager}
+            className="w-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Card className="glow-card p-5 rounded-2xl bg-gradient-to-br from-slate-900/70 via-cyan-950/25 to-slate-900/70 backdrop-blur-md border-white/15 shadow-xl text-white relative overflow-hidden transition-all hover:shadow-cyan-500/10 hover:shadow-2xl">
+              <GlowingEffect spread={180} glow={true} disabled={false} proximity={64} borderWidth={2} variant="cyan" />
+              <div className="absolute top-0 left-0 w-1 h-full bg-cyan-400 rounded-l-xl" />
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-white/75">Course Catalog</p>
+                  <p className="text-lg font-semibold mt-1">Manage Courses And Topics</p>
+                  <p className="text-xs text-white/60 mt-1">View all groups and rename course or topic labels.</p>
+                </div>
+                <div className="p-2.5 rounded-xl bg-cyan-500/20">
+                  <Folder className="h-5 w-5 text-cyan-300" />
+                </div>
+              </div>
+            </Card>
+          </button>
+        </div>
+
         <div
           className={`group transition-all duration-300 ${
             isKGExpanded ? 'fixed inset-8 z-40' : ''
@@ -821,14 +1078,29 @@ export default function Page() {
                 <h3 className="font-semibold">Knowledge Map</h3>
                 <p className="text-xs text-white/60 mt-1">Use labels toggle for a cleaner map when many topics are present.</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <select
                   value={selectedCourse}
-                  onChange={e => setSelectedCourse(e.target.value)}
+                  onChange={(event) => setSelectedCourse(event.target.value)}
                   className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white"
                 >
-                  {courses.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                  {courses.map((course) => (
+                    <option key={course.id} value={course.id}>{course.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={selectedTopic}
+                  onChange={(event) => setSelectedTopic(event.target.value)}
+                  className="text-sm p-1.5 border border-white/20 rounded-lg bg-white/10 text-white min-w-[180px]"
+                  title="Filter by topic"
+                >
+                  <option value="all">
+                    {selectedCourse === 'all' ? 'All Topics' : `All Topics in ${selectedCourseName}`}
+                  </option>
+                  {visibleTopics.map((topic) => (
+                    <option key={`${topic.courseId}-${topic.id}`} value={topic.id}>
+                      {topic.name}
+                    </option>
                   ))}
                 </select>
                 <button
@@ -875,6 +1147,202 @@ export default function Page() {
           </Card>
         </div>
       </div>
+
+      {isCourseTopicManagerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4"
+          onClick={closeCourseTopicManager}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Manage courses and topics"
+            className="w-full max-w-3xl max-h-[82vh] rounded-2xl border border-white/20 bg-slate-900/90 backdrop-blur-md shadow-2xl text-slate-100 overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-4 border-b border-white/15 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-white">Manage Courses & Topics</h3>
+                <p className="text-xs text-white/65 mt-1">
+                  Rename existing course and topic labels used across the dashboard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCourseTopicManager}
+                className="p-1 rounded hover:bg-white/10 text-white/70"
+                aria-label="Close manager"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto max-h-[calc(82vh-78px)]">
+              {courseTopicManagerError && (
+                <div className="mb-3 rounded-lg border border-red-300/30 bg-red-500/15 px-3 py-2 text-sm text-red-100">
+                  {courseTopicManagerError}
+                </div>
+              )}
+
+              {courseTopicGroups.length === 0 ? (
+                <div className="text-center py-10 text-sm text-slate-300">
+                  No courses yet. Upload materials to create your first course.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {courseTopicGroups.map((group) => (
+                    <div key={group.id}>
+                      {renamingCourseId === group.id ? (
+                        <div className="flex items-center w-full p-2 rounded border border-white/25 bg-slate-800/55 gap-2">
+                          {expandedManagerCourses.has(group.id) ? (
+                            <ChevronDown className="w-4 h-4 flex-shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 flex-shrink-0" />
+                          )}
+                          <Folder className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                          <input
+                            autoFocus
+                            value={renamingCourseName}
+                            onChange={(event) => setRenamingCourseName(event.target.value)}
+                            className="flex-1 min-w-0 rounded border border-cyan-200/40 bg-slate-900/80 px-2 py-1 text-sm text-white outline-none focus:border-cyan-300"
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                void saveCourseRename(group.id);
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault();
+                                cancelCourseRename();
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void saveCourseRename(group.id)}
+                            disabled={savingCourseId === group.id}
+                            className="px-2 py-1 rounded border border-cyan-200/40 text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60 text-xs"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelCourseRename}
+                            disabled={savingCourseId === group.id}
+                            className="px-2 py-1 rounded border border-white/30 text-white/85 hover:bg-white/10 disabled:opacity-60 text-xs"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="group flex items-center w-full p-2 rounded border border-white/25 bg-slate-800/55 hover:bg-slate-700/65 transition-colors shadow-sm">
+                          <button
+                            type="button"
+                            className="flex items-center flex-1 min-w-0"
+                            onClick={() => toggleManagerCourse(group.id)}
+                            title={group.name}
+                          >
+                            {expandedManagerCourses.has(group.id) ? (
+                              <ChevronDown className="w-4 h-4 mr-2 flex-shrink-0" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 mr-2 flex-shrink-0" />
+                            )}
+                            <Folder className="w-5 h-5 mr-2 text-blue-500 flex-shrink-0" />
+                            <span className="font-semibold truncate text-white">{group.name}</span>
+                            <span className="ml-2 text-xs text-white/55">{group.topics.length} topic{group.topics.length === 1 ? '' : 's'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-cyan-200 transition-opacity flex-shrink-0 rounded hover:bg-white/10"
+                            title="Rename course"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              startCourseRename(group.id, group.name);
+                            }}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
+                      {expandedManagerCourses.has(group.id) && (
+                        <div className="ml-6 space-y-1 mt-1">
+                          {group.topics.length === 0 ? (
+                            <div className="rounded-md border border-white/20 bg-slate-900/45 px-3 py-2 text-xs text-white/60">
+                              No topics in this course yet.
+                            </div>
+                          ) : (
+                            group.topics.map((topic) => {
+                              const key = topicRowKey(topic);
+                              const isRenaming = renamingTopicKey === key;
+                              return (
+                                <div
+                                  key={key}
+                                  className="group flex items-center rounded-md border border-white/20 bg-slate-900/45"
+                                >
+                                  {isRenaming ? (
+                                    <div className="flex items-center flex-1 min-w-0 p-2 gap-2">
+                                      <FileText className="w-4 h-4 text-white/90 flex-shrink-0" />
+                                      <input
+                                        autoFocus
+                                        value={renamingTopicName}
+                                        onChange={(event) => setRenamingTopicName(event.target.value)}
+                                        className="flex-1 min-w-0 rounded border border-cyan-200/40 bg-slate-900/80 px-2 py-1 text-sm text-white outline-none focus:border-cyan-300"
+                                        onKeyDown={(event) => {
+                                          if (event.key === 'Enter') {
+                                            event.preventDefault();
+                                            void saveTopicRename(topic);
+                                          } else if (event.key === 'Escape') {
+                                            event.preventDefault();
+                                            cancelTopicRename();
+                                          }
+                                        }}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => void saveTopicRename(topic)}
+                                        disabled={savingTopicKey === key}
+                                        className="px-2 py-1 rounded border border-cyan-200/40 text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60 text-xs"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={cancelTopicRename}
+                                        disabled={savingTopicKey === key}
+                                        className="px-2 py-1 rounded border border-white/30 text-white/85 hover:bg-white/10 disabled:opacity-60 text-xs"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="flex items-center flex-1 min-w-0 p-2 text-sm text-white">
+                                        <FileText className="w-4 h-4 mr-2 flex-shrink-0 text-white/90" />
+                                        <span className="truncate font-medium">{topic.name}</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-cyan-200 transition-opacity flex-shrink-0 rounded hover:bg-white/10 mr-1"
+                                        title="Rename topic"
+                                        onClick={() => startTopicRename(topic)}
+                                      >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isNeedsAttentionOpen && (
         <div

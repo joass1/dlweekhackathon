@@ -87,16 +87,34 @@ class KnowledgeGraphEngine:
         prerequisites: Optional[List[str]] = None,
         initial_mastery: float = 0.0,
         course_id: Optional[str] = None,
+        topic_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Add a concept node to the graph.
 
         prerequisite edges point FROM prerequisite TO this concept
         (i.e. prerequisite → concept means 'prerequisite must be learned first').
         """
+        incoming_topic_ids = [
+            str(topic).strip()
+            for topic in (topic_ids or [])
+            if str(topic).strip()
+        ]
+
         if concept_id in self._graph:
             update_payload = {"title": title, "category": category}
             if course_id:
                 update_payload["course_id"] = course_id
+            existing_topics = self._graph.nodes[concept_id].get("topic_ids") or self._graph.nodes[concept_id].get("topicIds") or []
+            merged_topics = list(
+                dict.fromkeys(
+                    [
+                        *[str(topic).strip() for topic in existing_topics if str(topic).strip()],
+                        *incoming_topic_ids,
+                    ]
+                )
+            )
+            if merged_topics:
+                update_payload["topic_ids"] = merged_topics
             self._graph.nodes[concept_id].update(update_payload)
         else:
             self._graph.add_node(
@@ -104,6 +122,7 @@ class KnowledgeGraphEngine:
                 title=title,
                 category=category,
                 course_id=course_id,
+                topic_ids=incoming_topic_ids,
                 mastery_score=initial_mastery,
                 status=_compute_status(initial_mastery),
                 careless_badge=False,
@@ -420,6 +439,7 @@ Return ONLY valid JSON:
         openai_client: Any,
         course_id: Optional[str] = None,
         course_name: Optional[str] = None,
+        topic_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Use OpenAI to extract concepts + prerequisites from course text."""
         course_context = f"\nCourse: {course_name}\nCourse ID: {course_id}\n" if course_name or course_id else ""
@@ -467,6 +487,7 @@ Course material:
                 category=course_name or c.get("category", "General"),
                 prerequisites=[],
                 course_id=course_id,
+                topic_ids=[topic_id] if topic_id else [],
             )
         # Second pass: add prerequisite edges
         for c in concepts:
@@ -484,11 +505,18 @@ Course material:
     def _node_dict(self, node_id: str) -> Dict[str, Any]:
         data = self._graph.nodes[node_id]
         course_id = data.get("course_id") or data.get("courseId")
+        topic_ids = data.get("topic_ids") or data.get("topicIds") or []
+        normalized_topic_ids = [
+            str(topic_id).strip()
+            for topic_id in topic_ids
+            if str(topic_id).strip()
+        ]
         return {
             "id": node_id,
             "title": data.get("title", node_id),
             "category": data.get("category", "General"),
             "courseId": course_id,
+            "topicIds": normalized_topic_ids,
             "mastery": round(data.get("mastery_score", 0.0) * 100),
             "status": data.get("status", "not_started"),
             "carelessBadge": data.get("careless_badge", False),

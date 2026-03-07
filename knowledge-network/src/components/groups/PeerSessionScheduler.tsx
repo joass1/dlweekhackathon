@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Video, Users, Loader2, Play } from 'lucide-react';
+import { Video, Users, Loader2, Play, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useStudentId } from '@/hooks/useStudentId';
@@ -15,6 +15,7 @@ import {
   type SessionState,
   type MemberProfile,
 } from '@/services/peer';
+import { GlowingEffect } from '@/components/ui/glowing-effect';
 
 interface Props {
   groupId: string;
@@ -28,6 +29,10 @@ const LEVEL_OPTIONS = [
   { value: 3, label: 'Level 3 - SWAT' },
   { value: 4, label: 'Level 4 - Suit' },
 ] as const;
+const panelClass =
+  'glow-card relative overflow-hidden rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md shadow-xl text-white';
+const fieldClass =
+  'w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-400/25';
 
 export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = [] }: Props) {
   const router = useRouter();
@@ -44,7 +49,6 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
   const [selectedCourse, setSelectedCourse] = useState('');
   const [startError, setStartError] = useState<string | null>(null);
 
-  // Check for existing active session
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
@@ -53,13 +57,15 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         const session = await getActiveSession(groupId, token);
         if (!cancelled) setActiveSession(session);
       } catch {
-        // ignore
+        // Ignore empty state errors here and let the create flow handle it.
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
-    check();
-    return () => { cancelled = true; };
+    void check();
+    return () => {
+      cancelled = true;
+    };
   }, [groupId, getIdToken]);
 
   useEffect(() => {
@@ -78,20 +84,21 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         if (!cancelled) setCourses([]);
       }
     };
-    loadCourses();
-    return () => { cancelled = true; };
-  }, [getIdToken]);
+    void loadCourses();
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken, selectedCourse]);
 
   const filteredConcepts = selectedCourse
     ? concepts.filter((c) => !c.courseId || c.courseId === selectedCourse)
     : concepts;
 
   useEffect(() => {
-    if (!selectedTopic) return;
-    if (concepts.length === 0) return;
+    if (!selectedTopic || concepts.length === 0) return;
     const exists = filteredConcepts.some((c) => c.id === selectedTopic);
     if (!exists) setSelectedTopic('');
-  }, [selectedCourse, selectedTopic, concepts.length, filteredConcepts]);
+  }, [concepts.length, filteredConcepts, selectedTopic]);
 
   const handleStartSession = async () => {
     if (memberProfiles.length === 0) return;
@@ -138,63 +145,64 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
 
   if (loading) {
     return (
-      <Card className="mb-6">
-        <CardContent className="pt-6 flex items-center justify-center gap-2 text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" />
+      <Card className={`${panelClass} mb-6`}>
+        <GlowingEffect spread={220} glow={true} disabled={false} proximity={72} borderWidth={2} variant="cyan" />
+        <CardContent className="flex items-center justify-center gap-2 pt-6 text-white/65">
+          <Loader2 className="h-4 w-4 animate-spin" />
           Checking for active sessions...
         </CardContent>
       </Card>
     );
   }
 
-  // Active or waiting session exists
   if (activeSession && activeSession.status !== 'completed') {
-    const isInSession = activeSession.members.some(m => m.student_id === studentId);
-    const memberNames = activeSession.members.map(m => m.name).join(', ');
+    const isInSession = activeSession.members.some((m) => m.student_id === studentId);
+    const memberNames = activeSession.members.map((m) => m.name).join(', ');
 
     return (
-      <Card className="mb-6 ring-2 ring-[#03b2e6]">
+      <Card className={`${panelClass} mb-6 ring-1 ring-[#03b2e6]/35`}>
+        <GlowingEffect spread={240} glow={true} disabled={false} proximity={80} borderWidth={2} variant="cyan" />
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Video className="w-5 h-5 text-[#03b2e6]" />
+          <CardTitle className="flex items-center gap-2 text-white">
+            <Video className="h-5 w-5 text-[#4cc9f0]" />
             {activeSession.status === 'waiting' ? 'Session Starting...' : 'Session In Progress'}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="text-sm">
-            <p><span className="font-medium">Topic:</span> {activeSession.topic}</p>
+          <div className="text-sm text-white/80">
+            <p><span className="font-medium text-white">Topic:</span> {activeSession.topic}</p>
             {activeSession.level && (
-              <p className="text-muted-foreground mt-1">
-                <span className="font-medium">Level:</span> {activeSession.level}
+              <p className="mt-1 text-white/55">
+                <span className="font-medium text-white/75">Level:</span> {activeSession.level}
               </p>
             )}
             {(activeSession.course_name || activeSession.course_id) && (
-              <p className="text-muted-foreground mt-1">
-                <span className="font-medium">Course:</span> {activeSession.course_name || activeSession.course_id}
+              <p className="mt-1 text-white/55">
+                <span className="font-medium text-white/75">Course:</span> {activeSession.course_name || activeSession.course_id}
               </p>
             )}
-            <p className="text-muted-foreground mt-1">
-              <Users className="w-3 h-3 inline mr-1" />
+            <p className="mt-1 text-white/55">
+              <Users className="mr-1 inline h-3 w-3" />
               {activeSession.members.length}/{activeSession.expected_members} members joined
-              {memberNames && ` — ${memberNames}`}
+              {memberNames && ` - ${memberNames}`}
             </p>
           </div>
 
           {isInSession ? (
             <Button
               onClick={() => router.push(`/groups/${groupId}/session?id=${activeSession.session_id}`)}
-              className="bg-[#03b2e6] hover:bg-[#029ad0] text-white"
+              className="bg-[#03b2e6] text-white hover:bg-[#029ad0]"
             >
-              <Play className="w-4 h-4 mr-2" />
+              <Play className="mr-2 h-4 w-4" />
               Rejoin Session
             </Button>
           ) : (
             <Button
               onClick={handleJoinSession}
               disabled={joining}
-              className="bg-[#03b2e6] hover:bg-[#029ad0] text-white"
+              className="bg-[#03b2e6] text-white hover:bg-[#029ad0]"
             >
-              {joining ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Users className="w-4 h-4 mr-2" />}
+              {joining ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
               Join Session
             </Button>
           )}
@@ -203,27 +211,31 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
     );
   }
 
-  // No active session — show start form
   return (
-    <Card className="mb-6">
+    <Card className={`${panelClass} mb-6`}>
+      <GlowingEffect spread={240} glow={true} disabled={false} proximity={80} borderWidth={2} variant="cyan" />
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Video className="w-5 h-5" />
+        <CardTitle className="flex items-center gap-2 text-white">
+          <Video className="h-5 w-5 text-[#4cc9f0]" />
           Peer Learning Session
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Start a collaborative session with your hub. AI will generate round-robin questions targeting each member&apos;s weak areas.
-        </p>
+        <div className="flex items-start gap-3 rounded-2xl border border-cyan-300/15 bg-white/5 p-4">
+          <Sparkles className="mt-0.5 h-4 w-4 text-[#4cc9f0]" />
+          <p className="text-sm leading-6 text-white/70">
+            Start a collaborative session with your hub. Mentora will generate round-robin questions that target the
+            weak areas your group is best placed to help with.
+          </p>
+        </div>
 
         {courses.length > 0 && (
           <div>
-            <label className="text-sm font-medium block mb-2">Select course:</label>
+            <label className="mb-2 block text-sm font-medium text-white/80">Select course:</label>
             <select
               value={selectedCourse}
               onChange={(e) => setSelectedCourse(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+              className={fieldClass}
             >
               {courses.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -251,11 +263,11 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
 
         {filteredConcepts.length > 0 ? (
           <div>
-            <label className="text-sm font-medium block mb-2">Select a topic to study together:</label>
+            <label className="mb-2 block text-sm font-medium text-white/80">Select a topic to study together:</label>
             <select
               value={selectedTopic}
               onChange={(e) => setSelectedTopic(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+              className={fieldClass}
             >
               <option value="">Auto-pick from uploaded chunks</option>
               {filteredConcepts.map((c) => (
@@ -267,13 +279,13 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
           </div>
         ) : (
           <div>
-            <label className="text-sm font-medium block mb-2">Enter a topic to study together:</label>
+            <label className="mb-2 block text-sm font-medium text-white/80">Enter a topic to study together:</label>
             <input
               type="text"
               value={selectedTopic}
               onChange={(e) => setSelectedTopic(e.target.value)}
               placeholder="e.g. Sorting Algorithms, Neural Networks..."
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+              className={fieldClass}
             />
           </div>
         )}
@@ -281,28 +293,28 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         <Button
           onClick={handleStartSession}
           disabled={creating || memberProfiles.length === 0 || (!selectedTopic.trim() && !selectedCourse.trim())}
-          className="bg-[#03b2e6] hover:bg-[#029ad0] text-white"
+          className="bg-[#03b2e6] text-white hover:bg-[#029ad0]"
         >
           {creating ? (
             <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Creating Session...
             </>
           ) : (
             <>
-              <Video className="w-4 h-4 mr-2" />
+              <Video className="mr-2 h-4 w-4" />
               Start Session
             </>
           )}
         </Button>
 
         {memberProfiles.length === 0 && (
-          <p className="text-xs text-amber-600">
+          <p className="text-xs text-amber-300">
             Hub member data is needed to start a session. Make sure all members have uploaded materials and completed assessments.
           </p>
         )}
         {startError && (
-          <p className="text-xs text-red-600">
+          <p className="text-xs text-red-300">
             {startError.replace(/^API \d+:\s*/i, '')}
           </p>
         )}

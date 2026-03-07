@@ -280,6 +280,63 @@ def _courses_collection(student_id: str):
         return None
     return db.collection("users").document(student_id).collection("courses")
 
+
+def _slugify_identifier(value: str, fallback: str) -> str:
+    token = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(value or "").strip())
+    token = re.sub(r"-{2,}", "-", token).strip("-")
+    return token or fallback
+
+
+def _normalize_topic_payload(topic_id: str, topic_name: str, fallback_name: str) -> tuple[str, str]:
+    cleaned_name = str(topic_name or "").strip() or str(fallback_name or "").strip()
+    cleaned_id = _slugify_identifier(topic_id or cleaned_name, "topic")
+    if not cleaned_name:
+        cleaned_name = cleaned_id.replace("-", " ").title()
+    return cleaned_id, cleaned_name
+
+
+def _user_topic_doc_id(student_id: str, course_id: str, topic_id: str) -> str:
+    safe_student = _slugify_identifier(student_id, "user")
+    safe_course = _slugify_identifier(course_id, "uncategorized")
+    safe_topic = _slugify_identifier(topic_id, "topic")
+    return f"{safe_student}__{safe_course}__{safe_topic}"
+
+
+def _upsert_user_topic(
+    *,
+    student_id: str,
+    course_id: str,
+    course_name: str,
+    topic_id: str,
+    topic_name: str,
+    chunk_delta: int,
+) -> None:
+    if db is None:
+        return
+
+    try:
+        doc_id = _user_topic_doc_id(student_id, course_id, topic_id)
+        ref = db.collection("user_topics").document(doc_id)
+        existing = ref.get()
+        existing_data = existing.to_dict() if existing.exists else {}
+        prior_chunks = int(existing_data.get("chunkCount") or 0)
+        payload = {
+            "userId": student_id,
+            "courseId": course_id or "uncategorized",
+            "courseName": course_name or "Uncategorized",
+            "topicId": topic_id,
+            "topicName": topic_name,
+            "conceptId": topic_id,  # backwards-compatible alias for tutor scoping
+            "title": topic_name,
+            "chunkCount": max(0, prior_chunks + max(0, int(chunk_delta or 0))),
+            "updatedAt": datetime.now(timezone.utc),
+        }
+        if not existing.exists:
+            payload["createdAt"] = datetime.now(timezone.utc)
+        ref.set(payload, merge=True)
+    except Exception as exc:
+        print(f"Warning: failed to upsert user_topics for {student_id}: {exc}")
+
 def _collect_material_context(student_id: str, course_id: Optional[str] = None, max_chars: int = 6000) -> str:
     """Best-effort retrieval of uploaded chunk text for quiz generation grounding."""
     if db is None:
@@ -474,14 +531,20 @@ class CourseCreateRequest(BaseModel):
     id: Optional[str] = None
 
 
+class CourseUpdateRequest(BaseModel):
+    name: str
+
+
 class StudyMissionChunksRequest(BaseModel):
     course_id: Optional[str] = None
+    topic_ids: Optional[List[str]] = None
     concept_ids: Optional[List[str]] = None
     limit: int = 80
 
 
 class StudyMissionFlashcardsRequest(BaseModel):
     course_id: Optional[str] = None
+    topic_ids: Optional[List[str]] = None
     concept_ids: Optional[List[str]] = None
     num_cards: int = 12
     chunk_limit: int = 120
@@ -562,6 +625,115 @@ async def create_course(request: CourseCreateRequest, student_id: str = Depends(
         raise HTTPException(status_code=500, detail=f"Failed to create course: {str(e)}")
 
 
+@app.patch("/api/courses/{course_id}")
+async def update_course(course_id: str, request: CourseUpdateRequest, student_id: str = Depends(get_student_id)):
+    next_name = (request.name or "").strip()
+    if not next_name:
+        raise HTTPException(status_code=400, detail="Course name is required")
+
+    normalized_course_id = _slugify_identifier(course_id, "course")
+    if db is None:
+        return {"course": {"id": normalized_course_id, "name": next_name}, "topic_rows_updated": 0, "chunks_updated": 0}
+
+    try:
+        courses_col = _courses_collection(student_id)
+        if courses_col is None:
+            raise HTTPException(status_code=503, detail="Courses collection unavailable")
+
+        course_ref = courses_col.document(normalized_course_id)
+        course_snap = course_ref.get()
+        if course_snap.exists:
+            existing = course_snap.to_dict() or {}
+            if existing.get("userId") and existing.get("userId") != student_id:
+                raise HTTPException(status_code=403, detail="Not authorized")
+
+        now = datetime.now(timezone.utc)
+        course_ref.set(
+            {
+                "id": normalized_course_id,
+                "name": next_name,
+                "userId": student_id,
+                "updated_at": now,
+            },
+            merge=True,
+        )
+
+        topic_refs: List[Any] = []
+        try:
+            topics = (
+                db.collection("user_topics")
+                .where("userId", "==", student_id)
+                .where("courseId", "==", normalized_course_id)
+                .stream()
+            )
+            topic_refs = [topic_doc.reference for topic_doc in topics]
+        except Exception as exc:
+            print(f"Warning: failed to query user_topics for course rename user={student_id} course={normalized_course_id}: {exc}")
+
+        if topic_refs:
+            batch = db.batch()
+            pending_writes = 0
+            for topic_ref in topic_refs:
+                batch.update(
+                    topic_ref,
+                    {
+                        "courseName": next_name,
+                        "updatedAt": now,
+                    },
+                )
+                pending_writes += 1
+                if pending_writes >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    pending_writes = 0
+            if pending_writes > 0:
+                batch.commit()
+
+        chunk_refs: List[Any] = []
+        try:
+            chunks = (
+                db.collection(vector_search.collection_name)
+                .where("userId", "==", student_id)
+                .where("course_id", "==", normalized_course_id)
+                .stream()
+            )
+            chunk_refs = [chunk_doc.reference for chunk_doc in chunks]
+        except Exception as exc:
+            print(
+                f"Warning: failed to query knowledge chunks for course rename "
+                f"user={student_id} course={normalized_course_id}: {exc}"
+            )
+
+        if chunk_refs:
+            batch = db.batch()
+            pending_writes = 0
+            for chunk_ref in chunk_refs:
+                batch.update(
+                    chunk_ref,
+                    {
+                        "course_name": next_name,
+                        "updated_at": now,
+                    },
+                )
+                pending_writes += 1
+                if pending_writes >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    pending_writes = 0
+            if pending_writes > 0:
+                batch.commit()
+
+        return {
+            "course": {"id": normalized_course_id, "name": next_name},
+            "topic_rows_updated": len(topic_refs),
+            "chunks_updated": len(chunk_refs),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update course: {str(e)}")
+
+
 _STUDY_MISSION_FLASHCARD_STOPWORDS = {
     "about", "above", "after", "again", "against", "among", "and", "because", "before", "being",
     "between", "both", "could", "during", "each", "from", "have", "into", "just", "like", "many",
@@ -604,6 +776,7 @@ def _is_low_value_flashcard(front: str, back: str) -> bool:
 def _load_study_mission_chunks(
     student_id: str,
     course_id: Optional[str],
+    topic_ids: Optional[List[str]],
     concept_ids: Optional[List[str]],
     limit: int,
 ) -> List[Dict[str, Any]]:
@@ -621,6 +794,12 @@ def _load_study_mission_chunks(
 
     selected_course = (course_id or "").strip()
     scoped_course_id = selected_course if selected_course and selected_course != "all" else None
+    preferred_topics = [
+        str(topic_id).strip()
+        for topic_id in (topic_ids or [])
+        if str(topic_id).strip() and str(topic_id).strip().lower() not in {"all", "__all__"}
+    ]
+    topic_filter = set(preferred_topics)
     preferred_concepts = [
         str(concept_id).strip()
         for concept_id in (concept_ids or [])
@@ -639,7 +818,11 @@ def _load_study_mission_chunks(
 
             chunk_course_id = str(data.get("course_id") or "").strip()
             chunk_concept_id = str(data.get("concept_id") or "").strip()
+            chunk_topic_id = str(data.get("topic_id") or "").strip()
             if scoped_course_id and chunk_course_id != scoped_course_id:
+                continue
+            topic_match_id = chunk_topic_id or chunk_concept_id
+            if topic_filter and topic_match_id not in topic_filter:
                 continue
             if apply_concept_filter and concept_filter and chunk_concept_id not in concept_filter:
                 continue
@@ -654,6 +837,8 @@ def _load_study_mission_chunks(
                     "source": str(data.get("source") or ""),
                     "course_id": chunk_course_id or None,
                     "course_name": str(data.get("course_name") or ""),
+                    "topic_id": chunk_topic_id or topic_match_id or None,
+                    "topic_name": str(data.get("topic_name") or ""),
                     "concept_id": chunk_concept_id,
                     "chunk_index": chunk_index,
                 }
@@ -1016,6 +1201,7 @@ async def get_study_mission_chunks(request: StudyMissionChunksRequest, student_i
         chunks = _load_study_mission_chunks(
             student_id=student_id,
             course_id=request.course_id,
+            topic_ids=request.topic_ids,
             concept_ids=request.concept_ids,
             limit=request.limit,
         )
@@ -1035,6 +1221,7 @@ async def generate_study_mission_flashcards(
         chunks = _load_study_mission_chunks(
             student_id=student_id,
             course_id=request.course_id,
+            topic_ids=request.topic_ids,
             concept_ids=request.concept_ids,
             limit=safe_chunk_limit,
         )
@@ -1051,10 +1238,25 @@ async def upload_files(
     files: List[UploadFile] = File(...),
     course_id: str = Form(""),
     course_name: str = Form(""),
+    topic_id: str = Form(""),
+    topic_name: str = Form(""),
     student_id: str = Depends(get_student_id),
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
+
+    resolved_course_name = str(course_name or "").strip()
+    raw_course_id = str(course_id or "").strip() or resolved_course_name
+    resolved_course_id = _slugify_identifier(raw_course_id, "course") if raw_course_id else ""
+    has_explicit_topic = bool(str(topic_id or "").strip() or str(topic_name or "").strip())
+    base_topic_id = ""
+    base_topic_name = ""
+    if has_explicit_topic:
+        base_topic_id, base_topic_name = _normalize_topic_payload(
+            str(topic_id or "").strip(),
+            str(topic_name or "").strip(),
+            "Topic",
+        )
 
     uploaded_files = []
     kg_concepts_added = 0
@@ -1083,50 +1285,52 @@ async def upload_files(
                 continue
 
             full_text = " ".join(text_chunks)
+            fallback_topic_name = pathlib.Path(safe_name).stem
+            effective_topic_id, effective_topic_name = (
+                (base_topic_id, base_topic_name)
+                if has_explicit_topic
+                else _normalize_topic_payload("", "", fallback_topic_name)
+            )
 
             # Store in Firestore if available (non-fatal)
             if db is not None:
                 try:
-                    if course_id and course_name:
+                    if resolved_course_id and resolved_course_name:
                         courses_col = _courses_collection(student_id)
                         if courses_col is not None:
-                            courses_col.document(course_id).set(
+                            courses_col.document(resolved_course_id).set(
                                 {
-                                    "id": course_id,
-                                    "name": course_name,
+                                    "id": resolved_course_id,
+                                    "name": resolved_course_name,
                                     "userId": student_id,
                                     "updated_at": datetime.now(timezone.utc),
                                 },
                                 merge=True,
                             )
-                    topic_title = pathlib.Path(safe_name).stem
-                    # Per-file concept_id so each topic is independently retrievable
-                    concept_slug = topic_title.lower().replace(" ", "_").replace("-", "_")
                     batch = db.batch()
                     for i, chunk in enumerate(text_chunks):
                         doc_ref = db.collection(vector_search.collection_name).document()
                         batch.set(doc_ref, {
                             "text": chunk,
                             "source": safe_name,
-                            "course_id": course_id or None,
-                            "course_name": course_name or None,
-                            "concept_id": concept_slug,
+                            "course_id": resolved_course_id or None,
+                            "course_name": resolved_course_name or None,
+                            "topic_id": effective_topic_id,
+                            "topic_name": effective_topic_name,
+                            "concept_id": effective_topic_id,  # tutor compatibility alias
                             "userId": student_id,
                             "chunk_index": i,
                             "created_at": datetime.now(timezone.utc),
                         })
                     batch.commit()
-                    # Write user_topics entry for sidebar
-                    topic_ref = db.collection("user_topics").document()
-                    topic_ref.set({
-                        "userId": student_id,
-                        "courseId": course_id or "uncategorized",
-                        "courseName": course_name or "Uncategorized",
-                        "conceptId": concept_slug,
-                        "title": topic_title,
-                        "chunkCount": len(text_chunks),
-                        "createdAt": datetime.now(timezone.utc),
-                    })
+                    _upsert_user_topic(
+                        student_id=student_id,
+                        course_id=resolved_course_id or "uncategorized",
+                        course_name=resolved_course_name or "Uncategorized",
+                        topic_id=effective_topic_id,
+                        topic_name=effective_topic_name,
+                        chunk_delta=len(text_chunks),
+                    )
                 except Exception as e:
                     print(f"Warning: Firestore storage failed for {safe_name}: {e}")
 
@@ -1136,8 +1340,9 @@ async def upload_files(
                 added = user_kg_engine.build_from_material(
                     full_text,
                     openai_client,
-                    course_id=course_id or None,
-                    course_name=course_name or None,
+                    course_id=resolved_course_id or None,
+                    course_name=resolved_course_name or None,
+                    topic_id=effective_topic_id,
                 )
                 kg_concepts_added += len(added)
                 for node in added:
@@ -1557,6 +1762,7 @@ class BuildFromMaterialRequest(BaseModel):
     text: str
     course_id: Optional[str] = None
     course_name: Optional[str] = None
+    topic_id: Optional[str] = None
 
 
 @app.post("/api/kg/add_concept")
@@ -1691,6 +1897,7 @@ async def build_from_material(req: BuildFromMaterialRequest, student_id: str = D
             openai_client,
             course_id=req.course_id,
             course_name=req.course_name,
+            topic_id=req.topic_id,
         )
         return {"status": "ok", "added": len(added), "nodes": added}
     except Exception as e:
@@ -1830,17 +2037,106 @@ async def get_user_topics(student_id: str = Depends(get_student_id)):
         topics = []
         for d in docs:
             data = d.to_dict() or {}
+            normalized_topic_id = str(data.get("topicId") or data.get("conceptId") or "").strip()
             topics.append({
                 "id": d.id,
                 "courseId": data.get("courseId", "uncategorized"),
                 "courseName": data.get("courseName", "Uncategorized"),
-                "conceptId": data.get("conceptId", ""),
-                "title": data.get("title", d.id),
+                "topicId": normalized_topic_id,
+                "topicName": data.get("topicName", data.get("title", d.id)),
+                "conceptId": normalized_topic_id,
+                "title": data.get("title", data.get("topicName", d.id)),
                 "chunkCount": data.get("chunkCount", 0),
             })
         return {"topics": topics}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateUserTopicRequest(BaseModel):
+    topic_name: str
+
+
+@app.patch("/api/user-topics/{doc_id}")
+async def update_user_topic(
+    doc_id: str,
+    payload: UpdateUserTopicRequest,
+    student_id: str = Depends(get_student_id),
+):
+    if db is None:
+        raise HTTPException(status_code=503, detail="Firestore unavailable")
+
+    next_topic_name = str(payload.topic_name or "").strip()
+    if not next_topic_name:
+        raise HTTPException(status_code=400, detail="topic_name is required")
+
+    ref = db.collection("user_topics").document(doc_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    data = snap.to_dict() or {}
+    if data.get("userId") != student_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    topic_alias = str(data.get("topicId") or data.get("conceptId") or "").strip()
+    previous_name = str(data.get("topicName") or data.get("title") or topic_alias).strip()
+    now = datetime.now(timezone.utc)
+
+    ref.set(
+        {
+            "topicName": next_topic_name,
+            "title": next_topic_name,
+            "updatedAt": now,
+        },
+        merge=True,
+    )
+
+    updated_chunk_refs = {}
+    if topic_alias:
+        for field_name in ("concept_id", "topic_id"):
+            try:
+                matches = (
+                    db.collection(vector_search.collection_name)
+                    .where("userId", "==", student_id)
+                    .where(field_name, "==", topic_alias)
+                    .stream()
+                )
+                for chunk_doc in matches:
+                    updated_chunk_refs[chunk_doc.id] = chunk_doc.reference
+            except Exception as exc:
+                print(
+                    f"Warning: failed to query knowledge chunks for topic rename "
+                    f"user={student_id} topic={topic_alias} field={field_name}: {exc}"
+                )
+
+        if updated_chunk_refs:
+            batch = db.batch()
+            pending_writes = 0
+            for chunk_ref in updated_chunk_refs.values():
+                batch.update(
+                    chunk_ref,
+                    {
+                        "topic_name": next_topic_name,
+                        "updated_at": now,
+                    },
+                )
+                pending_writes += 1
+                if pending_writes >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    pending_writes = 0
+            if pending_writes > 0:
+                batch.commit()
+
+    return {
+        "status": "updated",
+        "doc_id": doc_id,
+        "topic_id": topic_alias,
+        "topic_name": next_topic_name,
+        "previous_topic_name": previous_name,
+        "chunks_updated": len(updated_chunk_refs),
+    }
 
 
 @app.delete("/api/user-topics/{doc_id}")
@@ -1854,18 +2150,21 @@ async def delete_user_topic(doc_id: str, student_id: str = Depends(get_student_i
     data = snap.to_dict() or {}
     if data.get("userId") != student_id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    concept_id = data.get("conceptId")
-    if concept_id:
+    topic_alias = str(data.get("topicId") or data.get("conceptId") or "").strip()
+    if topic_alias:
         try:
-            chunks = db.collection("knowledge_chunks") \
-                .where("userId", "==", student_id) \
-                .where("concept_id", "==", concept_id).stream()
+            chunks = (
+                db.collection("knowledge_chunks")
+                .where("userId", "==", student_id)
+                .where("concept_id", "==", topic_alias)
+                .stream()
+            )
             batch = db.batch()
             for c in chunks:
                 batch.delete(c.reference)
             batch.commit()
         except Exception as e:
-            print(f"Warning: cascade delete failed for concept_id={concept_id}: {e}")
+            print(f"Warning: cascade delete failed for topic={topic_alias}: {e}")
     ref.delete()
     return {"status": "deleted", "doc_id": doc_id}
 

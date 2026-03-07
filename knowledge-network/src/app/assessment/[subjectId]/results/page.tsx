@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useEffect, useState } from 'react';
 import Image from 'next/image';
@@ -17,6 +17,8 @@ type ReviewItem = {
   mistake_type?: string;
   rationale?: string;
 };
+
+const glassCardClass = 'rounded-2xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
 
 export default function AssessmentResultsPage() {
   const router = useRouter();
@@ -128,11 +130,11 @@ export default function AssessmentResultsPage() {
   if (loading) {
     return (
       <div className="min-h-full flex items-center justify-center">
-        <div className="text-center rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg px-8 py-10 text-slate-900">
+        <div className={`text-center ${glassCardClass} px-8 py-10 text-white`}>
           <div className="flex items-center justify-center">
             <Image src="/logo-images/favicon.png" alt="Loading" width={48} height={48} className="animate-bounce" priority />
           </div>
-          <p className="mt-4 text-slate-700">Loading results...</p>
+          <p className="mt-4 text-white/70">Loading results...</p>
         </div>
       </div>
     );
@@ -140,67 +142,71 @@ export default function AssessmentResultsPage() {
 
   return (
     <div className="min-h-full nav-safe-top pb-8">
-      <div className="max-w-5xl mx-auto px-4 text-slate-900">
+      <div className="max-w-5xl mx-auto px-4 text-white">
         <div className="text-center mb-10">
           <h1 className="text-3xl font-bold mb-3">Quiz Summary</h1>
-          <p className="text-slate-700">{(subjectId || '').replace(/-/g, ' ')}</p>
+          <p className="text-white/70">{(subjectId || '').replace(/-/g, ' ')}</p>
         </div>
 
         <div className="grid md:grid-cols-4 gap-4 mb-8">
-          <div className="rounded-lg p-4 shadow-lg border border-black/10 bg-white/65 backdrop-blur-sm">
-            <p className="text-xs text-slate-600">Score</p>
-            <p className="text-2xl font-semibold">{Math.round(summary?.score ?? 0)}%</p>
+          <div className={`${glassCardClass} p-4`}>
+            <p className="text-xs text-white/60">Score</p>
+            <p className="text-2xl font-semibold text-white">{Math.round(summary?.score ?? 0)}%</p>
           </div>
-          <div className="rounded-lg p-4 shadow-lg border border-black/10 bg-white/65 backdrop-blur-sm">
-            <p className="text-xs text-slate-600">Blind Spots Found</p>
-            <p className="text-2xl font-semibold">{summary?.blind_spot_found_count ?? 0}</p>
+          <div className={`${glassCardClass} p-4`}>
+            <p className="text-xs text-white/60">Blind Spots Found</p>
+            <p className="text-2xl font-semibold text-white">{summary?.blind_spot_found_count ?? 0}</p>
           </div>
-          <div className="rounded-lg p-4 shadow-lg border border-black/10 bg-white/65 backdrop-blur-sm">
-            <p className="text-xs text-slate-600">Blind Spots Resolved</p>
-            <p className="text-2xl font-semibold">{summary?.blind_spot_resolved_count ?? 0}</p>
+          <div className={`${glassCardClass} p-4`}>
+            <p className="text-xs text-white/60">Blind Spots Resolved</p>
+            <p className="text-2xl font-semibold text-white">{summary?.blind_spot_resolved_count ?? 0}</p>
           </div>
-          <div className="rounded-lg p-4 shadow-lg border border-black/10 bg-white/65 backdrop-blur-sm">
-            <p className="text-xs text-slate-600">Self-Awareness</p>
-            <p className="text-2xl font-semibold">{selfAwareness !== null ? `${Math.round(selfAwareness * 100)}%` : '-'}</p>
+          <div className={`${glassCardClass} p-4`}>
+            <p className="text-xs text-white/60">Self-Awareness</p>
+            <p className="text-2xl font-semibold text-white">{selfAwareness !== null ? `${Math.round(selfAwareness * 100)}%` : '-'}</p>
           </div>
         </div>
 
         {!summary?.review?.length && !loading ? (
-          <div className="rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg p-6 mb-8 text-center text-slate-700">
+          <div className={`${glassCardClass} p-6 mb-8 text-center text-white/70`}>
             No detailed results available for this assessment.
           </div>
         ) : null}
 
         {!!summary?.review?.length && (
-          <div className="rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg p-6 mb-8">
-            <h2 className="text-lg font-semibold mb-3">Question Review</h2>
+          <div className={`${glassCardClass} p-6 mb-8`}>
+            <h2 className="text-lg font-semibold mb-3 text-white">Question Review</h2>
             <div className="space-y-4">
               {summary.review.map((item, idx) => (
                 <div
                   key={item.question_id}
-                  className={`rounded border p-4 ${
+                  className={`rounded-xl border p-4 ${
                     item.is_correct
-                      ? 'border-emerald-300/40 bg-emerald-100/70'
-                      : 'border-red-300/40 bg-red-100/70'
+                      ? 'border-emerald-400/30 bg-emerald-500/15'
+                      : 'border-red-400/30 bg-red-500/15'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium">Q{idx + 1}. {item.stem}</p>
+                    <p className="text-sm font-medium text-white">Q{idx + 1}. {item.stem}</p>
                     <span
                       className={`text-xs px-2 py-1 rounded-full ${
-                        item.is_correct ? 'bg-emerald-200/80 text-emerald-900' : 'bg-red-200/80 text-red-900'
+                        item.is_correct ? 'bg-emerald-500/25 text-emerald-200' : 'bg-red-500/25 text-red-200'
                       }`}
                     >
                       {item.is_correct ? 'Correct' : 'Incorrect'}
                     </span>
                   </div>
-                  <div className="mt-3 grid md:grid-cols-2 gap-3 text-sm text-slate-800">
-                    <p><span className="font-medium">Your answer:</span> {item.selected_answer}</p>
-                    <p><span className="font-medium">Correct answer:</span> {item.correct_answer}</p>
-                    <p><span className="font-medium">Confidence:</span> {item.confidence_1_to_5}/5</p>
-                    <p><span className="font-medium">Classification:</span> {item.mistake_type || 'none'}</p>
+                  <div className="mt-3 grid md:grid-cols-2 gap-3 text-sm text-white/80">
+                    <p><span className="font-medium text-white">Your answer:</span> {item.selected_answer}</p>
+                    <p><span className="font-medium text-white">Correct answer:</span> {item.correct_answer}</p>
+                    <p><span className="font-medium text-white">Confidence:</span> {item.confidence_1_to_5}/5</p>
+                    <p><span className="font-medium text-white">Classification:</span>{' '}
+                      <span className={item.mistake_type === 'careless' ? 'text-amber-300' : item.mistake_type === 'conceptual' ? 'text-red-300' : 'text-emerald-300'}>
+                        {item.mistake_type || 'correct'}
+                      </span>
+                    </p>
                   </div>
-                  {!item.is_correct && item.rationale ? <p className="mt-2 text-sm text-slate-600">{item.rationale}</p> : null}
+                  {!item.is_correct && item.rationale ? <p className="mt-2 text-sm text-white/60">{item.rationale}</p> : null}
                 </div>
               ))}
             </div>
@@ -216,7 +222,7 @@ export default function AssessmentResultsPage() {
           </button>
           <button
             onClick={() => router.push('/assessment')}
-            className="border border-black/20 text-slate-900 px-8 py-3 rounded-full hover:bg-white/400"
+            className="border border-white/20 text-white px-8 py-3 rounded-full hover:bg-white/10"
           >
             Back to Assessments
           </button>
@@ -225,6 +231,3 @@ export default function AssessmentResultsPage() {
     </div>
   );
 }
-
-
-

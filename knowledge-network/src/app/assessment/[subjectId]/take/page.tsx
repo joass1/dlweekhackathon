@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams, useSearchParams } from 'next/navigation';
@@ -32,6 +32,8 @@ const SUBMITTING_QUIZ_PHRASES = [
   'Preparing your summary...',
   'Almost done...',
 ];
+
+const glassCardClass = 'rounded-2xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
 
 export default function AssessmentTakePage() {
   const router = useRouter();
@@ -204,9 +206,9 @@ export default function AssessmentTakePage() {
   if (isLoadingQuiz) {
     return (
       <div className="min-h-full flex items-center justify-center">
-        <div className="text-center rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm shadow-lg px-8 py-10 text-slate-900">
+        <div className={`text-center ${glassCardClass} px-8 py-10 text-white`}>
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03b2e6] mx-auto"></div>
-          <p className="mt-4 text-slate-700">{GENERATING_QUIZ_PHRASES[loadingPhraseIdx]}</p>
+          <p className="mt-4 text-white/70">{GENERATING_QUIZ_PHRASES[loadingPhraseIdx]}</p>
         </div>
       </div>
     );
@@ -215,7 +217,7 @@ export default function AssessmentTakePage() {
   if (loadError) {
     return (
       <div className="min-h-full flex items-center justify-center px-4">
-        <div className="max-w-md w-full text-center rounded-xl border border-red-300/40 bg-red-500/15 backdrop-blur-sm p-6 text-slate-900 shadow-lg">
+        <div className="max-w-md w-full text-center rounded-2xl border border-red-300/30 bg-red-500/15 backdrop-blur-xl p-6 text-white shadow-lg">
           <h2 className="text-lg font-semibold text-red-100 mb-2">Quiz load failed</h2>
           <p className="text-sm text-red-100/90 mb-4">{loadError}</p>
           <button className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]" onClick={() => window.location.reload()}>
@@ -229,9 +231,9 @@ export default function AssessmentTakePage() {
   if (isEmptyAssessment) {
     return (
       <div className="min-h-full flex items-center justify-center px-4">
-        <div className="max-w-md w-full text-center rounded-xl border border-black/10 bg-white/65 backdrop-blur-sm p-6 text-slate-900 shadow-lg">
+        <div className={`max-w-md w-full text-center ${glassCardClass} p-6 text-white`}>
           <h2 className="text-lg font-semibold mb-2">No assessment available yet</h2>
-          <p className="text-sm text-slate-700 mb-4">
+          <p className="text-sm text-white/70 mb-4">
             Your knowledge map has no concepts for this assessment yet. Upload study materials first.
           </p>
           <button className="bg-[#03b2e6] text-white px-4 py-2 rounded-full hover:bg-[#029ad0]" onClick={() => router.push('/upload')}>
@@ -245,12 +247,12 @@ export default function AssessmentTakePage() {
   return (
     <div className="min-h-full nav-safe-top pb-8">
       <div className="max-w-3xl mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-2 text-slate-900">LearnGraph Assessment: {subjectId.replace(/-/g, ' ')}</h1>
-        <p className="text-sm text-slate-700 mb-8">Answer each question, then rate how confident you are in your answer.</p>
+        <h1 className="text-2xl font-bold mb-2 text-white">Mentora Assessment: {subjectId.replace(/-/g, ' ')}</h1>
+        <p className="text-sm text-white/70 mb-8">Answer each question, then rate how confident you are in your answer.</p>
 
         <div className="space-y-8">
           {questions.map((question) => (
-            <div key={question.question_id} className="border border-black/10 bg-white/65 backdrop-blur-sm p-6 rounded-lg shadow-lg text-slate-900">
+            <div key={question.question_id} className={`${glassCardClass} p-6 text-white`}>
               <h3 className="text-lg font-medium mb-1">{question.stem}</h3>
               <span className="inline-block text-xs px-2 py-1 rounded-full mb-4 bg-[#03b2e6]/20 border border-[#03b2e6]/30 text-[#4cc9f0]">
                 {question.difficulty}
@@ -263,7 +265,7 @@ export default function AssessmentTakePage() {
                     className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${
                       answers[question.question_id] === index
                         ? 'border-[#03b2e6]/70 bg-[#03b2e6]/20'
-                        : 'border-black/10 bg-white/40 hover:bg-white/400'
+                        : 'border-white/15 bg-white/5 hover:bg-white/10'
                     }`}
                     onClick={() => handleAnswer(question.question_id, index)}
                   >
@@ -275,7 +277,7 @@ export default function AssessmentTakePage() {
                       onChange={() => handleAnswer(question.question_id, index)}
                       className="mr-3 accent-[#03b2e6]"
                     />
-                    <label htmlFor={`${question.question_id}-${index}`} className="cursor-pointer flex-1 text-slate-900">
+                    <label htmlFor={`${question.question_id}-${index}`} className="cursor-pointer flex-1 text-white">
                       {option}
                     </label>
                   </div>
@@ -283,8 +285,8 @@ export default function AssessmentTakePage() {
               </div>
 
               {answers[question.question_id] !== undefined && (
-                <div className="mt-4 p-4 bg-white/400 rounded-lg border border-black/10">
-                  <label className="block text-sm font-medium text-slate-900 mb-2">How confident are you in this answer?</label>
+                <div className="mt-4 p-4 bg-white/5 rounded-lg border border-white/15">
+                  <label className="block text-sm font-medium text-white mb-2">How confident are you in this answer?</label>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-red-300 w-14">Guessing</span>
                     <input
@@ -301,7 +303,7 @@ export default function AssessmentTakePage() {
                       }
                       className="flex-1 accent-[#03b2e6] cursor-pointer"
                     />
-                    <span className="text-sm font-semibold w-6 text-center text-slate-900">{confidenceRatings[question.question_id] || 3}</span>
+                    <span className="text-sm font-semibold w-6 text-center text-white">{confidenceRatings[question.question_id] || 3}</span>
                     <span className="text-xs text-green-300 w-14 text-right">Certain</span>
                   </div>
                 </div>
@@ -323,6 +325,3 @@ export default function AssessmentTakePage() {
     </div>
   );
 }
-
-
-
