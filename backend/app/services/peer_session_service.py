@@ -1973,6 +1973,11 @@ class PeerSessionService:
         target_mastery = prior_after_decay + (raw_updated - prior_after_decay) * base_weight
         delta = target_mastery - prior_after_decay
         delta = max(-max_drop, min(max_gain, delta))
+        if not is_correct:
+            if normalized_mistake == "careless":
+                delta = max(-min(max_drop, 0.015), min(0.0, delta))
+            else:
+                delta = min(0.0, delta)
         return _clamp(prior_after_decay + delta)
 
     def _update_student_mastery(

@@ -639,6 +639,7 @@ def _calibrate_bkt_state(
     prior_after_decay = float(bkt_result.get("mastery_after_decay", updated_state.mastery) or updated_state.mastery)
     raw_updated = float(bkt_result.get("updated_mastery", updated_state.mastery) or updated_state.mastery)
     origin = (update_origin or "assessment").strip().lower()
+    normalized_mistake = (mistake_type or "normal").strip().lower()
 
     base_weight = {
         "assessment": 0.42,
@@ -663,7 +664,7 @@ def _calibrate_bkt_state(
         confidence_norm = (clamped_conf - 1) / 4.0
         if is_correct:
             confidence_weight = 0.75 + 0.25 * confidence_norm
-        elif (mistake_type or "").strip().lower() == "careless":
+        elif normalized_mistake == "careless":
             confidence_weight = 0.7 + 0.15 * confidence_norm
         else:
             confidence_weight = 0.8 + 0.2 * confidence_norm
@@ -671,6 +672,14 @@ def _calibrate_bkt_state(
     target_mastery = prior_after_decay + (raw_updated - prior_after_decay) * base_weight * confidence_weight
     delta = target_mastery - prior_after_decay
     delta = max(-max_drop, min(max_gain, delta))
+    if not is_correct:
+        # Wrong answers should never surface as mastery gains in product UX.
+        # Careless misses are capped at neutral-to-small-negative; conceptual misses
+        # can fall further, but never rise above the prior state.
+        if normalized_mistake == "careless":
+            delta = max(-min(max_drop, 0.015), min(0.0, delta))
+        else:
+            delta = min(0.0, delta)
 
     calibrated = ConceptState(**updated_state.__dict__).normalized()
     calibrated.mastery = _clamp_float(prior_after_decay + delta)
