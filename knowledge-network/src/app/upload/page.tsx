@@ -226,6 +226,8 @@ export default function UploadPage() {
         files?: { filename: string; chunks: number; status?: 'success' | 'error'; error?: string }[];
         comprehensive_quiz_ticket?: string;
         uploaded_concept_ids?: string[];
+        quiz_ready?: boolean;
+        quiz_error?: string | null;
       }>('/upload', {
         method: 'POST',
         body: formData,
@@ -240,7 +242,8 @@ export default function UploadPage() {
       setUploadedFiles((prev) => [...prev, ...normalized]);
 
       const hasSuccess = normalized.some((file) => file.status === 'success');
-      if (hasSuccess) {
+      const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
+      if (hasSuccess && ticket) {
         setIsStartingAssessment(true);
         setSelectedTopic(resolvedTopicId);
         setNewTopicName('');
@@ -251,20 +254,17 @@ export default function UploadPage() {
             ? result.uploaded_concept_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
             : [];
           window.sessionStorage.setItem('last_uploaded_concept_ids', JSON.stringify(uploadedConceptIds));
-        }
-
-        const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
-        if (ticket && typeof window !== 'undefined') {
           window.sessionStorage.setItem('comprehensive_quiz_ticket', ticket);
         }
 
         setTimeout(() => {
-          router.push(
-            ticket
-              ? `/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`
-              : '/assessment/all-concepts/take'
-          );
+          router.push(`/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`);
         }, 500);
+      } else if (hasSuccess && !ticket) {
+        setUploadError(
+          result?.quiz_error ||
+            'Upload finished, but Mentora could not build a grounded GPT quiz from this material. Try clearer text-based notes.'
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed';

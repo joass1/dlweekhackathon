@@ -28,6 +28,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
   const { loading, user, signOut } = useAuth();
   const { isCollapsed } = useSidebar();
   const isAuthPage = pathname === '/auth/signin';
+  const isDashboardPage = pathname === '/';
   const navRef = useRef<HTMLDivElement | null>(null);
   const [isDocked, setIsDocked] = useState(false);
   const [isHoverExpanded, setIsHoverExpanded] = useState(false);
@@ -116,10 +117,18 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
     return <>{children}</>;
   }
 
+  const shellClassName = cn(
+    'relative flex h-dvh overflow-hidden overscroll-none bg-slate-950',
+    isDashboardPage && 'bg-cover bg-center bg-no-repeat bg-fixed'
+  );
+  const shellStyle = isDashboardPage
+    ? { backgroundImage: "url('/backgrounds/dashboardback2.png')" }
+    : undefined;
+
   return (
     <div
-      className="relative flex h-dvh overflow-hidden overscroll-none bg-cover bg-center bg-no-repeat bg-fixed"
-      style={{ backgroundImage: "url('/backgrounds/dashboardback2.png')" }}
+      className={shellClassName}
+      style={shellStyle}
     >
       <NavBar
         ref={navRef}
@@ -196,7 +205,7 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
         </div>
       </div>
 
-      <main className="h-full min-w-0 flex-1 overflow-y-auto overscroll-contain">
+      <main className="relative h-full min-w-0 flex-1 overflow-y-auto overscroll-none">
         {children}
       </main>
     </div>

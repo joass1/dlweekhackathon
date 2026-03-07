@@ -157,6 +157,7 @@ peer_session_service = PeerSessionService(db, _openai_client)
 _comprehensive_quiz_unlocks: Dict[str, datetime] = {}
 _comprehensive_quiz_tickets: Dict[str, str] = {}
 _comprehensive_quiz_ticket_concepts: Dict[str, List[str]] = {}
+_comprehensive_quiz_ticket_context: Dict[str, Dict[str, Optional[str]]] = {}
 COMPREHENSIVE_QUIZ_UNLOCK_MINUTES = 15
 
 
@@ -212,9 +213,21 @@ def _consume_comprehensive_unlock(student_id: str) -> None:
         pass
 
 
-def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime, concepts: Optional[List[str]] = None) -> None:
+def _set_comprehensive_ticket(
+    student_id: str,
+    ticket: str,
+    expires_at: datetime,
+    concepts: Optional[List[str]] = None,
+    *,
+    course_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+) -> None:
     _comprehensive_quiz_tickets[student_id] = ticket
     _comprehensive_quiz_ticket_concepts[student_id] = list(dict.fromkeys([c for c in (concepts or []) if c]))
+    _comprehensive_quiz_ticket_context[student_id] = {
+        "course_id": str(course_id or "").strip() or None,
+        "topic_id": str(topic_id or "").strip() or None,
+    }
     if db is None:
         return
     try:
@@ -223,6 +236,7 @@ def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime
                 "comprehensive_quiz_ticket": ticket,
                 "comprehensive_quiz_ticket_expires_at": expires_at.isoformat(),
                 "comprehensive_quiz_ticket_concepts": _comprehensive_quiz_ticket_concepts.get(student_id, []),
+                "comprehensive_quiz_ticket_context": _comprehensive_quiz_ticket_context.get(student_id, {}),
             },
             merge=True,
         )
@@ -230,49 +244,63 @@ def _set_comprehensive_ticket(student_id: str, ticket: str, expires_at: datetime
         pass
 
 
-def _validate_and_consume_comprehensive_ticket(student_id: str, ticket: str) -> tuple[bool, List[str]]:
+def _validate_and_consume_comprehensive_ticket(student_id: str, ticket: str) -> tuple[bool, Dict[str, Any]]:
     if not ticket:
-        return False, []
+        return False, {}
     in_memory = _comprehensive_quiz_tickets.get(student_id)
     if in_memory and in_memory == ticket:
         _comprehensive_quiz_tickets.pop(student_id, None)
         concepts = _comprehensive_quiz_ticket_concepts.pop(student_id, [])
-        return True, concepts
+        context = _comprehensive_quiz_ticket_context.pop(student_id, {})
+        return True, {
+            "concepts": concepts,
+            "course_id": str(context.get("course_id") or "").strip() or None,
+            "topic_id": str(context.get("topic_id") or "").strip() or None,
+        }
     if db is None:
-        return False, []
+        return False, {}
     try:
         doc_ref = db.collection("students").document(student_id)
         doc = doc_ref.get()
         if not doc.exists:
-            return False, []
+            return False, {}
         data = doc.to_dict() or {}
         stored = str(data.get("comprehensive_quiz_ticket") or "")
         if stored != ticket:
-            return False, []
+            return False, {}
         raw_exp = data.get("comprehensive_quiz_ticket_expires_at")
         if not isinstance(raw_exp, str) or not raw_exp.strip():
-            return False, []
+            return False, {}
         exp = datetime.fromisoformat(raw_exp.replace("Z", "+00:00"))
         if exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
         if exp < datetime.now(timezone.utc):
-            return False, []
+            return False, {}
         concepts = data.get("comprehensive_quiz_ticket_concepts") or []
         if not isinstance(concepts, list):
             concepts = []
+        context = data.get("comprehensive_quiz_ticket_context") or {}
+        if not isinstance(context, dict):
+            context = {}
         doc_ref.set(
             {
                 "comprehensive_quiz_ticket": None,
                 "comprehensive_quiz_ticket_expires_at": None,
                 "comprehensive_quiz_ticket_concepts": [],
+                "comprehensive_quiz_ticket_context": {},
             },
             merge=True,
         )
         _comprehensive_quiz_tickets.pop(student_id, None)
         _comprehensive_quiz_ticket_concepts.pop(student_id, None)
-        return True, [str(c) for c in concepts if str(c).strip()]
+        _comprehensive_quiz_ticket_context.pop(student_id, None)
+        return True, {
+            "concepts": [str(c) for c in concepts if str(c).strip()],
+            "course_id": str(context.get("course_id") or "").strip() or None,
+            "topic_id": str(context.get("topic_id") or "").strip() or None,
+        }
     except Exception:
-        return False, []
+        return False, {}
 
 
 def _courses_collection(student_id: str):
@@ -337,7 +365,12 @@ def _upsert_user_topic(
     except Exception as exc:
         print(f"Warning: failed to upsert user_topics for {student_id}: {exc}")
 
-def _collect_material_context(student_id: str, course_id: Optional[str] = None, max_chars: int = 6000) -> str:
+def _collect_material_context(
+    student_id: str,
+    course_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+    max_chars: int = 6000,
+) -> str:
     """Best-effort retrieval of uploaded chunk text for quiz generation grounding."""
     if db is None:
         return ""
@@ -346,6 +379,8 @@ def _collect_material_context(student_id: str, course_id: Optional[str] = None, 
         query = col.where("userId", "==", student_id)
         if course_id:
             query = query.where("course_id", "==", course_id)
+        if topic_id:
+            query = query.where("topic_id", "==", topic_id)
         try:
             docs = list(query.order_by("created_at", direction="DESCENDING").limit(30).stream())
         except Exception:
@@ -1350,8 +1385,14 @@ async def upload_files(
 
             text_chunks = process_file(str(file_path))
             if not text_chunks:
-                uploaded_files.append({"filename": safe_name, "chunks": 0, "status": "success"})
-                successful_uploads += 1
+                uploaded_files.append(
+                    {
+                        "filename": safe_name,
+                        "chunks": 0,
+                        "status": "error",
+                        "error": "No extractable text found in this file.",
+                    }
+                )
                 continue
 
             full_text = " ".join(text_chunks)
@@ -1404,8 +1445,11 @@ async def upload_files(
                 except Exception as e:
                     print(f"Warning: Firestore storage failed for {safe_name}: {e}")
 
-            # Build knowledge graph from the extracted text
+            # Build knowledge graph from the extracted text. This must succeed
+            # before we auto-start a grounded comprehensive quiz.
             try:
+                if not openai_api_key:
+                    raise RuntimeError("OPENAI_API_KEY is not configured on the backend.")
                 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
                 added = user_kg_engine.build_from_material(
                     full_text,
@@ -1425,6 +1469,26 @@ async def upload_files(
                         suggested_quiz_concept = first_id.strip()
             except Exception as e:
                 print(f"Warning: KG build failed for {safe_name}: {e}")
+                uploaded_files.append(
+                    {
+                        "filename": safe_name,
+                        "chunks": len(text_chunks),
+                        "status": "error",
+                        "error": f"Concept extraction failed: {e}",
+                    }
+                )
+                continue
+
+            if not added:
+                uploaded_files.append(
+                    {
+                        "filename": safe_name,
+                        "chunks": len(text_chunks),
+                        "status": "error",
+                        "error": "No quiz-ready concepts could be extracted from this file.",
+                    }
+                )
+                continue
 
             uploaded_files.append({"filename": safe_name, "chunks": len(text_chunks), "status": "success"})
             successful_uploads += 1
@@ -1437,13 +1501,24 @@ async def upload_files(
             if file_path.exists():
                 file_path.unlink()
 
-    if successful_uploads > 0:
+    if successful_uploads > 0 and uploaded_concept_ids:
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=COMPREHENSIVE_QUIZ_UNLOCK_MINUTES)
         ticket = uuid4().hex
         _set_comprehensive_unlock(student_id, expires_at)
-        _set_comprehensive_ticket(student_id, ticket, expires_at, uploaded_concept_ids)
+        _set_comprehensive_ticket(
+            student_id,
+            ticket,
+            expires_at,
+            uploaded_concept_ids,
+            course_id=resolved_course_id or None,
+            topic_id=base_topic_id or None,
+        )
     else:
         ticket = None
+    quiz_ready = bool(ticket)
+    quiz_error = None if quiz_ready else (
+        "Mentora stored the file, but could not extract enough grounded concepts to generate a quiz from this upload."
+    )
 
     return {
         "message": f"Processed {len(uploaded_files)} files, extracted {kg_concepts_added} concepts",
@@ -1452,6 +1527,8 @@ async def upload_files(
         "suggested_quiz_concept": suggested_quiz_concept,
         "comprehensive_quiz_ticket": ticket,
         "uploaded_concept_ids": uploaded_concept_ids,
+        "quiz_ready": quiz_ready,
+        "quiz_error": quiz_error,
     }
 
 
@@ -1484,32 +1561,43 @@ async def generate_quiz(request: QuizGenerateRequest, student_id: str = Depends(
         requested = (request.concept or "").strip().lower()
         all_aliases = {"all", "all-concepts", "all_concepts", "__all__", "comprehensive"}
         if requested in all_aliases:
-            ticket_ok, ticket_concepts = _validate_and_consume_comprehensive_ticket(
+            ticket_ok, ticket_payload = _validate_and_consume_comprehensive_ticket(
                 student_id, str(request.upload_ticket or "")
             )
-            unlock_until = _get_comprehensive_unlock(student_id)
-            now = datetime.now(timezone.utc)
-            unlock_ok = unlock_until is not None and unlock_until >= now
-            if ticket_ok and ticket_concepts:
-                concept_ids = list(dict.fromkeys([c for c in ticket_concepts if c]))
-            else:
-                sorted_nodes = sorted(
-                    nodes,
-                    key=lambda n: (
-                        float(n.get("mastery", 0.0)),
-                        str(n.get("id", "")),
+            if not ticket_ok:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This comprehensive quiz session is no longer valid. "
+                        "Re-upload your materials to generate a fresh quiz grounded in that upload."
                     ),
                 )
-                concept_ids = [str(n.get("id")) for n in sorted_nodes if str(n.get("id", "")).strip()]
+            ticket_concepts = ticket_payload.get("concepts") or []
+            concept_ids = list(dict.fromkeys([str(c).strip() for c in ticket_concepts if str(c).strip()]))
             if not concept_ids:
                 raise HTTPException(
                     status_code=400,
-                    detail="No concepts available for comprehensive quiz generation.",
+                    detail=(
+                        "The latest upload did not produce grounded concepts for quiz generation. "
+                        "Please upload clearer text-based notes or a more content-rich file."
+                    ),
                 )
             request.concept = "all-concepts"
             request.concepts = concept_ids
             request.num_questions = 20
-            request.material_context = _collect_material_context(student_id)
+            request.material_context = _collect_material_context(
+                student_id,
+                course_id=str(ticket_payload.get("course_id") or "").strip() or None,
+                topic_id=str(ticket_payload.get("topic_id") or "").strip() or None,
+            )
+            if not request.material_context.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Mentora could not recover grounded material excerpts for the latest upload. "
+                        "Please re-upload the material and try again."
+                    ),
+                )
             # One-time unlock; next comprehensive run requires a fresh upload.
             _consume_comprehensive_unlock(student_id)
         else:

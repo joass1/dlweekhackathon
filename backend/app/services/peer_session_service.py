@@ -33,6 +33,10 @@ BOSS_NAME_BY_CHARACTER: Dict[str, str] = {
     "suit": "Dean of Mastery",
 }
 
+BOSS_HEALTH_OVERRIDES: Dict[str, float] = {
+    "suit": 120.0,
+}
+
 TEAM_HP_PER_LEVEL: Dict[int, float] = {
     1: 0.0,
     2: 160.0,
@@ -56,6 +60,15 @@ def _utc_now() -> datetime:
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+def _to_float(value: Any, default: float) -> float:
+    if value is None or isinstance(value, bool):
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def _normalize_key(value: str) -> str:
@@ -1150,6 +1163,15 @@ class PeerSessionService:
         return round(base * density_scale, 2)
 
     @staticmethod
+    def _initial_boss_health(level: int, total_expected_answers: int, character_id: Optional[str] = None) -> float:
+        normalized_level = _normalize_level(level, default=1)
+        boss_character = str(character_id or _boss_character_for_level(normalized_level)).strip()
+        override = BOSS_HEALTH_OVERRIDES.get(boss_character)
+        if override is not None:
+            return float(override)
+        return float(max(80.0, min(500.0, total_expected_answers * 22.0)))
+
+    @staticmethod
     def _question_time_limit_for_level(level: int) -> Optional[int]:
         return QUESTION_TIME_LIMIT_SEC_BY_LEVEL.get(level)
 
@@ -1205,11 +1227,11 @@ class PeerSessionService:
 
         members = data.get("members", []) or []
         total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
-        party_health_max = float(data.get("party_health_max", 0.0) or 0.0)
+        party_health_max = _to_float(data.get("party_health_max"), 0.0)
         if party_health_max <= 0:
             party_health_max = self._initial_party_health(level, total_expected_answers)
 
-        party_health_current = float(data.get("party_health_current", party_health_max) or party_health_max)
+        party_health_current = _to_float(data.get("party_health_current"), party_health_max)
         party_health_current = round(max(0.0, party_health_current - float(damage)), 2)
         party_defeated = party_health_current <= 0.0
         boss_attack_count = int(data.get("boss_attack_count", 0) or 0) + 1
@@ -1641,8 +1663,8 @@ class PeerSessionService:
 
         now = _utc_now()
         total_expected_answers = max(1, max(2, len(normalized_profiles)) * max(1, len(questions)))
-        boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
         boss_character_id = _boss_character_for_level(normalized_level)
+        boss_health_max = self._initial_boss_health(normalized_level, total_expected_answers, boss_character_id)
         party_health_max = self._initial_party_health(normalized_level, total_expected_answers)
         question_time_limit_sec = self._question_time_limit_for_level(normalized_level)
         session_doc = {
@@ -1816,11 +1838,11 @@ class PeerSessionService:
         if "boss_health_max" not in data or "boss_health_current" not in data:
             members = data.get("members", []) or []
             total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
-            boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
-            boss_health_current = float(data.get("boss_health_current", boss_health_max) or boss_health_max)
-            boss_defeated = boss_health_current <= 0
             raw_level = _normalize_level(data.get("level", 1), default=1)
             raw_character = str(data.get("boss_character_id") or _boss_character_for_level(raw_level)).strip()
+            boss_health_max = self._initial_boss_health(raw_level, total_expected_answers, raw_character)
+            boss_health_current = _to_float(data.get("boss_health_current"), boss_health_max)
+            boss_defeated = boss_health_current <= 0
             data["boss_name"] = str(data.get("boss_name") or _boss_name_for_character(raw_character))
             data["boss_health_max"] = boss_health_max
             data["boss_health_current"] = min(boss_health_current, boss_health_max)
@@ -1841,16 +1863,33 @@ class PeerSessionService:
         stored_boss_name = str(data.get("boss_name") or "").strip()
         members = data.get("members", []) or []
         total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
+        expected_boss_health_max = self._initial_boss_health(
+            normalized_level,
+            total_expected_answers,
+            expected_boss_character,
+        )
+        boss_health_max = _to_float(data.get("boss_health_max"), expected_boss_health_max)
+        if expected_boss_character == "suit":
+            boss_health_max = expected_boss_health_max
+        boss_health_max = round(max(1.0, boss_health_max), 2)
+        boss_health_current = _to_float(data.get("boss_health_current"), boss_health_max)
+        boss_health_current = round(max(0.0, min(boss_health_current, boss_health_max)), 2)
+        boss_defeated = bool(data.get("boss_defeated", boss_health_current <= 0.0))
+        stored_outcome = str(data.get("battle_outcome") or "").strip().lower()
+        if boss_health_current <= 0 or stored_outcome == "victory":
+            boss_defeated = True
+        if boss_defeated:
+            boss_health_current = 0.0
         expected_party_health = self._initial_party_health(normalized_level, total_expected_answers)
         expected_time_limit = self._question_time_limit_for_level(normalized_level)
         current_started = data.get("current_question_started_at")
         if not current_started:
             current_started = _parse_dt(data.get("created_at"), _utc_now()).isoformat()
 
-        party_health_max = float(data.get("party_health_max", expected_party_health) or expected_party_health)
+        party_health_max = _to_float(data.get("party_health_max"), expected_party_health)
         if normalized_level < 2:
             party_health_max = 0.0
-        party_health_current = float(data.get("party_health_current", party_health_max) or party_health_max)
+        party_health_current = _to_float(data.get("party_health_current"), party_health_max)
         party_health_current = round(max(0.0, min(party_health_current, party_health_max if party_health_max > 0 else 0.0)), 2)
         party_defeated = bool(data.get("party_defeated", party_health_current <= 0.0 and party_health_max > 0))
         if party_health_max <= 0:
@@ -1859,7 +1898,7 @@ class PeerSessionService:
         battle_outcome = str(data.get("battle_outcome") or "pending")
         if party_defeated:
             battle_outcome = "defeat"
-        elif bool(data.get("boss_defeated", False)):
+        elif boss_defeated:
             battle_outcome = "victory"
         elif battle_outcome not in {"pending", "victory", "defeat"}:
             battle_outcome = "pending"
@@ -1875,9 +1914,15 @@ class PeerSessionService:
             updates["boss_character_id"] = expected_boss_character
         if stored_boss_name != expected_boss_name:
             updates["boss_name"] = expected_boss_name
-        if float(data.get("party_health_max", -1) or -1) != party_health_max:
+        if _to_float(data.get("boss_health_max"), -1.0) != boss_health_max:
+            updates["boss_health_max"] = boss_health_max
+        if _to_float(data.get("boss_health_current"), -1.0) != boss_health_current:
+            updates["boss_health_current"] = boss_health_current
+        if bool(data.get("boss_defeated", False)) != boss_defeated:
+            updates["boss_defeated"] = boss_defeated
+        if _to_float(data.get("party_health_max"), -1.0) != party_health_max:
             updates["party_health_max"] = party_health_max
-        if float(data.get("party_health_current", -1) or -1) != party_health_current:
+        if _to_float(data.get("party_health_current"), -1.0) != party_health_current:
             updates["party_health_current"] = party_health_current
         if bool(data.get("party_defeated", False)) != party_defeated:
             updates["party_defeated"] = party_defeated
@@ -1903,6 +1948,9 @@ class PeerSessionService:
                 "level": normalized_level,
                 "boss_character_id": expected_boss_character,
                 "boss_name": expected_boss_name,
+                "boss_health_max": boss_health_max,
+                "boss_health_current": boss_health_current,
+                "boss_defeated": boss_defeated,
                 "party_health_max": party_health_max,
                 "party_health_current": party_health_current,
                 "party_defeated": party_defeated,
@@ -2005,6 +2053,14 @@ class PeerSessionService:
             None,
         )
         if existing_answer:
+            existing_boss_health_max = _to_float(data.get("boss_health_max"), 0.0)
+            existing_boss_health_current = _to_float(data.get("boss_health_current"), 0.0)
+            existing_boss_defeated = bool(data.get("boss_defeated", existing_boss_health_current <= 0.0))
+            existing_outcome = str(data.get("battle_outcome") or "").strip().lower()
+            if existing_boss_health_current <= 0 or existing_outcome == "victory":
+                existing_boss_defeated = True
+            if existing_boss_defeated:
+                existing_boss_health_current = 0.0
             return {
                 "question_id": question_id,
                 "submitted_by": student_id,
@@ -2016,11 +2072,11 @@ class PeerSessionService:
                 "hint": str(existing_answer.get("hint", "")),
                 "explanation": question.get("explanation", ""),
                 "damage_dealt": float(existing_answer.get("damage_dealt", 0.0)),
-                "boss_health_max": float(data.get("boss_health_max", 0.0) or 0.0),
-                "boss_health_current": float(data.get("boss_health_current", 0.0) or 0.0),
-                "boss_defeated": bool(data.get("boss_defeated", False)),
-                "party_health_max": float(data.get("party_health_max", 0.0) or 0.0),
-                "party_health_current": float(data.get("party_health_current", 0.0) or 0.0),
+                "boss_health_max": existing_boss_health_max,
+                "boss_health_current": existing_boss_health_current,
+                "boss_defeated": existing_boss_defeated,
+                "party_health_max": _to_float(data.get("party_health_max"), 0.0),
+                "party_health_current": _to_float(data.get("party_health_current"), 0.0),
                 "party_defeated": bool(data.get("party_defeated", False)),
                 "battle_outcome": str(data.get("battle_outcome") or "pending"),
                 "boss_attacked": bool(existing_answer.get("boss_attacked", False)),
@@ -2069,13 +2125,22 @@ class PeerSessionService:
 
         score = float(evaluation.get("score", 0.0))
         damage_dealt = self._compute_boss_damage(score, is_correct, mistake_type)
-        boss_health_max = float(data.get("boss_health_max", 0.0) or 0.0)
+        boss_health_max = _to_float(data.get("boss_health_max"), 0.0)
         if boss_health_max <= 0:
             total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
-            boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
-        boss_health_current = float(data.get("boss_health_current", boss_health_max) or boss_health_max)
+            boss_character_id = str(
+                data.get("boss_character_id") or _boss_character_for_level(normalized_level)
+            ).strip()
+            boss_health_max = self._initial_boss_health(
+                normalized_level,
+                total_expected_answers,
+                boss_character_id,
+            )
+        boss_health_current = _to_float(data.get("boss_health_current"), boss_health_max)
         boss_health_current = round(max(0.0, boss_health_current - damage_dealt), 2)
         boss_defeated = boss_health_current <= 0.0
+        if boss_defeated:
+            boss_health_current = 0.0
 
         party_damage_taken = self._compute_party_damage_from_answer(
             level=normalized_level,
@@ -2161,8 +2226,8 @@ class PeerSessionService:
             "boss_health_max": boss_health_max,
             "boss_health_current": boss_health_current,
             "boss_defeated": boss_defeated,
-            "party_health_max": float(data.get("party_health_max", 0.0) or 0.0),
-            "party_health_current": float(data.get("party_health_current", 0.0) or 0.0),
+            "party_health_max": _to_float(data.get("party_health_max"), 0.0),
+            "party_health_current": _to_float(data.get("party_health_current"), 0.0),
             "party_defeated": bool(data.get("party_defeated", False)),
             "battle_outcome": str(data.get("battle_outcome") or battle_outcome),
             "boss_attacked": boss_attacked,
@@ -2200,12 +2265,28 @@ class PeerSessionService:
         timeout_updates = self._apply_timeout_penalties(data, ref=ref)
         if timeout_updates:
             data.update(timeout_updates)
+        boss_health_max = _to_float(data.get("boss_health_max"), 0.0)
+        boss_health_current = _to_float(data.get("boss_health_current"), boss_health_max)
+        boss_defeated = bool(data.get("boss_defeated", boss_health_current <= 0.0))
+        if boss_health_current <= 0.0 or str(data.get("battle_outcome") or "").strip().lower() == "victory":
+            boss_defeated = True
+        if boss_defeated:
+            boss_health_current = 0.0
+        boss_sync_updates: Dict[str, Any] = {}
+        if _to_float(data.get("boss_health_current"), -1.0) != boss_health_current:
+            boss_sync_updates["boss_health_current"] = boss_health_current
+        if bool(data.get("boss_defeated", False)) != boss_defeated:
+            boss_sync_updates["boss_defeated"] = boss_defeated
+        if boss_sync_updates:
+            ref.update(boss_sync_updates)
+            data.update(boss_sync_updates)
+
         if str(data.get("status", "")) == "completed":
             return {
                 "status": "completed",
                 "current_question_index": int(data.get("current_question_index", 0) or 0),
-                "at_last_question": bool(data.get("boss_defeated", False)),
-                "boss_defeated": bool(data.get("boss_defeated", False)),
+                "at_last_question": boss_defeated,
+                "boss_defeated": boss_defeated,
                 "party_defeated": bool(data.get("party_defeated", False)),
             }
         if bool(data.get("party_defeated", False)):
@@ -2213,7 +2294,7 @@ class PeerSessionService:
                 "status": "completed",
                 "current_question_index": int(data.get("current_question_index", 0) or 0),
                 "at_last_question": False,
-                "boss_defeated": bool(data.get("boss_defeated", False)),
+                "boss_defeated": boss_defeated,
                 "party_defeated": True,
             }
 
@@ -2255,11 +2336,11 @@ class PeerSessionService:
                 "status": "active",
                 "current_question_index": next_idx,
                 "at_last_question": False,
-                "boss_defeated": bool(data.get("boss_defeated", False)),
+                "boss_defeated": boss_defeated,
             }
 
         # End of current queue. If boss still alive, generate another round.
-        if bool(data.get("boss_defeated", False)):
+        if boss_defeated:
             ref.update({"current_question_index": current, "status": data.get("status", "active")})
             return {
                 "status": data.get("status", "active"),

@@ -260,7 +260,13 @@ export function FluidDropdown({
                     role="listbox"
                     aria-label={ariaLabel}
                   >
-                    <div className="overflow-y-auto py-1">
+                    <div
+                      className="overflow-y-auto overscroll-contain py-1 pr-1 [scrollbar-color:rgba(148,163,184,0.45)_transparent] [scrollbar-width:thin]"
+                      style={{
+                        maxHeight: Math.max(120, menuPosition.maxHeight - 12),
+                        WebkitOverflowScrolling: "touch",
+                      }}
+                    >
                       {options.map((option, index) => {
                         const Icon = option.icon ?? defaultIcon
                         const color = option.color ?? selectedColor

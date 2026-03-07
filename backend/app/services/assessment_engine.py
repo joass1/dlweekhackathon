@@ -834,11 +834,14 @@ class AssessmentEngine:
         chosen = concept_list[: min(len(concept_list), num_questions)]
         concept_csv = ", ".join(chosen)
         system_prompt = (
-            "You generate fast, valid MCQ quizzes. "
+            "You generate grounded multiple-choice quizzes from uploaded study material only. "
             "Return ONLY valid JSON with key 'questions'. "
             "Each question must include: concept, stem, options(4), correct_answer, explanation, difficulty. "
             "concept must be one of the provided concepts. "
-            "Questions must test factual/conceptual understanding from provided material, not study advice."
+            "Every question must be directly answerable from the uploaded excerpts. "
+            "Do not invent facts, examples, or terminology not supported by the excerpts. "
+            "Do not ask meta-learning, study-strategy, confidence, or test-taking questions. "
+            "If the excerpts do not support a question, omit it rather than guessing."
         )
         user_prompt = (
             f"Generate exactly {num_questions} questions across these concepts: {concept_csv}. "
@@ -846,15 +849,20 @@ class AssessmentEngine:
             "Use a mix of question formats: definition, scenario application, misconception diagnosis, compare/contrast, "
             "and edge-case reasoning. Do not repeat the same stem pattern. "
             "Do NOT ask meta-learning questions (e.g., study strategy, confidence-only prompts). "
+            "Do NOT use generic placeholder questions. "
+            "Each stem should reference the actual subject matter from the uploaded excerpts. "
             "Output JSON: {\"questions\": [{\"concept\":\"...\",\"stem\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],"
             "\"correct_answer\":\"...\",\"explanation\":\"...\",\"difficulty\":\"easy|medium|hard\"}]}"
         )
         if material_context:
             user_prompt += (
-                "\nUse these uploaded material excerpts as primary source of truth. "
-                "Every question should be answerable from this content.\n"
+                "\nUse these uploaded material excerpts as the ONLY source of truth. "
+                "Every question should be answerable from this content, and the explanation should stay grounded in it.\n"
                 f"{material_context[:4000]}"
             )
+        else:
+            self._last_quiz_generation_error = "No grounded material context was provided."
+            return []
         try:
             completion = self.client.chat.completions.create(
                 model="gpt-5.2",
@@ -906,29 +914,6 @@ class AssessmentEngine:
                 idx += 1
                 if len(validated) >= num_questions:
                     break
-            # Ensure broad node coverage: for <= num_questions concepts, guarantee at least
-            # one question per concept by filling missing concepts via deterministic fallback.
-            covered = {q.concept for q in validated}
-            if len(concept_list) <= num_questions:
-                for concept_id in concept_list:
-                    if concept_id in covered:
-                        continue
-                    bank = self._subject_bank(concept_id)
-                    item = bank[0]
-                    validated.append(
-                        QuizQuestion(
-                            question_id=f"all-concepts-q{len(validated) + 1}",
-                            concept=concept_id,
-                            stem=item["stem"],
-                            options=item["options"],
-                            correct_answer=item["correct_answer"],
-                            explanation=item.get("explanation"),
-                            difficulty=item.get("difficulty", "medium"),
-                        )
-                    )
-                    covered.add(concept_id)
-                    if len(validated) >= num_questions:
-                        break
             return validated[:num_questions]
         except Exception as exc:
             self._last_quiz_generation_error = f"OpenAI multi-concept generation failed: {exc}"
@@ -945,10 +930,19 @@ class AssessmentEngine:
         seen: set[tuple[str, str]] = set()
         batch_size = min(8, max(3, num_questions))
         attempts = 0
+        concept_cursor = 0
 
         while len(collected) < num_questions and attempts < 6:
             remaining = num_questions - len(collected)
             ask = min(batch_size, remaining)
+            concept_window_size = min(len(concepts), max(3, ask))
+            if concept_window_size <= 0:
+                break
+            start = concept_cursor % len(concepts)
+            subset = concepts[start:start + concept_window_size]
+            if len(subset) < concept_window_size:
+                subset += concepts[: concept_window_size - len(subset)]
+            concept_cursor = (concept_cursor + concept_window_size) % max(1, len(concepts))
             # Shrink context on later attempts to improve latency.
             if material_context:
                 cap = 4000 if attempts < 2 else (2600 if attempts < 4 else 1800)
@@ -957,7 +951,7 @@ class AssessmentEngine:
                 batch_context = None
 
             chunk = self._llm_generate_questions_multi_concept(
-                concepts=concepts,
+                concepts=subset,
                 num_questions=ask,
                 material_context=batch_context,
             )

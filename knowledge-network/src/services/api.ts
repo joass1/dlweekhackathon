@@ -36,6 +36,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit, token?: stri
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    cache: init?.cache ?? 'no-store',
     headers,
   });
 
