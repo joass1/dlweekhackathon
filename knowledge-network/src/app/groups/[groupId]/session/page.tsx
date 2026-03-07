@@ -45,6 +45,9 @@ import { TutorMarkdown } from '@/components/ai/TutorMarkdown';
 interface KGNodeOption {
   id: string;
   title: string;
+  courseId?: string | null;
+  category?: string | null;
+  topicIds?: string[];
 }
 
 type BossCharacterId = 'punk' | 'spacesuit' | 'swat' | 'suit';
@@ -66,6 +69,100 @@ function looksLikeUid(value: string): boolean {
 }
 
 const PLACEHOLDER_CHOICE_RE = /^(?:option|choice)?\s*[\(\[]?\s*(?:[a-z]|[1-9])\s*[\)\].:\-]?\s*$/i;
+const CONCEPT_MATCH_STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'that', 'this', 'your', 'their', 'what', 'which', 'when', 'where',
+  'into', 'onto', 'over', 'under', 'just', 'does', 'did', 'have', 'has', 'had', 'will', 'would', 'could',
+  'should', 'about', 'explain', 'question', 'answer', 'topic', 'week', 'slide', 'slides', 'chapter', 'lecture',
+  'concept', 'material', 'materials', 'course', 'study',
+]);
+
+function normalizeMatchText(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[_\-]+/g, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeMatchText(value: string): string[] {
+  const normalized = normalizeMatchText(value);
+  if (!normalized) return [];
+  return normalized
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2 && !CONCEPT_MATCH_STOPWORDS.has(token));
+}
+
+function normalizeMatchKey(value: string): string {
+  return normalizeMatchText(value).replace(/\s+/g, '');
+}
+
+function scoreConceptMatch(questionText: string, hintText: string, node: KGNodeOption): number {
+  const qNorm = normalizeMatchText(questionText);
+  const qTokens = tokenizeMatchText(questionText);
+  const hintNorm = normalizeMatchText(hintText);
+  const hintTokens = tokenizeMatchText(hintText);
+  if (!qNorm && qTokens.length === 0 && !hintNorm) return 0;
+
+  const nodeTitle = String(node.title || '').trim();
+  const nodeId = String(node.id || '').trim();
+  const nodeNorm = normalizeMatchText(`${nodeTitle} ${nodeId}`);
+  const nodeTokens = new Set(tokenizeMatchText(`${nodeTitle} ${nodeId}`));
+  if (!nodeNorm && nodeTokens.size === 0) return 0;
+
+  let score = 0;
+  let stemOverlap = 0;
+  for (const token of qTokens) {
+    if (nodeTokens.has(token)) {
+      score += 8;
+      stemOverlap += 1;
+    }
+  }
+
+  const titleNorm = normalizeMatchText(nodeTitle);
+  const idNorm = normalizeMatchText(nodeId);
+  const stemContainsTitle = Boolean(titleNorm && titleNorm.length >= 6 && qNorm.includes(titleNorm));
+  const stemContainsId = Boolean(idNorm && idNorm.length >= 5 && qNorm.includes(idNorm));
+  if (stemContainsTitle) score += 35;
+  if (stemContainsId) score += 24;
+
+  for (const token of hintTokens) {
+    if (nodeTokens.has(token)) {
+      score += 5;
+    }
+  }
+  if (hintNorm && titleNorm && hintNorm === titleNorm) score += 24;
+  if (hintNorm && idNorm && hintNorm === idNorm) score += 18;
+
+  for (const token of qTokens) {
+    if (token.length < 4) continue;
+    if (titleNorm.includes(token)) score += 3;
+    if (idNorm.includes(token)) score += 2;
+  }
+
+  const qBigrams = new Set<string>();
+  for (let i = 0; i < qTokens.length - 1; i += 1) {
+    qBigrams.add(`${qTokens[i]} ${qTokens[i + 1]}`);
+  }
+  const nodeTokensArr = Array.from(nodeTokens);
+  const nodeBigrams = new Set<string>();
+  for (let i = 0; i < nodeTokensArr.length - 1; i += 1) {
+    nodeBigrams.add(`${nodeTokensArr[i]} ${nodeTokensArr[i + 1]}`);
+  }
+  for (const bg of qBigrams) {
+    if (nodeBigrams.has(bg)) score += 10;
+  }
+
+  // If there is no overlap at all, treat as non-match and avoid bad defaults.
+  if (stemOverlap <= 0 && !stemContainsTitle && !stemContainsId) {
+    return 0;
+  }
+
+  const denom = Math.max(1, Math.min(nodeTokens.size, 8));
+  score += (stemOverlap / denom) * 6;
+  return score;
+}
 
 function stripChoiceLabel(value: string): string {
   const text = String(value ?? '').trim();
@@ -191,6 +288,7 @@ export default function PeerSessionPage() {
   const [questionElapsed, setQuestionElapsed] = useState(0);
   const [bossAttackTrigger, setBossAttackTrigger] = useState(0);
   const lastBossAttackCountRef = useRef(0);
+  const lastAutoQuestionIdRef = useRef<string>('');
   const forcedBossId = resolveBossCharacterId(session);
 
   // ── Poll session state every 3s ──────────────────────────────────────
@@ -248,10 +346,28 @@ export default function PeerSessionPage() {
     const loadConceptOptions = async () => {
       try {
         const token = await getIdToken();
-        const graph = await apiFetch<{ nodes: { id: string; title: string }[] }>('/api/kg/graph', undefined, token);
+        const graph = await apiFetch<{
+          nodes: Array<{
+            id: string;
+            title?: string;
+            courseId?: string | null;
+            course_id?: string | null;
+            category?: string | null;
+            topicIds?: string[] | null;
+            topic_ids?: string[] | null;
+          }>;
+        }>('/api/kg/graph', undefined, token);
         if (cancelled) return;
         const nodes = graph.nodes ?? [];
-        setConceptOptions(nodes.map((n) => ({ id: n.id, title: n.title || n.id })));
+        setConceptOptions(nodes.map((n) => ({
+          id: n.id,
+          title: n.title || n.id,
+          courseId: n.courseId || n.course_id || null,
+          category: n.category || null,
+          topicIds: Array.isArray(n.topicIds)
+            ? n.topicIds
+            : (Array.isArray(n.topic_ids) ? n.topic_ids : []),
+        })));
       } catch (err) {
         console.error('Failed to load concept options:', err);
       }
@@ -317,11 +433,83 @@ export default function PeerSessionPage() {
 
   const currentQuestion: PeerQuestion | null =
     session?.questions?.[session.current_question_index] ?? null;
+  const scopedConceptOptions = useMemo(() => {
+    if (conceptOptions.length === 0) return conceptOptions;
+
+    const topicKey = normalizeMatchKey(String(session?.topic || ''));
+    const weakKey = normalizeMatchKey(String(currentQuestion?.weak_concept || ''));
+    const sessionCourseKey = normalizeMatchKey(String(session?.course_id || ''));
+    const sessionCourseNameKey = normalizeMatchKey(String(session?.course_name || ''));
+
+    const inTopic = conceptOptions.filter((node) => {
+      const topicIds = Array.isArray(node.topicIds) ? node.topicIds : [];
+      if (topicIds.length === 0) return false;
+      return topicIds.some((topicId) => {
+        const nodeTopicKey = normalizeMatchKey(String(topicId || ''));
+        if (!nodeTopicKey) return false;
+        if (topicKey && (nodeTopicKey === topicKey || nodeTopicKey.includes(topicKey) || topicKey.includes(nodeTopicKey))) {
+          return true;
+        }
+        return Boolean(weakKey && (nodeTopicKey === weakKey || nodeTopicKey.includes(weakKey) || weakKey.includes(nodeTopicKey)));
+      });
+    });
+    if (inTopic.length > 0) return inTopic;
+
+    const inCourse = conceptOptions.filter((node) => {
+      const nodeCourseKey = normalizeMatchKey(String(node.courseId || ''));
+      if (sessionCourseKey && nodeCourseKey && nodeCourseKey === sessionCourseKey) {
+        return true;
+      }
+      const nodeCategoryKey = normalizeMatchKey(String(node.category || ''));
+      return Boolean(sessionCourseNameKey && nodeCategoryKey && nodeCategoryKey === sessionCourseNameKey);
+    });
+    return inCourse.length > 0 ? inCourse : conceptOptions;
+  }, [conceptOptions, session?.course_id, session?.course_name, session?.topic, currentQuestion?.weak_concept]);
+  const lexicalQuestionSignal = useMemo(
+    () => String(currentQuestion?.stem || '').trim(),
+    [currentQuestion?.stem],
+  );
+  const lexicalHintSignal = useMemo(
+    () => [currentQuestion?.weak_concept, session?.topic].filter(Boolean).join(' '),
+    [currentQuestion?.weak_concept, session?.topic],
+  );
+  const lexicalBestConceptId = useMemo(() => {
+    if (!scopedConceptOptions.length) return '';
+    let bestId = '';
+    let bestScore = 0;
+    for (const option of scopedConceptOptions) {
+      const score = scoreConceptMatch(lexicalQuestionSignal, lexicalHintSignal, option);
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = option.id;
+      }
+    }
+    return bestScore >= 6 ? bestId : '';
+  }, [scopedConceptOptions, lexicalQuestionSignal, lexicalHintSignal]);
+  const weakConceptFallbackId = useMemo(() => {
+    const weakKey = normalizeMatchKey(String(currentQuestion?.weak_concept || ''));
+    if (!weakKey || !scopedConceptOptions.length) return '';
+    const exact = scopedConceptOptions.find((option) => {
+      const idKey = normalizeMatchKey(option.id);
+      const titleKey = normalizeMatchKey(option.title);
+      return weakKey === idKey || weakKey === titleKey;
+    });
+    if (exact) return exact.id;
+    const partial = scopedConceptOptions.find((option) => {
+      const idKey = normalizeMatchKey(option.id);
+      const titleKey = normalizeMatchKey(option.title);
+      if (!idKey && !titleKey) return false;
+      return (
+        (idKey.length >= 4 && (idKey.includes(weakKey) || weakKey.includes(idKey)))
+        || (titleKey.length >= 4 && (titleKey.includes(weakKey) || weakKey.includes(titleKey)))
+      );
+    });
+    return partial?.id || '';
+  }, [currentQuestion?.weak_concept, scopedConceptOptions]);
   const autoConceptId =
     String(
-      currentQuestion?.concept_id ||
-      currentQuestion?.weak_concept ||
-      session?.selected_concept_id ||
+      lexicalBestConceptId ||
+      weakConceptFallbackId ||
       ''
     ).trim();
   const conceptDropdownOptions = useMemo(() => {
@@ -329,7 +517,7 @@ export default function PeerSessionPage() {
     if (autoConceptId) {
       byId.set(autoConceptId, `Auto-selected (${autoConceptId})`);
     }
-    for (const opt of conceptOptions) {
+    for (const opt of scopedConceptOptions) {
       if (!opt?.id) continue;
       if (!byId.has(opt.id)) {
         byId.set(opt.id, `${opt.title} (${opt.id})`);
@@ -339,7 +527,7 @@ export default function PeerSessionPage() {
       { value: '', label: 'Auto fallback (question/topic)' },
       ...Array.from(byId.entries()).map(([value, label]) => ({ value, label })),
     ];
-  }, [autoConceptId, conceptOptions]);
+  }, [autoConceptId, scopedConceptOptions]);
   const currentMcqOptions = useMemo(
     () => sanitizeMcqOptions(currentQuestion?.options),
     [currentQuestion?.options],
@@ -352,8 +540,17 @@ export default function PeerSessionPage() {
   }, [mcqSelection, currentMcqOptions.length]);
 
   useEffect(() => {
-    setSelectedConceptId(autoConceptId);
-  }, [currentQuestion?.question_id, autoConceptId]);
+    const qid = String(currentQuestion?.question_id || '');
+    if (!qid) return;
+    if (lastAutoQuestionIdRef.current !== qid) {
+      lastAutoQuestionIdRef.current = qid;
+      setSelectedConceptId(autoConceptId);
+      return;
+    }
+    if (!selectedConceptId && autoConceptId) {
+      setSelectedConceptId(autoConceptId);
+    }
+  }, [currentQuestion?.question_id, autoConceptId, selectedConceptId]);
 
   const answersForCurrentQuestion = currentQuestion
     ? (session?.answers?.filter((a) => a.question_id === currentQuestion.question_id) ?? [])

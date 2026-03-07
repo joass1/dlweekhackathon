@@ -242,6 +242,7 @@ class PeerSessionService:
         self.adaptive_engine = AdaptiveEngine()
         self._display_name_cache: Dict[str, str] = {}
         self._concept_id_cache: Dict[Tuple[str, str], str] = {}
+        self._concept_presence_cache: Dict[Tuple[str, str], bool] = {}
 
     def _resolve_display_name(self, student_id: str) -> Optional[str]:
         sid = str(student_id or "").strip()
@@ -825,6 +826,251 @@ class PeerSessionService:
         # Legacy fallback for sessions created before explicit battle_outcome.
         return bool(session_row.get("boss_defeated", False)) and not bool(session_row.get("party_defeated", False))
 
+    @staticmethod
+    def _context_concept_frequency(context_chunks: List[Dict[str, str]]) -> Dict[str, Tuple[str, int]]:
+        freq: Dict[str, Tuple[str, int]] = {}
+        for chunk in context_chunks or []:
+            raw = str(chunk.get("concept_id") or "").strip()
+            norm = _normalize_key(raw)
+            if not norm:
+                continue
+            prev = freq.get(norm)
+            if not prev:
+                freq[norm] = (raw, 1)
+            else:
+                freq[norm] = (prev[0], prev[1] + 1)
+        return freq
+
+    def _student_has_concept_node(self, student_id: str, concept_id: str) -> bool:
+        sid = str(student_id or "").strip()
+        cid = str(concept_id or "").strip()
+        if not sid or not cid:
+            return False
+        cache_key = (sid, cid)
+        cached = self._concept_presence_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if not self.db:
+            self._concept_presence_cache[cache_key] = False
+            return False
+
+        exists = False
+        try:
+            if (
+                self.db.collection("students")
+                .document(sid)
+                .collection("concept_states")
+                .document(cid)
+                .get()
+                .exists
+            ):
+                exists = True
+        except Exception:
+            pass
+
+        if not exists:
+            try:
+                exists = (
+                    self.db.collection("knowledge_graphs")
+                    .document(f"user_{sid}")
+                    .collection("concepts")
+                    .document(cid)
+                    .get()
+                    .exists
+                )
+            except Exception:
+                exists = False
+
+        self._concept_presence_cache[cache_key] = exists
+        return exists
+
+    def _resolve_existing_student_concept_id(self, student_id: str, concept_id: str) -> Optional[str]:
+        candidate = str(concept_id or "").strip()
+        if not candidate:
+            return None
+        resolved = self._resolve_student_concept_id(student_id, candidate)
+        if not resolved or resolved == "general_topic":
+            return None
+        if self._student_has_concept_node(student_id, resolved):
+            return resolved
+        return None
+
+    def _collect_focus_subconcept_nodes(self, student_id: str, focus_concept: str, topic: str) -> List[str]:
+        sid = str(student_id or "").strip()
+        focus_norm = _normalize_key(focus_concept)
+        topic_norm = _normalize_key(topic)
+        if not sid or not self.db or (not focus_norm and not topic_norm):
+            return []
+
+        concepts_ref = (
+            self.db.collection("knowledge_graphs")
+            .document(f"user_{sid}")
+            .collection("concepts")
+        )
+        ranked: List[Tuple[float, str]] = []
+        try:
+            for doc in concepts_ref.stream():
+                node = doc.to_dict() or {}
+                node_id = str(doc.id or "").strip()
+                node_norm = _normalize_key(node_id)
+                if not node_norm:
+                    continue
+                if node_norm in {focus_norm, topic_norm}:
+                    continue
+
+                topic_ids = node.get("topic_ids") or node.get("topicIds") or []
+                topic_norms = {_normalize_key(v) for v in (topic_ids if isinstance(topic_ids, list) else [])}
+                if focus_norm not in topic_norms and topic_norm not in topic_norms:
+                    continue
+
+                if not self._student_has_concept_node(sid, node_id):
+                    continue
+
+                mastery = _to_float(node.get("mastery_score"), 0.5)
+                ranked.append((mastery, node_id))
+        except Exception:
+            return []
+
+        ranked.sort(key=lambda item: (item[0], item[1]))
+        return [cid for _, cid in ranked]
+
+    def _pick_member_question_concept(
+        self,
+        member_profile: Dict[str, Any],
+        focus_concept: str,
+        topic: str,
+        context_chunks: List[Dict[str, str]],
+    ) -> str:
+        focus_norm = _normalize_key(focus_concept)
+        topic_norm = _normalize_key(topic)
+        context_freq = self._context_concept_frequency(context_chunks)
+
+        # Prefer weakest concepts that are also present in current context chunks.
+        profile = member_profile.get("concept_profile", {}) or {}
+        weak_candidates: List[Tuple[str, str, float]] = []
+        if isinstance(profile, dict):
+            for raw_cid, raw_mastery in profile.items():
+                cid = str(raw_cid or "").strip()
+                norm = _normalize_key(cid)
+                if not norm:
+                    continue
+                try:
+                    mastery = float(raw_mastery)
+                except (TypeError, ValueError):
+                    mastery = 1.0
+                weak_candidates.append((cid, norm, mastery))
+        weak_candidates.sort(key=lambda item: item[2])
+
+        for cid, norm, _ in weak_candidates:
+            if norm == focus_norm:
+                continue
+            if norm in context_freq:
+                return context_freq[norm][0] or cid
+
+        # Next, pick a specific concept from context that isn't the broad session focus/topic.
+        ordered_context = sorted(context_freq.items(), key=lambda item: (-item[1][1], item[0]))
+        for norm, (raw, _) in ordered_context:
+            if norm == focus_norm or norm == topic_norm:
+                continue
+            return raw or norm
+
+        # Next, pick weakest non-focus concept from member profile.
+        for cid, norm, _ in weak_candidates:
+            if norm != focus_norm:
+                return cid
+
+        fallback = str(focus_concept or "").strip()
+        if fallback:
+            return fallback
+        topic_fallback = _normalize_key(topic) or str(topic or "").strip()
+        return topic_fallback or "general_topic"
+
+    def _link_questions_to_creator_kg(
+        self,
+        questions: List[Dict[str, Any]],
+        member_profiles: List[Dict[str, Any]],
+        creator_id: str,
+        focus_concept: str,
+        topic: str,
+        preferred_concept_by_member: Optional[Dict[str, str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        sid = str(creator_id or "").strip()
+        if not sid:
+            return questions, False
+
+        preferred_concept_by_member = preferred_concept_by_member or {}
+        by_member = {
+            str(m.get("student_id") or "").strip(): m
+            for m in member_profiles
+            if str(m.get("student_id") or "").strip()
+        }
+        focus_norm = _normalize_key(focus_concept)
+        topic_norm = _normalize_key(topic)
+        specific_pool = self._collect_focus_subconcept_nodes(sid, focus_concept, topic)
+
+        changed = False
+        linked: List[Dict[str, Any]] = []
+        for idx, raw_q in enumerate(questions or []):
+            if not isinstance(raw_q, dict):
+                continue
+            q = dict(raw_q)
+            target_member = str(q.get("target_member") or "").strip()
+            member_profile = by_member.get(target_member, {})
+            profile = member_profile.get("concept_profile", {}) or {}
+            weak_profile_ids: List[str] = []
+            if isinstance(profile, dict):
+                weak_profile_ids = [
+                    str(k or "").strip()
+                    for k, _ in sorted(
+                        profile.items(),
+                        key=lambda item: _to_float(item[1], 1.0),
+                    )
+                ]
+
+            candidate_order: List[str] = [
+                str(preferred_concept_by_member.get(target_member) or "").strip(),
+                str(q.get("concept_id") or "").strip(),
+                str(q.get("weak_concept") or "").strip(),
+                *[cid for cid in weak_profile_ids if cid],
+                str(focus_concept or "").strip(),
+                str(topic or "").strip(),
+            ]
+
+            resolved: Optional[str] = None
+            for candidate in candidate_order:
+                existing = self._resolve_existing_student_concept_id(sid, candidate)
+                if existing:
+                    resolved = existing
+                    break
+
+            if specific_pool and (not resolved or _normalize_key(resolved) in {focus_norm, topic_norm}):
+                # Prefer an actually weak member concept if it intersects this session's sub-topic pool.
+                weak_pool_match: Optional[str] = None
+                pool_norms = {_normalize_key(cid): cid for cid in specific_pool}
+                for raw_weak in weak_profile_ids:
+                    existing = self._resolve_existing_student_concept_id(sid, raw_weak)
+                    if not existing:
+                        continue
+                    hit = pool_norms.get(_normalize_key(existing))
+                    if hit:
+                        weak_pool_match = hit
+                        break
+                resolved = weak_pool_match or specific_pool[idx % len(specific_pool)]
+
+            if not resolved:
+                resolved = self._resolve_student_concept_id(sid, q.get("concept_id") or focus_concept or topic or "general_topic")
+
+            if str(q.get("concept_id") or "").strip() != resolved:
+                q["concept_id"] = resolved
+                changed = True
+            if str(q.get("weak_concept") or "").strip() != resolved:
+                q["weak_concept"] = resolved
+                changed = True
+
+            linked.append(q)
+
+        return linked, changed
+
     def _check_level_unlock(
         self,
         user_id: str,
@@ -886,7 +1132,13 @@ class PeerSessionService:
         context_text = self._format_context(context_chunks)
 
         if not self.openai:
-            return self._fallback_questions(member_profiles, topic, selected_concept_id, context_chunks)
+            return self._fallback_questions(
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks,
+                created_by=created_by,
+            )
 
         focus_concept = selected_concept_id or _normalize_key(topic) or topic
 
@@ -895,12 +1147,19 @@ class PeerSessionService:
             return sum(vals) / len(vals) if vals else 0.0
 
         sorted_members = sorted(member_profiles, key=avg_mastery)
+        preferred_concept_by_member: Dict[str, str] = {}
         members_desc: List[str] = []
         for m in sorted_members:
             profile = m.get("concept_profile", {}) or {}
             weakest = sorted(profile.items(), key=lambda x: x[1])[:3]
             weak_str = ", ".join(f"{c}:{float(v):.0%}" for c, v in weakest) if weakest else "no profile data"
-            members_desc.append(f"- {m['name']} (id={m['student_id']}), weakest=[{weak_str}]")
+            preferred_concept = self._pick_member_question_concept(m, focus_concept, topic, context_chunks)
+            sid = str(m.get("student_id") or "")
+            if sid:
+                preferred_concept_by_member[sid] = preferred_concept
+            members_desc.append(
+                f"- {m['name']} (id={m['student_id']}), weakest=[{weak_str}], preferred_concept={preferred_concept}"
+            )
 
         prompt = (
             "You are generating collaborative peer-learning questions.\n\n"
@@ -918,8 +1177,8 @@ class PeerSessionService:
             "\"question_id\":\"q_0\","
             "\"target_member\":\"<student_id>\","
             "\"target_member_name\":\"<name>\","
-            "\"concept_id\":\"<focus concept id>\","
-            "\"weak_concept\":\"<focus concept id>\","
+            "\"concept_id\":\"<specific weak sub-concept id>\","
+            "\"weak_concept\":\"<same specific sub-concept id>\","
             "\"type\":\"open|code|math|mcq\","
             "\"stem\":\"<question>\","
             "\"options\":[\"<full option text>\",\"<full option text>\",\"<full option text>\",\"<full option text>\"] or null,"
@@ -927,7 +1186,8 @@ class PeerSessionService:
             "\"explanation\":\"<why correct>\""
             "}\n"
             "Rules:\n"
-            "- Keep concept_id aligned to the focus concept.\n"
+            "- Set concept_id to a specific topic-level concept id, not a broad slide/week title.\n"
+            "- Use each member's preferred_concept when provided.\n"
             "- Make each question answerable from provided context when available.\n"
             "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
             "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
@@ -949,10 +1209,32 @@ class PeerSessionService:
                 questions = parsed.get("questions", [])
             else:
                 questions = parsed
-            return self._normalize_questions(questions, member_profiles, topic, selected_concept_id)
+            normalized_questions = self._normalize_questions(
+                questions,
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks=context_chunks,
+                preferred_concept_by_member=preferred_concept_by_member,
+            )
+            linked_questions, _ = self._link_questions_to_creator_kg(
+                questions=normalized_questions,
+                member_profiles=member_profiles,
+                creator_id=created_by,
+                focus_concept=focus_concept,
+                topic=topic,
+                preferred_concept_by_member=preferred_concept_by_member,
+            )
+            return linked_questions
         except Exception as e:
             print(f"[PeerSessionService] AI question generation failed: {e}")
-            return self._fallback_questions(member_profiles, topic, selected_concept_id, context_chunks)
+            return self._fallback_questions(
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks,
+                created_by=created_by,
+            )
 
     def _normalize_questions(
         self,
@@ -960,6 +1242,8 @@ class PeerSessionService:
         member_profiles: List[Dict[str, Any]],
         topic: str,
         selected_concept_id: Optional[str],
+        context_chunks: Optional[List[Dict[str, str]]] = None,
+        preferred_concept_by_member: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, Any]]:
         """Sanitize AI output and guarantee valid questions."""
         if not isinstance(questions, list) or not questions:
@@ -967,6 +1251,10 @@ class PeerSessionService:
 
         by_id = {str(m.get("student_id")): m for m in member_profiles if m.get("student_id")}
         focus_concept = selected_concept_id or _normalize_key(topic) or topic
+        focus_norm = _normalize_key(focus_concept)
+        topic_norm = _normalize_key(topic)
+        context_chunks = context_chunks or []
+        preferred_concept_by_member = preferred_concept_by_member or {}
         normalized: List[Dict[str, Any]] = []
 
         for i, q in enumerate(questions):
@@ -986,8 +1274,27 @@ class PeerSessionService:
             if not stem:
                 continue
 
+            preferred_concept = str(
+                preferred_concept_by_member.get(target_member)
+                or self._pick_member_question_concept(
+                    by_id.get(target_member, {}),
+                    focus_concept,
+                    topic,
+                    context_chunks,
+                )
+            ).strip()
+
             concept_id = str(q.get("concept_id") or focus_concept).strip() or focus_concept
+            concept_norm = _normalize_key(concept_id)
+            preferred_norm = _normalize_key(preferred_concept)
+            if preferred_norm and preferred_norm not in {focus_norm, topic_norm} and concept_norm in {focus_norm, topic_norm}:
+                concept_id = preferred_concept
+                concept_norm = preferred_norm
+
             weak_concept = str(q.get("weak_concept") or concept_id).strip() or concept_id
+            weak_norm = _normalize_key(weak_concept)
+            if preferred_norm and preferred_norm not in {focus_norm, topic_norm} and weak_norm in {focus_norm, topic_norm}:
+                weak_concept = preferred_concept
             explanation = str(q.get("explanation") or f"This question checks understanding of {concept_id}.")
             correct_answer = str(q.get("correct_answer") or "").strip()
             options = None
@@ -1039,6 +1346,7 @@ class PeerSessionService:
         topic: str,
         selected_concept_id: Optional[str],
         context_chunks: List[Dict[str, str]],
+        created_by: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Generate deterministic questions when AI output is unavailable."""
         focus = selected_concept_id or _normalize_key(topic) or topic
@@ -1048,7 +1356,8 @@ class PeerSessionService:
 
         questions: List[Dict[str, Any]] = []
         for i, m in enumerate(member_profiles):
-            stem = f"Explain the key ideas of '{focus}' and how they relate to '{topic}'."
+            member_concept = self._pick_member_question_concept(m, focus, topic, context_chunks)
+            stem = f"Explain the key ideas of '{member_concept}' and how they relate to '{topic}'."
             if anchor:
                 stem += f" Use this course fact in your explanation: \"{anchor}\"."
             questions.append(
@@ -1056,16 +1365,95 @@ class PeerSessionService:
                     "question_id": f"q_{i}",
                     "target_member": m["student_id"],
                     "target_member_name": m.get("name", m["student_id"]),
-                    "concept_id": focus,
-                    "weak_concept": focus,
+                    "concept_id": member_concept,
+                    "weak_concept": member_concept,
                     "type": "open",
                     "stem": stem,
                     "options": None,
-                    "correct_answer": f"A correct explanation grounded in the course material for {focus}.",
-                    "explanation": f"This checks understanding of {focus}.",
+                    "correct_answer": f"A correct explanation grounded in the course material for {member_concept}.",
+                    "explanation": f"This checks understanding of {member_concept}.",
                 }
             )
+        if created_by:
+            linked_questions, _ = self._link_questions_to_creator_kg(
+                questions=questions,
+                member_profiles=member_profiles,
+                creator_id=created_by,
+                focus_concept=focus,
+                topic=topic,
+            )
+            return linked_questions
         return questions
+
+    def _retarget_questions_to_specific_concepts(
+        self,
+        questions: List[Dict[str, Any]],
+        member_profiles: List[Dict[str, Any]],
+        topic: str,
+        selected_concept_id: Optional[str],
+        context_chunks: List[Dict[str, str]],
+        created_by: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        focus_concept = selected_concept_id or _normalize_key(topic) or topic
+        focus_norm = _normalize_key(focus_concept)
+        topic_norm = _normalize_key(topic)
+        by_id = {str(m.get("student_id") or "").strip(): m for m in member_profiles if str(m.get("student_id") or "").strip()}
+
+        changed = False
+        retargeted: List[Dict[str, Any]] = []
+        for raw_q in questions or []:
+            if not isinstance(raw_q, dict):
+                continue
+            q = dict(raw_q)
+            target_member = str(q.get("target_member") or "").strip()
+            preferred = self._pick_member_question_concept(
+                by_id.get(target_member, {}),
+                focus_concept,
+                topic,
+                context_chunks,
+            )
+            preferred_norm = _normalize_key(preferred)
+            if not preferred_norm:
+                retargeted.append(q)
+                continue
+
+            concept_id = str(q.get("concept_id") or "").strip()
+            weak_concept = str(q.get("weak_concept") or "").strip()
+            concept_norm = _normalize_key(concept_id)
+            weak_norm = _normalize_key(weak_concept)
+
+            if preferred_norm not in {focus_norm, topic_norm}:
+                if concept_norm in {"", focus_norm, topic_norm}:
+                    q["concept_id"] = preferred
+                    concept_id = preferred
+                    concept_norm = preferred_norm
+                    changed = True
+                if weak_norm in {"", focus_norm, topic_norm}:
+                    q["weak_concept"] = preferred
+                    weak_concept = preferred
+                    weak_norm = preferred_norm
+                    changed = True
+
+            if not concept_norm:
+                q["concept_id"] = preferred or focus_concept
+                changed = True
+            if not weak_norm:
+                q["weak_concept"] = str(q.get("concept_id") or preferred or focus_concept)
+                changed = True
+
+            retargeted.append(q)
+
+        if created_by:
+            linked, linked_changed = self._link_questions_to_creator_kg(
+                questions=retargeted,
+                member_profiles=member_profiles,
+                creator_id=created_by,
+                focus_concept=focus_concept,
+                topic=topic,
+            )
+            return linked, (changed or linked_changed)
+
+        return retargeted, changed
 
     def _evaluate_answer(
         self,
@@ -1651,7 +2039,13 @@ class PeerSessionService:
             course_name=resolved_course_name,
         )
         if not questions:
-            questions = self._fallback_questions(normalized_profiles, resolved_topic, resolved_concept_id, [])
+            questions = self._fallback_questions(
+                normalized_profiles,
+                resolved_topic,
+                resolved_concept_id,
+                [],
+                created_by=created_by,
+            )
         questions = self._assign_question_ids(questions, start_index=0)
 
         creator_name = created_by
@@ -1742,6 +2136,7 @@ class PeerSessionService:
                 data.get("topic", "general topic"),
                 data.get("selected_concept_id"),
                 [],
+                created_by=str(data.get("created_by") or ""),
             )
             updates["questions"] = self._assign_question_ids(fresh_questions, start_index=0)
             updates["current_question_index"] = 0
@@ -1786,6 +2181,7 @@ class PeerSessionService:
                         data.get("topic", "general topic"),
                         data.get("selected_concept_id"),
                         [],
+                        created_by=str(data.get("created_by") or ""),
                     ),
                     start_index=0,
                 )
@@ -1833,6 +2229,56 @@ class PeerSessionService:
             data["course_id"] = str(seed.get("course_id") or "").strip() or None
             data["course_name"] = str(seed.get("course_name") or "").strip() or None
             ref.update({"course_id": data["course_id"], "course_name": data["course_name"]})
+
+        # Retarget broad legacy question concepts to specific sub-topics when possible.
+        questions = data.get("questions", []) or []
+        if questions:
+            topic_text = str(data.get("topic") or "")
+            focus_concept = str(data.get("selected_concept_id") or _normalize_key(topic_text) or topic_text).strip()
+            focus_norm = _normalize_key(focus_concept)
+            topic_norm = _normalize_key(topic_text)
+            needs_retarget = False
+            creator_id = str(data.get("created_by") or "")
+            for q in questions:
+                if not isinstance(q, dict):
+                    continue
+                concept_id = str(q.get("concept_id") or "").strip()
+                weak_concept = str(q.get("weak_concept") or "").strip()
+                concept_norm = _normalize_key(concept_id)
+                weak_norm = _normalize_key(weak_concept)
+                concept_missing = bool(concept_id) and not self._student_has_concept_node(creator_id, concept_id)
+                weak_missing = bool(weak_concept) and not self._student_has_concept_node(creator_id, weak_concept)
+                if (
+                    concept_norm in {"", focus_norm, topic_norm}
+                    or weak_norm in {"", focus_norm, topic_norm}
+                    or concept_missing
+                    or weak_missing
+                ):
+                    needs_retarget = True
+                    break
+
+            if needs_retarget:
+                member_profiles = self._build_member_profiles_from_session(data)
+                context_chunks = self._fetch_concept_context(
+                    user_id=str(data.get("created_by") or ""),
+                    concept_id=data.get("selected_concept_id"),
+                    topic=topic_text,
+                    limit=8,
+                    course_id=data.get("course_id"),
+                    course_name=data.get("course_name"),
+                )
+                retargeted_questions, retargeted_changed = self._retarget_questions_to_specific_concepts(
+                    questions=questions,
+                    member_profiles=member_profiles,
+                    topic=topic_text,
+                    selected_concept_id=data.get("selected_concept_id"),
+                    context_chunks=context_chunks,
+                    created_by=creator_id,
+                )
+                if retargeted_changed:
+                    data["questions"] = retargeted_questions
+                    questions = retargeted_questions
+                    ref.update({"questions": retargeted_questions})
 
         # Backfill boss state for legacy sessions.
         if "boss_health_max" not in data or "boss_health_current" not in data:
@@ -2381,6 +2827,7 @@ class PeerSessionService:
                 topic,
                 selected_concept_id,
                 context_chunks,
+                created_by=created_by,
             )
         if not new_questions:
             return {"error": "Failed to generate next round of questions"}
