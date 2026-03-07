@@ -2279,7 +2279,15 @@ async def create_peer_session(
     )
     if "error" in result:
         detail = str(result["error"])
-        status_code = 400 if detail.lower().startswith("no uploaded material") else 500
+        detail_l = detail.lower()
+        status_code = 500
+        if (
+            detail_l.startswith("no uploaded material")
+            or detail_l.startswith("unlock level")
+            or detail_l.startswith("could not verify level unlocks")
+            or detail_l.startswith("an active or waiting session already exists")
+        ):
+            status_code = 400
         raise HTTPException(status_code=status_code, detail=detail)
     return CreateSessionResponse(**result)
 

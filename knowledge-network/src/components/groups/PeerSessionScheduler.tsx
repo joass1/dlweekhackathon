@@ -24,15 +24,50 @@ interface Props {
 }
 
 const LEVEL_OPTIONS = [
-  { value: 1, label: 'Level 1 - Punk' },
-  { value: 2, label: 'Level 2 - Spacesuit' },
-  { value: 3, label: 'Level 3 - SWAT' },
-  { value: 4, label: 'Level 4 - Suit' },
+  { value: 1, label: 'Level 1' },
+  { value: 2, label: 'Level 2' },
+  { value: 3, label: 'Level 3' },
+  { value: 4, label: 'Level 4' },
 ] as const;
 const panelClass =
   'glow-card relative overflow-hidden rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md shadow-xl text-white';
 const fieldClass =
   'w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-400/25';
+
+function toFriendlyStartError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : 'Failed to create session.';
+  const trimmed = raw.replace(/^API\s+\d+:\s*/i, '').trim();
+
+  let detail = trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown };
+    if (parsed && typeof parsed === 'object' && typeof parsed.detail === 'string') {
+      detail = parsed.detail.trim();
+    }
+  } catch {
+    // keep raw detail when body is not JSON
+  }
+
+  const unlockMatch = detail.match(/Unlock Level\s+(\d+)\s+first:\s*defeat the Level\s+(\d+)\s+boss for\s+'([^']+)'/i);
+  if (unlockMatch) {
+    const target = unlockMatch[1];
+    const prerequisite = unlockMatch[2];
+    const topic = unlockMatch[3];
+    return `Level ${target} is locked. Defeat the Level ${prerequisite} boss for "${topic}" first.`;
+  }
+
+  if (/active or waiting session already exists/i.test(detail)) {
+    return 'A session is already in progress for this hub. Join it or finish it before starting another one.';
+  }
+  if (/no uploaded material found/i.test(detail)) {
+    return 'No uploaded material was found for this course yet. Upload your study files first.';
+  }
+  if (/could not verify level unlocks/i.test(detail)) {
+    return 'Could not verify level unlocks right now. Please try again in a moment.';
+  }
+
+  return detail || 'Failed to create session.';
+}
 
 export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = [] }: Props) {
   const router = useRouter();
@@ -124,8 +159,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
       );
       router.push(`/groups/${groupId}/session?id=${result.session_id}`);
     } catch (err) {
-      console.error('Failed to create session:', err);
-      setStartError(err instanceof Error ? err.message : 'Failed to create session');
+      setStartError(toFriendlyStartError(err));
       setCreating(false);
     }
   };
@@ -238,7 +272,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
               className={fieldClass}
             >
               {courses.map((c) => (
-                <option key={c.id} value={c.id}>
+                <option key={c.id} value={c.id} className="bg-slate-900 text-white">
                   {c.name}
                 </option>
               ))}
@@ -247,14 +281,14 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         )}
 
         <div>
-          <label className="text-sm font-medium block mb-2">Select level:</label>
+          <label className="mb-2 block text-sm font-medium text-white/80">Select level:</label>
           <select
             value={selectedLevel}
             onChange={(e) => setSelectedLevel(Number(e.target.value))}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-[#03b2e6] focus:border-transparent"
+            className={fieldClass}
           >
             {LEVEL_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
+              <option key={option.value} value={option.value} className="bg-slate-900 text-white">
                 {option.label}
               </option>
             ))}
@@ -269,9 +303,9 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
               onChange={(e) => setSelectedTopic(e.target.value)}
               className={fieldClass}
             >
-              <option value="">Auto-pick from uploaded chunks</option>
+              <option value="" className="bg-slate-900 text-white">Auto-pick from uploaded chunks</option>
               {filteredConcepts.map((c) => (
-                <option key={c.id} value={c.id}>
+                <option key={c.id} value={c.id} className="bg-slate-900 text-white">
                   {c.title || c.id}
                 </option>
               ))}
@@ -315,7 +349,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
         )}
         {startError && (
           <p className="text-xs text-red-300">
-            {startError.replace(/^API \d+:\s*/i, '')}
+            {startError}
           </p>
         )}
       </CardContent>

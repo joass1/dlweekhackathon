@@ -26,6 +26,29 @@ LEVEL_TO_BOSS_CHARACTER: Dict[int, str] = {
     4: "suit",
 }
 
+BOSS_NAME_BY_CHARACTER: Dict[str, str] = {
+    "punk": "Syllabus Rebel",
+    "spacesuit": "Cosmic Professor",
+    "swat": "Curriculum Enforcer",
+    "suit": "Dean of Mastery",
+}
+
+TEAM_HP_PER_LEVEL: Dict[int, float] = {
+    1: 0.0,
+    2: 160.0,
+    3: 150.0,
+    4: 140.0,
+}
+
+QUESTION_TIME_LIMIT_SEC_BY_LEVEL: Dict[int, int] = {
+    3: 120,
+    4: 120,
+}
+
+MIN_DEFENSE_SCORE = 0.7
+MCQ_MAX_OPTIONS = 6
+MCQ_MIN_OPTIONS = 2
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -92,8 +115,59 @@ def _normalize_level(value: Any, default: int = 1) -> int:
     return level
 
 
+def _is_placeholder_choice(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?i)(?:option|choice)?\s*[\(\[]?\s*(?:[a-z]|[1-9])\s*[\)\].:\-]?",
+            text,
+        )
+    )
+
+
+def _strip_choice_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    # Handles "A) Foo", "(B) Bar", "1. Baz", and label-only forms like "A."
+    punct = re.match(r"(?i)^\s*[\(\[]?([a-z]|[1-9])[\)\].:\-]\s*(.*)$", text)
+    if punct:
+        remainder = punct.group(2).strip()
+        return remainder if remainder else punct.group(1).strip()
+
+    # Handles "A Foo" while avoiding accidental stripping of words like "Apple".
+    spaced = re.match(r"(?i)^\s*([a-z]|[1-9])\s+(.+)$", text)
+    if spaced:
+        return spaced.group(2).strip()
+
+    return text
+
+
+def _extract_choice_index(value: Any) -> Optional[int]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.match(r"(?i)^\s*(?:option|choice)?\s*([a-z]|[1-9])(?:\b|[\)\].:\-])", text)
+    if not match:
+        if re.fullmatch(r"(?i)[a-z]|[1-9]", text):
+            match = re.match(r"(?i)^([a-z]|[1-9])$", text)
+        else:
+            return None
+    token = match.group(1).upper()
+    if token.isdigit():
+        return int(token) - 1
+    return ord(token) - ord("A")
+
+
 def _boss_character_for_level(level: int) -> str:
     return LEVEL_TO_BOSS_CHARACTER.get(level, LEVEL_TO_BOSS_CHARACTER[1])
+
+
+def _boss_name_for_character(character_id: str) -> str:
+    return BOSS_NAME_BY_CHARACTER.get(character_id, "Knowledge Warden")
 
 
 class PeerSessionService:
@@ -416,6 +490,183 @@ class PeerSessionService:
             }
         return list(by_id.values())
 
+    @staticmethod
+    def _normalize_mcq_options(raw_options: Any) -> Optional[List[str]]:
+        if not isinstance(raw_options, list):
+            return None
+
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for raw in raw_options:
+            option = _strip_choice_label(raw)
+            if not option:
+                continue
+            key = option.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(option)
+
+        if len(cleaned) < MCQ_MIN_OPTIONS:
+            return None
+
+        meaningful = [opt for opt in cleaned if not _is_placeholder_choice(opt)]
+        if len(meaningful) < MCQ_MIN_OPTIONS:
+            return None
+        if len(meaningful) != len(cleaned):
+            cleaned = meaningful
+            if len(cleaned) < MCQ_MIN_OPTIONS:
+                return None
+
+        return cleaned[:MCQ_MAX_OPTIONS]
+
+    @staticmethod
+    def _normalize_mcq_correct_answer(correct_answer: Any, options: List[str]) -> str:
+        if not options:
+            return str(correct_answer or "").strip()
+
+        raw = str(correct_answer or "").strip()
+        if not raw:
+            return options[0]
+
+        raw_fold = raw.casefold()
+        for opt in options:
+            if opt.casefold() == raw_fold:
+                return opt
+
+        stripped = _strip_choice_label(raw)
+        if stripped:
+            stripped_fold = stripped.casefold()
+            for opt in options:
+                if opt.casefold() == stripped_fold:
+                    return opt
+
+        idx = _extract_choice_index(raw)
+        if idx is not None and 0 <= idx < len(options):
+            return options[idx]
+
+        if _is_placeholder_choice(raw):
+            return options[0]
+
+        return stripped or raw
+
+    @staticmethod
+    def _sanitize_existing_question(question: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+        row = dict(question or {})
+        changed = False
+
+        q_type = str(row.get("type") or "open").strip().lower()
+        if q_type not in {"open", "code", "math", "mcq"}:
+            q_type = "open"
+            changed = True
+        row["type"] = q_type
+
+        concept_id = str(row.get("concept_id") or row.get("weak_concept") or "this concept").strip() or "this concept"
+        explanation = str(row.get("explanation") or "").strip()
+
+        stem = str(row.get("stem") or "").strip()
+        if not stem:
+            row["stem"] = f"Explain the core idea of {concept_id}."
+            changed = True
+
+        answer = str(row.get("correct_answer") or "").strip()
+        if q_type == "mcq":
+            options = PeerSessionService._normalize_mcq_options(row.get("options"))
+            if not options:
+                row["type"] = "open"
+                row["options"] = None
+                replacement = answer
+                if not replacement or _is_placeholder_choice(replacement):
+                    replacement = explanation or f"A complete, context-grounded answer about {concept_id}."
+                if replacement != answer:
+                    row["correct_answer"] = replacement
+                changed = True
+            else:
+                if row.get("options") != options:
+                    row["options"] = options
+                    changed = True
+                normalized_answer = PeerSessionService._normalize_mcq_correct_answer(answer, options)
+                if normalized_answer != answer:
+                    row["correct_answer"] = normalized_answer
+                    changed = True
+        else:
+            if row.get("options") is not None:
+                row["options"] = None
+                changed = True
+            if not answer:
+                row["correct_answer"] = explanation or f"A complete, context-grounded answer about {concept_id}."
+                changed = True
+
+        return row, changed
+
+    @staticmethod
+    def _topic_matches_for_progression(
+        session_row: Dict[str, Any],
+        topic: str,
+        concept_id: Optional[str],
+    ) -> bool:
+        req_concept = _normalize_key(concept_id or "")
+        req_topic = _normalize_key(topic or "")
+        ses_concept = _normalize_key(str(session_row.get("selected_concept_id") or ""))
+        ses_topic = _normalize_key(str(session_row.get("topic") or ""))
+
+        if req_concept:
+            if ses_concept == req_concept:
+                return True
+            if not ses_concept and req_topic and ses_topic == req_topic:
+                return True
+            return False
+
+        return bool(req_topic) and ses_topic == req_topic
+
+    @staticmethod
+    def _is_victory_session(session_row: Dict[str, Any]) -> bool:
+        outcome = str(session_row.get("battle_outcome") or "").strip().lower()
+        if outcome == "victory":
+            return True
+        # Legacy fallback for sessions created before explicit battle_outcome.
+        return bool(session_row.get("boss_defeated", False)) and not bool(session_row.get("party_defeated", False))
+
+    def _check_level_unlock(
+        self,
+        user_id: str,
+        hub_id: str,
+        topic: str,
+        concept_id: Optional[str],
+        target_level: int,
+    ) -> Optional[str]:
+        if target_level <= 1:
+            return None
+        if not self.db:
+            return "Database unavailable"
+
+        required_level = target_level - 1
+        try:
+            docs = self.db.collection(self.collection).where("hub_id", "==", hub_id).stream()
+        except Exception:
+            return "Could not verify level unlocks right now."
+
+        for doc in docs:
+            row = doc.to_dict() or {}
+            if str(row.get("status") or "").strip().lower() != "completed":
+                continue
+            members = row.get("members", []) or []
+            member_ids = {str(m.get("student_id") or "").strip() for m in members if isinstance(m, dict)}
+            if user_id not in member_ids:
+                continue
+            if _normalize_level(row.get("level"), default=1) != required_level:
+                continue
+            if not self._topic_matches_for_progression(row, topic, concept_id):
+                continue
+            if self._is_victory_session(row):
+                return None
+
+        topic_label = concept_id or topic or "this topic"
+        return (
+            f"Unlock Level {target_level} first: defeat the Level {required_level} boss for "
+            f"'{topic_label}' in this hub."
+        )
+
     def _generate_round_robin_questions(
         self,
         member_profiles: List[Dict[str, Any]],
@@ -473,13 +724,15 @@ class PeerSessionService:
             "\"weak_concept\":\"<focus concept id>\","
             "\"type\":\"open|code|math|mcq\","
             "\"stem\":\"<question>\","
-            "\"options\":[\"A\",\"B\",\"C\",\"D\"] or null,"
+            "\"options\":[\"<full option text>\",\"<full option text>\",\"<full option text>\",\"<full option text>\"] or null,"
             "\"correct_answer\":\"<ground-truth answer>\","
             "\"explanation\":\"<why correct>\""
             "}\n"
             "Rules:\n"
             "- Keep concept_id aligned to the focus concept.\n"
             "- Make each question answerable from provided context when available.\n"
+            "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
+            "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
             "- No markdown, no prose outside JSON."
         )
 
@@ -529,17 +782,32 @@ class PeerSessionService:
             q_type = str(q.get("type") or "open").lower()
             if q_type not in {"open", "code", "math", "mcq"}:
                 q_type = "open"
-            options = q.get("options")
-            if q_type != "mcq" or not isinstance(options, list):
-                options = None
-
             stem = str(q.get("stem") or "").strip()
-            correct_answer = str(q.get("correct_answer") or "").strip()
-            if not stem or not correct_answer:
+            if not stem:
                 continue
 
             concept_id = str(q.get("concept_id") or focus_concept).strip() or focus_concept
             weak_concept = str(q.get("weak_concept") or concept_id).strip() or concept_id
+            explanation = str(q.get("explanation") or f"This question checks understanding of {concept_id}.")
+            correct_answer = str(q.get("correct_answer") or "").strip()
+            options = None
+
+            if q_type == "mcq":
+                options = self._normalize_mcq_options(q.get("options"))
+                if not options:
+                    q_type = "open"
+                    options = None
+                    if not correct_answer or _is_placeholder_choice(correct_answer):
+                        correct_answer = explanation or f"A complete, context-grounded answer about {concept_id}."
+                else:
+                    correct_answer = self._normalize_mcq_correct_answer(correct_answer, options)
+            else:
+                options = None
+
+            if not correct_answer:
+                correct_answer = explanation or f"A complete, context-grounded answer about {concept_id}."
+            if not correct_answer:
+                continue
 
             normalized.append(
                 {
@@ -552,7 +820,7 @@ class PeerSessionService:
                     "stem": stem,
                     "options": options,
                     "correct_answer": correct_answer,
-                    "explanation": str(q.get("explanation") or f"This question checks understanding of {concept_id}."),
+                    "explanation": explanation,
                 }
             )
 
@@ -679,6 +947,223 @@ class PeerSessionService:
             return 0.0
         # Max 20 HP at perfect score, linearly scaled by AI score.
         return round(s * 20.0, 2)
+
+    @staticmethod
+    def _initial_party_health(level: int, total_expected_answers: int) -> float:
+        if level < 2:
+            return 0.0
+        base = TEAM_HP_PER_LEVEL.get(level, TEAM_HP_PER_LEVEL[2])
+        density_scale = max(0.85, min(1.35, float(total_expected_answers) / 8.0))
+        return round(base * density_scale, 2)
+
+    @staticmethod
+    def _question_time_limit_for_level(level: int) -> Optional[int]:
+        return QUESTION_TIME_LIMIT_SEC_BY_LEVEL.get(level)
+
+    @staticmethod
+    def _is_weak_answer(score: float, is_correct: bool) -> bool:
+        return (not is_correct) or float(score) < MIN_DEFENSE_SCORE
+
+    @staticmethod
+    def _compute_party_damage_from_answer(level: int, score: float, is_correct: bool, mistake_type: str) -> float:
+        if level < 2:
+            return 0.0
+        s = _clamp(float(score))
+        if not PeerSessionService._is_weak_answer(s, is_correct):
+            return 0.0
+
+        if is_correct:
+            base = 8.0
+        elif mistake_type == "careless":
+            base = 13.0
+        elif mistake_type == "conceptual":
+            base = 19.0
+        else:
+            base = 16.0
+
+        severity = max(0.0, MIN_DEFENSE_SCORE - s)
+        level_mult = {2: 1.0, 3: 1.15, 4: 1.3}.get(level, 1.0)
+        damage = (base + severity * 18.0) * level_mult
+        return round(max(0.0, damage), 2)
+
+    @staticmethod
+    def _compute_party_damage_from_timeout(level: int) -> float:
+        if level < 2:
+            return 0.0
+        return {2: 10.0, 3: 14.0, 4: 18.0}.get(level, 10.0)
+
+    @staticmethod
+    def _append_attack_log(log: List[Dict[str, Any]], event: Dict[str, Any], limit: int = 80) -> List[Dict[str, Any]]:
+        merged = [*log, event]
+        return merged[-limit:]
+
+    def _apply_party_damage(
+        self,
+        data: Dict[str, Any],
+        damage: float,
+        reason: str,
+        question_id: str,
+        triggered_by: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        level = _normalize_level(data.get("level"), default=1)
+        if level < 2 or damage <= 0:
+            return {}
+
+        members = data.get("members", []) or []
+        total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
+        party_health_max = float(data.get("party_health_max", 0.0) or 0.0)
+        if party_health_max <= 0:
+            party_health_max = self._initial_party_health(level, total_expected_answers)
+
+        party_health_current = float(data.get("party_health_current", party_health_max) or party_health_max)
+        party_health_current = round(max(0.0, party_health_current - float(damage)), 2)
+        party_defeated = party_health_current <= 0.0
+        boss_attack_count = int(data.get("boss_attack_count", 0) or 0) + 1
+        now_iso = _utc_now().isoformat()
+        battle_outcome = str(data.get("battle_outcome") or "pending")
+        if party_defeated:
+            battle_outcome = "defeat"
+
+        event: Dict[str, Any] = {
+            "event_id": f"atk_{uuid4().hex[:10]}",
+            "reason": reason,
+            "question_id": question_id,
+            "triggered_by": triggered_by,
+            "damage": round(float(damage), 2),
+            "party_health_after": party_health_current,
+            "timestamp": now_iso,
+        }
+        if metadata:
+            event.update(metadata)
+
+        current_log = list(data.get("boss_attack_log", []) or [])
+        next_log = self._append_attack_log(current_log, event)
+
+        updates: Dict[str, Any] = {
+            "party_health_max": party_health_max,
+            "party_health_current": party_health_current,
+            "party_defeated": party_defeated,
+            "boss_attack_count": boss_attack_count,
+            "boss_attack_log": next_log,
+            "battle_outcome": battle_outcome,
+            "last_boss_event": event,
+        }
+        if party_defeated:
+            updates["status"] = "completed"
+            updates["ended_at"] = now_iso
+
+        data.update(updates)
+        return updates
+
+    def _apply_timeout_penalties(
+        self,
+        data: Dict[str, Any],
+        ref: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        level = _normalize_level(data.get("level"), default=1)
+        time_limit_sec = self._question_time_limit_for_level(level)
+        if not time_limit_sec:
+            return {}
+        if str(data.get("status", "")) != "active":
+            return {}
+        if bool(data.get("party_defeated", False)) or bool(data.get("boss_defeated", False)):
+            return {}
+
+        questions = data.get("questions", []) or []
+        if not questions:
+            return {}
+        current_idx = max(0, min(int(data.get("current_question_index", 0) or 0), len(questions) - 1))
+        current_question = questions[current_idx]
+        current_qid = str(current_question.get("question_id") or "")
+        if not current_qid:
+            return {}
+
+        started_at = _parse_dt(data.get("current_question_started_at"), _parse_dt(data.get("created_at"), _utc_now()))
+        elapsed = (_utc_now() - started_at).total_seconds()
+        if elapsed < float(time_limit_sec):
+            return {}
+
+        members = data.get("members", []) or []
+        member_ids = [str(m.get("student_id") or "").strip() for m in members if str(m.get("student_id") or "").strip()]
+        if not member_ids:
+            return {}
+        answers = data.get("answers", []) or []
+        answered_ids = {
+            str(a.get("submitted_by") or "")
+            for a in answers
+            if str(a.get("question_id") or "") == current_qid
+        }
+        unanswered_ids = [sid for sid in member_ids if sid not in answered_ids]
+        if not unanswered_ids:
+            return {}
+
+        penalties = list(data.get("question_timeout_penalties", []) or [])
+        already_penalized = {
+            str(entry.get("student_id") or "")
+            for entry in penalties
+            if str(entry.get("question_id") or "") == current_qid
+        }
+        newly_penalized = [sid for sid in unanswered_ids if sid not in already_penalized]
+        if not newly_penalized:
+            return {}
+
+        concept_to_update = str(
+            current_question.get("concept_id")
+            or current_question.get("weak_concept")
+            or data.get("selected_concept_id")
+            or data.get("topic")
+            or "general_topic"
+        ).strip() or "general_topic"
+
+        now_iso = _utc_now().isoformat()
+        timeout_damage_per_member = self._compute_party_damage_from_timeout(level)
+        mastery_results: Dict[str, Dict[str, Any]] = {}
+        for sid in newly_penalized:
+            mastery_results[sid] = self._update_student_mastery(
+                student_id=sid,
+                concept_id=concept_to_update,
+                is_correct=False,
+                mistake_type="conceptual",
+            )
+            penalties.append(
+                {
+                    "question_id": current_qid,
+                    "student_id": sid,
+                    "damage_taken": timeout_damage_per_member,
+                    "concept_id": concept_to_update,
+                    "mistake_type": "conceptual",
+                    "reason": "timeout",
+                    "updated_mastery": mastery_results[sid].get("updated_mastery"),
+                    "mastery_status": mastery_results[sid].get("mastery_status"),
+                    "applied_at": now_iso,
+                }
+            )
+
+        updates: Dict[str, Any] = {
+            "question_timeout_penalties": penalties,
+            "question_time_limit_sec": time_limit_sec,
+        }
+        data.update(updates)
+
+        total_timeout_damage = round(timeout_damage_per_member * len(newly_penalized), 2)
+        party_damage_updates = self._apply_party_damage(
+            data=data,
+            damage=total_timeout_damage,
+            reason="timeout",
+            question_id=current_qid,
+            triggered_by="boss",
+            metadata={
+                "timed_out_members": newly_penalized,
+                "concept_id": concept_to_update,
+                "per_member_damage": timeout_damage_per_member,
+            },
+        )
+        updates.update(party_damage_updates)
+
+        if ref is not None and updates:
+            ref.update(updates)
+        return updates
 
     def _load_student_concept_state(self, student_id: str, concept_id: str) -> ConceptState:
         default_state = ConceptState(concept_id=concept_id).normalized()
@@ -825,6 +1310,14 @@ class PeerSessionService:
         """Create a new peer session with AI-generated questions."""
         if not self.db:
             return {"error": "Database unavailable"}
+        existing = self.get_active_session(hub_id)
+        if existing:
+            return {
+                "error": (
+                    "An active or waiting session already exists for this hub. "
+                    "Please join or finish it before creating a new one."
+                )
+            }
 
         seed = self._resolve_session_seed(
             user_id=created_by,
@@ -845,6 +1338,17 @@ class PeerSessionService:
                     + ". Upload documents first."
                 )
             }
+
+        normalized_level = _normalize_level(level, default=1)
+        unlock_error = self._check_level_unlock(
+            user_id=created_by,
+            hub_id=hub_id,
+            topic=resolved_topic,
+            concept_id=resolved_concept_id,
+            target_level=normalized_level,
+        )
+        if unlock_error:
+            return {"error": unlock_error}
 
         session_id = str(uuid4())[:12]
         normalized_profiles = self._build_member_profiles(member_profiles, created_by)
@@ -869,8 +1373,9 @@ class PeerSessionService:
         now = _utc_now()
         total_expected_answers = max(1, max(2, len(normalized_profiles)) * max(1, len(questions)))
         boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
-        normalized_level = _normalize_level(level, default=1)
         boss_character_id = _boss_character_for_level(normalized_level)
+        party_health_max = self._initial_party_health(normalized_level, total_expected_answers)
+        question_time_limit_sec = self._question_time_limit_for_level(normalized_level)
         session_doc = {
             "session_id": session_id,
             "hub_id": hub_id,
@@ -880,13 +1385,22 @@ class PeerSessionService:
             "selected_concept_id": resolved_concept_id,
             "course_id": resolved_course_id,
             "course_name": resolved_course_name,
-            "boss_name": "Knowledge Warden",
+            "boss_name": _boss_name_for_character(boss_character_id),
             "boss_health_max": boss_health_max,
             "boss_health_current": boss_health_max,
             "boss_defeated": False,
+            "party_health_max": party_health_max,
+            "party_health_current": party_health_max,
+            "party_defeated": False,
+            "battle_outcome": "pending",
+            "boss_attack_count": 0,
+            "boss_attack_log": [],
             "status": "waiting",
             "created_by": created_by,
             "created_at": now.isoformat(),
+            "current_question_started_at": now.isoformat(),
+            "question_time_limit_sec": question_time_limit_sec,
+            "question_timeout_penalties": [],
             "members": [{"student_id": created_by, "name": creator_name, "joined_at": now.isoformat()}],
             "member_profiles": normalized_profiles,
             "expected_members": max(2, len(normalized_profiles)),
@@ -910,6 +1424,8 @@ class PeerSessionService:
             return {"error": "Session not found"}
 
         data = doc.to_dict() or {}
+        if str(data.get("status") or "").strip().lower() == "completed":
+            return {"error": "Session already completed"}
         members = data.get("members", []) or []
         if any(m.get("student_id") == student_id for m in members):
             return {"status": data.get("status", "waiting"), "already_joined": True}
@@ -925,6 +1441,7 @@ class PeerSessionService:
 
         if len(members) >= 2 and data.get("status") == "waiting":
             updates["status"] = "active"
+            updates["current_question_started_at"] = now.isoformat()
 
         if not data.get("questions"):
             fresh_questions = self._fallback_questions(
@@ -982,6 +1499,23 @@ class PeerSessionService:
             data["current_question_index"] = current_idx
             ref.update({"questions": questions, "current_question_index": current_idx})
 
+        # Sanitize malformed MCQs from legacy sessions (e.g., options like ["A", "B", "C", "D"]).
+        questions = data.get("questions", []) or []
+        if questions:
+            sanitized_questions: List[Dict[str, Any]] = []
+            questions_changed = False
+            for q in questions:
+                if not isinstance(q, dict):
+                    continue
+                sanitized_q, changed = self._sanitize_existing_question(q)
+                sanitized_questions.append(sanitized_q)
+                if changed:
+                    questions_changed = True
+            if sanitized_questions and questions_changed:
+                data["questions"] = sanitized_questions
+                questions = sanitized_questions
+                ref.update({"questions": sanitized_questions})
+
         # Backfill course metadata for legacy sessions.
         if "course_id" not in data or "course_name" not in data:
             seed = self._resolve_session_seed(
@@ -1002,7 +1536,9 @@ class PeerSessionService:
             boss_health_max = float(max(80.0, min(500.0, total_expected_answers * 22.0)))
             boss_health_current = float(data.get("boss_health_current", boss_health_max) or boss_health_max)
             boss_defeated = boss_health_current <= 0
-            data["boss_name"] = data.get("boss_name", "Knowledge Warden")
+            raw_level = _normalize_level(data.get("level", 1), default=1)
+            raw_character = str(data.get("boss_character_id") or _boss_character_for_level(raw_level)).strip()
+            data["boss_name"] = str(data.get("boss_name") or _boss_name_for_character(raw_character))
             data["boss_health_max"] = boss_health_max
             data["boss_health_current"] = min(boss_health_current, boss_health_max)
             data["boss_defeated"] = boss_defeated
@@ -1015,20 +1551,93 @@ class PeerSessionService:
                 }
             )
 
-        raw_level = data.get("level", None)
-        if raw_level is not None:
-            normalized_level = _normalize_level(raw_level, default=1)
-            expected_boss_character = _boss_character_for_level(normalized_level)
-            stored_boss_character = str(data.get("boss_character_id") or "").strip()
-            data["level"] = normalized_level
-            data["boss_character_id"] = expected_boss_character
-            if raw_level != normalized_level or stored_boss_character != expected_boss_character:
-                ref.update(
-                    {
-                        "level": normalized_level,
-                        "boss_character_id": expected_boss_character,
-                    }
-                )
+        normalized_level = _normalize_level(data.get("level", 1), default=1)
+        expected_boss_character = _boss_character_for_level(normalized_level)
+        expected_boss_name = _boss_name_for_character(expected_boss_character)
+        stored_boss_character = str(data.get("boss_character_id") or "").strip()
+        stored_boss_name = str(data.get("boss_name") or "").strip()
+        members = data.get("members", []) or []
+        total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
+        expected_party_health = self._initial_party_health(normalized_level, total_expected_answers)
+        expected_time_limit = self._question_time_limit_for_level(normalized_level)
+        current_started = data.get("current_question_started_at")
+        if not current_started:
+            current_started = _parse_dt(data.get("created_at"), _utc_now()).isoformat()
+
+        party_health_max = float(data.get("party_health_max", expected_party_health) or expected_party_health)
+        if normalized_level < 2:
+            party_health_max = 0.0
+        party_health_current = float(data.get("party_health_current", party_health_max) or party_health_max)
+        party_health_current = round(max(0.0, min(party_health_current, party_health_max if party_health_max > 0 else 0.0)), 2)
+        party_defeated = bool(data.get("party_defeated", party_health_current <= 0.0 and party_health_max > 0))
+        if party_health_max <= 0:
+            party_defeated = False
+
+        battle_outcome = str(data.get("battle_outcome") or "pending")
+        if party_defeated:
+            battle_outcome = "defeat"
+        elif bool(data.get("boss_defeated", False)):
+            battle_outcome = "victory"
+        elif battle_outcome not in {"pending", "victory", "defeat"}:
+            battle_outcome = "pending"
+
+        question_timeout_penalties = list(data.get("question_timeout_penalties", []) or [])
+        boss_attack_count = int(data.get("boss_attack_count", 0) or 0)
+        boss_attack_log = list(data.get("boss_attack_log", []) or [])
+
+        updates: Dict[str, Any] = {}
+        if data.get("level") != normalized_level:
+            updates["level"] = normalized_level
+        if stored_boss_character != expected_boss_character:
+            updates["boss_character_id"] = expected_boss_character
+        if stored_boss_name != expected_boss_name:
+            updates["boss_name"] = expected_boss_name
+        if float(data.get("party_health_max", -1) or -1) != party_health_max:
+            updates["party_health_max"] = party_health_max
+        if float(data.get("party_health_current", -1) or -1) != party_health_current:
+            updates["party_health_current"] = party_health_current
+        if bool(data.get("party_defeated", False)) != party_defeated:
+            updates["party_defeated"] = party_defeated
+        if str(data.get("battle_outcome") or "") != battle_outcome:
+            updates["battle_outcome"] = battle_outcome
+        if int(data.get("boss_attack_count", -1) or -1) != boss_attack_count:
+            updates["boss_attack_count"] = boss_attack_count
+        if data.get("boss_attack_log") is None:
+            updates["boss_attack_log"] = boss_attack_log
+        if data.get("question_timeout_penalties") is None:
+            updates["question_timeout_penalties"] = question_timeout_penalties
+        if data.get("current_question_started_at") != current_started:
+            updates["current_question_started_at"] = current_started
+        if data.get("question_time_limit_sec", "__missing__") != expected_time_limit:
+            updates["question_time_limit_sec"] = expected_time_limit
+
+        if party_defeated and str(data.get("status", "")) != "completed":
+            updates["status"] = "completed"
+            updates["ended_at"] = _utc_now().isoformat()
+
+        data.update(
+            {
+                "level": normalized_level,
+                "boss_character_id": expected_boss_character,
+                "boss_name": expected_boss_name,
+                "party_health_max": party_health_max,
+                "party_health_current": party_health_current,
+                "party_defeated": party_defeated,
+                "battle_outcome": battle_outcome,
+                "boss_attack_count": boss_attack_count,
+                "boss_attack_log": boss_attack_log,
+                "question_timeout_penalties": question_timeout_penalties,
+                "current_question_started_at": current_started,
+                "question_time_limit_sec": expected_time_limit,
+            }
+        )
+
+        if updates:
+            ref.update(updates)
+
+        timeout_updates = self._apply_timeout_penalties(data, ref=ref)
+        if timeout_updates:
+            data.update(timeout_updates)
 
         return data
 
@@ -1071,9 +1680,26 @@ class PeerSessionService:
         if not any(m.get("student_id") == student_id for m in members):
             return {"error": "You are not a member of this session"}
 
+        timeout_updates = self._apply_timeout_penalties(data, ref=ref)
+        if timeout_updates:
+            data.update(timeout_updates)
+        if str(data.get("status", "")) == "completed":
+            if bool(data.get("party_defeated", False)):
+                return {"error": "Session has ended. Your party was defeated."}
+            return {"error": "Session has already ended."}
+
         question = next((q for q in (data.get("questions", []) or []) if q.get("question_id") == question_id), None)
         if not question:
             return {"error": "Question not found"}
+        questions = data.get("questions", []) or []
+        if not questions:
+            return {"error": "No questions in this session"}
+        current_idx = max(0, min(int(data.get("current_question_index", 0) or 0), len(questions) - 1))
+        current_qid = str(questions[current_idx].get("question_id") or "")
+        if current_qid and str(question_id) != current_qid:
+            return {"error": "You can only answer the current question."}
+
+        normalized_level = _normalize_level(data.get("level"), default=1)
 
         answers = data.get("answers", []) or []
         existing_answer = next(
@@ -1098,6 +1724,14 @@ class PeerSessionService:
                 "boss_health_max": float(data.get("boss_health_max", 0.0) or 0.0),
                 "boss_health_current": float(data.get("boss_health_current", 0.0) or 0.0),
                 "boss_defeated": bool(data.get("boss_defeated", False)),
+                "party_health_max": float(data.get("party_health_max", 0.0) or 0.0),
+                "party_health_current": float(data.get("party_health_current", 0.0) or 0.0),
+                "party_defeated": bool(data.get("party_defeated", False)),
+                "battle_outcome": str(data.get("battle_outcome") or "pending"),
+                "boss_attacked": bool(existing_answer.get("boss_attacked", False)),
+                "party_damage_taken": float(existing_answer.get("party_damage_taken", 0.0) or 0.0),
+                "attack_reason": existing_answer.get("attack_reason"),
+                "boss_attack_count": int(data.get("boss_attack_count", 0) or 0),
                 "already_submitted": True,
                 "updated_mastery": existing_answer.get("updated_mastery"),
                 "mastery_status": existing_answer.get("mastery_status"),
@@ -1137,7 +1771,8 @@ class PeerSessionService:
             mistake_type=mistake_type,
         )
 
-        damage_dealt = self._compute_boss_damage(float(evaluation.get("score", 0.0)), is_correct, mistake_type)
+        score = float(evaluation.get("score", 0.0))
+        damage_dealt = self._compute_boss_damage(score, is_correct, mistake_type)
         boss_health_max = float(data.get("boss_health_max", 0.0) or 0.0)
         if boss_health_max <= 0:
             total_expected_answers = max(1, max(2, len(members)) * max(1, len(data.get("questions", []) or [])))
@@ -1146,6 +1781,30 @@ class PeerSessionService:
         boss_health_current = round(max(0.0, boss_health_current - damage_dealt), 2)
         boss_defeated = boss_health_current <= 0.0
 
+        party_damage_taken = self._compute_party_damage_from_answer(
+            level=normalized_level,
+            score=score,
+            is_correct=is_correct,
+            mistake_type=mistake_type,
+        )
+        boss_attacked = party_damage_taken > 0
+        attack_reason = "weak_answer" if boss_attacked else None
+        party_updates: Dict[str, Any] = {}
+        if boss_attacked:
+            party_updates = self._apply_party_damage(
+                data=data,
+                damage=party_damage_taken,
+                reason="weak_answer",
+                question_id=question_id,
+                triggered_by=student_id,
+                metadata={
+                    "score": round(score, 4),
+                    "is_correct": is_correct,
+                    "mistake_type": mistake_type,
+                    "concept_id": concept_to_update,
+                },
+            )
+
         answer_entry = {
             "question_id": question_id,
             "submitted_by": student_id,
@@ -1153,33 +1812,44 @@ class PeerSessionService:
             "concept_id": concept_to_update,
             "mistake_type": mistake_type,
             "is_correct": is_correct,
-            "score": float(evaluation.get("score", 0.0)),
+            "score": score,
             "ai_feedback": str(evaluation.get("feedback", "")),
             "hint": str(evaluation.get("hint", "")),
             "damage_dealt": damage_dealt,
+            "boss_attacked": boss_attacked,
+            "party_damage_taken": party_damage_taken,
+            "attack_reason": attack_reason,
             "updated_mastery": mastery_update.get("updated_mastery"),
             "mastery_status": mastery_update.get("mastery_status"),
             "submitted_at": _utc_now().isoformat(),
         }
 
         answers.append(answer_entry)
-        ref.update(
-            {
-                "answers": answers,
-                "boss_health_max": boss_health_max,
-                "boss_health_current": boss_health_current,
-                "boss_defeated": boss_defeated,
-                "last_boss_event": {
-                    "question_id": question_id,
-                    "attacker": student_id,
-                    "damage_dealt": damage_dealt,
-                    "is_correct": is_correct,
-                    "mistake_type": mistake_type,
-                    "health_after": boss_health_current,
-                    "timestamp": _utc_now().isoformat(),
-                },
-            }
-        )
+        battle_outcome = str(data.get("battle_outcome") or "pending")
+        if bool(data.get("party_defeated", False)):
+            battle_outcome = "defeat"
+        elif boss_defeated:
+            battle_outcome = "victory"
+
+        updates: Dict[str, Any] = {
+            "answers": answers,
+            "boss_health_max": boss_health_max,
+            "boss_health_current": boss_health_current,
+            "boss_defeated": boss_defeated,
+            "battle_outcome": battle_outcome,
+            "last_player_event": {
+                "question_id": question_id,
+                "attacker": student_id,
+                "damage_dealt": damage_dealt,
+                "is_correct": is_correct,
+                "mistake_type": mistake_type,
+                "health_after": boss_health_current,
+                "timestamp": _utc_now().isoformat(),
+            },
+        }
+        updates.update(party_updates)
+        data.update(updates)
+        ref.update(updates)
 
         return {
             "question_id": question_id,
@@ -1187,7 +1857,7 @@ class PeerSessionService:
             "concept_id": concept_to_update,
             "mistake_type": mistake_type,
             "is_correct": is_correct,
-            "score": float(evaluation.get("score", 0.0)),
+            "score": score,
             "ai_feedback": str(evaluation.get("feedback", "")),
             "hint": str(evaluation.get("hint", "")),
             "explanation": question.get("explanation", ""),
@@ -1195,6 +1865,14 @@ class PeerSessionService:
             "boss_health_max": boss_health_max,
             "boss_health_current": boss_health_current,
             "boss_defeated": boss_defeated,
+            "party_health_max": float(data.get("party_health_max", 0.0) or 0.0),
+            "party_health_current": float(data.get("party_health_current", 0.0) or 0.0),
+            "party_defeated": bool(data.get("party_defeated", False)),
+            "battle_outcome": str(data.get("battle_outcome") or battle_outcome),
+            "boss_attacked": boss_attacked,
+            "party_damage_taken": party_damage_taken,
+            "attack_reason": attack_reason,
+            "boss_attack_count": int(data.get("boss_attack_count", 0) or 0),
             "already_submitted": False,
             "updated_mastery": mastery_update.get("updated_mastery"),
             "mastery_status": mastery_update.get("mastery_status"),
@@ -1211,6 +1889,26 @@ class PeerSessionService:
             return {"error": "Session not found"}
 
         data = doc.to_dict() or {}
+        timeout_updates = self._apply_timeout_penalties(data, ref=ref)
+        if timeout_updates:
+            data.update(timeout_updates)
+        if str(data.get("status", "")) == "completed":
+            return {
+                "status": "completed",
+                "current_question_index": int(data.get("current_question_index", 0) or 0),
+                "at_last_question": bool(data.get("boss_defeated", False)),
+                "boss_defeated": bool(data.get("boss_defeated", False)),
+                "party_defeated": bool(data.get("party_defeated", False)),
+            }
+        if bool(data.get("party_defeated", False)):
+            return {
+                "status": "completed",
+                "current_question_index": int(data.get("current_question_index", 0) or 0),
+                "at_last_question": False,
+                "boss_defeated": bool(data.get("boss_defeated", False)),
+                "party_defeated": True,
+            }
+
         questions = data.get("questions", []) or []
         members = data.get("members", []) or []
         answers = data.get("answers", []) or []
@@ -1226,7 +1924,13 @@ class PeerSessionService:
 
         next_idx = current + 1
         if next_idx < len(questions):
-            ref.update({"current_question_index": next_idx, "status": "active"})
+            ref.update(
+                {
+                    "current_question_index": next_idx,
+                    "status": "active",
+                    "current_question_started_at": _utc_now().isoformat(),
+                }
+            )
             return {
                 "status": "active",
                 "current_question_index": next_idx,
@@ -1289,6 +1993,7 @@ class PeerSessionService:
                 "questions": questions,
                 "current_question_index": next_idx,
                 "status": "active",
+                "current_question_started_at": _utc_now().isoformat(),
                 "member_profiles": member_profiles,
                 "round_index": round_index,
             }
@@ -1312,7 +2017,20 @@ class PeerSessionService:
         if not doc.exists:
             return {"error": "Session not found"}
 
-        ref.update({"status": "completed", "ended_at": _utc_now().isoformat()})
+        data = doc.to_dict() or {}
+        battle_outcome = str(data.get("battle_outcome") or "pending")
+        if bool(data.get("party_defeated", False)):
+            battle_outcome = "defeat"
+        elif bool(data.get("boss_defeated", False)):
+            battle_outcome = "victory"
+
+        ref.update(
+            {
+                "status": "completed",
+                "battle_outcome": battle_outcome,
+                "ended_at": _utc_now().isoformat(),
+            }
+        )
         return {"status": "completed"}
 
     def get_all_active_sessions(self) -> List[Dict[str, Any]]:

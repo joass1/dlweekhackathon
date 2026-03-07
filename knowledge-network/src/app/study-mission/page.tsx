@@ -1208,7 +1208,7 @@ export default function StudyMissionPage() {
       <div className={pageShellClass}>
         <div
           className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+          style={{ backgroundImage: "url('/backgrounds/studymissionbackground.png')" }}
           aria-hidden
         />
         <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />
@@ -1432,7 +1432,7 @@ export default function StudyMissionPage() {
     <div className={pageShellClass}>
     <div
       className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
-      style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+      style={{ backgroundImage: "url('/backgrounds/studymissionbackground.png')" }}
       aria-hidden
     />
     <div className="pointer-events-none absolute inset-0 bg-slate-950/45" aria-hidden />

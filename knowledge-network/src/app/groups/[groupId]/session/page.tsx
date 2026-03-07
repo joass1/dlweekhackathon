@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useStudentId } from '@/hooks/useStudentId';
@@ -31,6 +31,8 @@ import {
   Shield,
   Heart,
   Zap,
+  Clock3,
+  AlertTriangle,
   Video,
   VideoOff,
 } from 'lucide-react';
@@ -51,6 +53,45 @@ const LEVEL_TO_BOSS: Record<number, BossCharacterId> = {
   3: 'swat',
   4: 'suit',
 };
+
+const PLACEHOLDER_CHOICE_RE = /^(?:option|choice)?\s*[\(\[]?\s*(?:[a-z]|[1-9])\s*[\)\].:\-]?\s*$/i;
+
+function stripChoiceLabel(value: string): string {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+
+  const punct = text.match(/^\s*[\(\[]?([a-z]|[1-9])[\)\].:\-]\s*(.*)$/i);
+  if (punct) {
+    const body = (punct[2] || '').trim();
+    return body || String(punct[1] || '').trim();
+  }
+
+  const spaced = text.match(/^\s*([a-z]|[1-9])\s+(.+)$/i);
+  if (spaced) {
+    return String(spaced[2] || '').trim();
+  }
+
+  return text;
+}
+
+function sanitizeMcqOptions(options: string[] | null | undefined): string[] {
+  if (!Array.isArray(options)) return [];
+
+  const cleaned: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of options) {
+    const normalized = stripChoiceLabel(String(raw ?? '').trim());
+    if (!normalized) continue;
+    if (PLACEHOLDER_CHOICE_RE.test(normalized)) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(normalized);
+  }
+
+  return cleaned;
+}
 
 function resolveBossCharacterId(session: SessionState | null): BossCharacterId | undefined {
   const explicit = session?.boss_character_id;
@@ -103,6 +144,9 @@ export default function PeerSessionPage() {
   const [selectedConceptId, setSelectedConceptId] = useState('');
   const [advanceError, setAdvanceError] = useState<string | null>(null);
   const [videoCollapsed, setVideoCollapsed] = useState(false);
+  const [questionElapsed, setQuestionElapsed] = useState(0);
+  const [bossAttackTrigger, setBossAttackTrigger] = useState(0);
+  const lastBossAttackCountRef = useRef(0);
   const forcedBossId = resolveBossCharacterId(session);
 
   // ── Poll session state every 3s ──────────────────────────────────────
@@ -166,6 +210,38 @@ export default function PeerSessionPage() {
     return () => clearInterval(interval);
   }, [session?.created_at]);
 
+  useEffect(() => {
+    const startedAtRaw = session?.current_question_started_at;
+    if (!startedAtRaw) {
+      setQuestionElapsed(0);
+      return;
+    }
+    const start = new Date(startedAtRaw).getTime();
+    if (!Number.isFinite(start)) {
+      setQuestionElapsed(0);
+      return;
+    }
+    const tick = () => setQuestionElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [session?.current_question_started_at, session?.current_question_index]);
+
+  useEffect(() => {
+    const count = Number(session?.boss_attack_count ?? 0);
+    if (!Number.isFinite(count)) return;
+    if (count > lastBossAttackCountRef.current) {
+      const diff = count - lastBossAttackCountRef.current;
+      setBossAttackTrigger((prev) => prev + diff);
+    }
+    lastBossAttackCountRef.current = count;
+  }, [session?.boss_attack_count]);
+
+  useEffect(() => {
+    lastBossAttackCountRef.current = 0;
+    setBossAttackTrigger(0);
+  }, [sessionId]);
+
   // ── Reset answer state when question changes ──────────────────────────
 
   useEffect(() => {
@@ -178,6 +254,16 @@ export default function PeerSessionPage() {
 
   const currentQuestion: PeerQuestion | null =
     session?.questions?.[session.current_question_index] ?? null;
+  const currentMcqOptions = useMemo(
+    () => sanitizeMcqOptions(currentQuestion?.options),
+    [currentQuestion?.options],
+  );
+
+  useEffect(() => {
+    if (mcqSelection !== null && mcqSelection >= currentMcqOptions.length) {
+      setMcqSelection(null);
+    }
+  }, [mcqSelection, currentMcqOptions.length]);
 
   const answersForCurrentQuestion = currentQuestion
     ? (session?.answers?.filter((a) => a.question_id === currentQuestion.question_id) ?? [])
@@ -201,7 +287,7 @@ export default function PeerSessionPage() {
   const handleSubmitAnswer = async () => {
     if (!session || !currentQuestion) return;
     const text = currentQuestion.type === 'mcq' && mcqSelection !== null
-      ? currentQuestion.options?.[mcqSelection] || ''
+      ? currentMcqOptions?.[mcqSelection] || ''
       : answerText.trim();
     if (!text) return;
 
@@ -262,6 +348,21 @@ export default function PeerSessionPage() {
   const bossMax = Math.max(1, session?.boss_health_max ?? 100);
   const bossCurrent = Math.max(0, Math.min(bossMax, session?.boss_health_current ?? bossMax));
   const bossPct = Math.max(0, Math.min(100, (bossCurrent / bossMax) * 100));
+  const levelNumber = Number(session?.level ?? 1);
+  const hasPartyHealth = Number.isFinite(levelNumber) && levelNumber >= 2;
+  const partyMax = hasPartyHealth ? Math.max(1, session?.party_health_max ?? 100) : 0;
+  const partyCurrent = hasPartyHealth ? Math.max(0, Math.min(partyMax, session?.party_health_current ?? partyMax)) : 0;
+  const partyPct = hasPartyHealth ? Math.max(0, Math.min(100, (partyCurrent / partyMax) * 100)) : 0;
+  const partyDefeated = Boolean(session?.party_defeated) || (hasPartyHealth && partyCurrent <= 0);
+  const battleOutcome =
+    session?.battle_outcome ??
+    (partyDefeated ? 'defeat' : session?.boss_defeated ? 'victory' : 'pending');
+  const timeLimitSec = levelNumber >= 3 ? Number(session?.question_time_limit_sec ?? 120) : null;
+  const questionRemainingSec =
+    timeLimitSec && Number.isFinite(timeLimitSec)
+      ? Math.max(0, timeLimitSec - questionElapsed)
+      : null;
+  const timerUrgent = questionRemainingSec !== null && questionRemainingSec <= 30;
 
   // Helper to get member display name
   const getMemberName = (memberId: string) => {
@@ -280,17 +381,31 @@ export default function PeerSessionPage() {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-slate-950 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mr-3" />
-        <span className="text-white/60 text-lg">Entering battle...</span>
+      <div className="fixed inset-0 flex items-center justify-center overflow-hidden">
+        <div
+          className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: "url('/backgrounds/peerhubbackground.png')" }}
+          aria-hidden
+        />
+        <div className="pointer-events-none absolute inset-0 bg-slate-950/55" aria-hidden />
+        <div className="relative z-10 flex items-center">
+          <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mr-3" />
+          <span className="text-white/60 text-lg">Entering battle...</span>
+        </div>
       </div>
     );
   }
 
   if (!session) {
     return (
-      <div className="fixed inset-0 bg-slate-950 flex items-center justify-center">
-        <div className={`${glass} p-8 text-center max-w-sm`}>
+      <div className="fixed inset-0 flex items-center justify-center overflow-hidden">
+        <div
+          className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: "url('/backgrounds/peerhubbackground.png')" }}
+          aria-hidden
+        />
+        <div className="pointer-events-none absolute inset-0 bg-slate-950/55" aria-hidden />
+        <div className={`${glass} relative z-10 p-8 text-center max-w-sm`}>
           <p className="text-white/60 mb-4">Session not found.</p>
           <Button onClick={() => router.push(`/groups/${groupId}`)} className="bg-cyan-500 hover:bg-cyan-600 text-white">
             Back to Hub
@@ -307,6 +422,11 @@ export default function PeerSessionPage() {
     const avgScore = session.answers.length
       ? session.answers.reduce((sum, a) => sum + a.score, 0) / session.answers.length
       : 0;
+    const isDefeat = battleOutcome === 'defeat';
+    const timeoutRows = Array.isArray(session.question_timeout_penalties)
+      ? session.question_timeout_penalties.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+      : [];
+    const incorrectAnswers = session.answers.filter((a) => !a.is_correct);
 
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 overflow-auto">
@@ -314,16 +434,32 @@ export default function PeerSessionPage() {
         <div className="relative z-10 p-6 max-w-4xl mx-auto min-h-screen flex items-center">
           <div className={`${glass} w-full p-8 space-y-6`}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  isDefeat ? 'bg-red-500/20' : 'bg-emerald-500/20'
+                }`}
+              >
+                {isDefeat ? (
+                  <XCircle className="w-6 h-6 text-red-400" />
+                ) : (
+                  <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                )}
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Victory!</h1>
-                <p className="text-sm text-white/50">Session Complete</p>
+                <h1 className="text-2xl font-bold text-white">{isDefeat ? 'Defeat' : 'Victory!'}</h1>
+                <p className="text-sm text-white/50">
+                  {isDefeat ? 'Your party HP reached zero.' : 'Session Complete'}
+                </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className={`grid gap-4 ${hasPartyHealth ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
+              {hasPartyHealth && (
+                <div className={`${glassLight} p-4 text-center`}>
+                  <p className="text-2xl font-bold text-rose-300">{Math.round(partyCurrent)} / {Math.round(partyMax)}</p>
+                  <p className="text-xs text-white/50">Party HP</p>
+                </div>
+              )}
               <div className={`${glassLight} p-4 text-center`}>
                 <p className="text-2xl font-bold text-white">{correctCount}/{totalAnswers || totalQuestions}</p>
                 <p className="text-xs text-white/50">Correct</p>
@@ -337,6 +473,37 @@ export default function PeerSessionPage() {
                 <p className="text-xs text-white/50">Duration</p>
               </div>
             </div>
+
+            {isDefeat && (
+              <div className="rounded-xl border border-red-500/25 bg-red-500/[0.08] p-4 space-y-3">
+                <p className="text-sm font-semibold text-red-200">What went wrong</p>
+                {incorrectAnswers.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-red-200/80">Low-quality answers</p>
+                    {incorrectAnswers.slice(0, 5).map((a, idx) => (
+                      <p key={`${a.question_id}-${a.submitted_by}-${idx}`} className="text-sm text-white/75">
+                        {getMemberName(a.submitted_by)} on {a.concept_id || a.question_id}: {Math.round(a.score * 100)}%
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {timeoutRows.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-red-200/80">Timeout penalties</p>
+                    {timeoutRows.slice(0, 6).map((row, idx) => {
+                      const sid = String(row.student_id || '');
+                      const concept = String(row.concept_id || 'current concept');
+                      const dmg = Number(row.damage_taken ?? 0);
+                      return (
+                        <p key={`${sid}-${concept}-${idx}`} className="text-sm text-white/75">
+                          {getMemberName(sid)} timed out on {concept} ({Math.round(dmg)} HP)
+                        </p>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2">
               {session.questions.map((q, idx) => {
@@ -388,17 +555,31 @@ export default function PeerSessionPage() {
   }
 
   // ── Active / Waiting Session ──────────────────────────────────────────
+  const showBossScene = session.status === 'active' || session.status === 'waiting';
 
   return (
     <div className="fixed inset-0 bg-slate-950 overflow-hidden text-white">
-      {/* ── Fullscreen 3D Boss Background ─────────────────────────────── */}
+      {/* ── Fullscreen background ─────────────────────────────────────── */}
       <div className="absolute inset-0 z-0">
-        <BossBattleScene3D
-          healthCurrent={bossCurrent}
-          healthMax={bossMax}
-          lobbyId={session.session_id || sessionId}
-          forcedBossId={forcedBossId}
-        />
+        {showBossScene ? (
+          <BossBattleScene3D
+            healthCurrent={bossCurrent}
+            healthMax={bossMax}
+            lobbyId={session.session_id || sessionId}
+            forcedBossId={forcedBossId}
+            bossAttackTrigger={bossAttackTrigger}
+            allowAmbientAttacks={!hasPartyHealth}
+          />
+        ) : (
+          <>
+            <div
+              className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+              style={{ backgroundImage: "url('/backgrounds/peerhubbackground.png')" }}
+              aria-hidden
+            />
+            <div className="absolute inset-0 bg-slate-950/55" aria-hidden />
+          </>
+        )}
       </div>
 
       {/* ── Ambient glow effects ──────────────────────────────────────── */}
@@ -422,6 +603,21 @@ export default function PeerSessionPage() {
             }`}>
               {session.status === 'active' ? 'LIVE' : 'WAITING'}
             </span>
+            {hasPartyHealth && (
+              <span className={`text-xs px-2 py-0.5 rounded-full ${partyDefeated ? 'bg-red-500/20 text-red-300' : 'bg-cyan-500/20 text-cyan-300'}`}>
+                Party {partyDefeated ? 'DOWN' : 'HOLDING'}
+              </span>
+            )}
+            {questionRemainingSec !== null && (
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full font-mono ${
+                  timerUrgent ? 'bg-red-500/20 text-red-300' : 'bg-cyan-500/20 text-cyan-300'
+                }`}
+              >
+                <Clock3 className="inline w-3 h-3 mr-1" />
+                {formatTime(questionRemainingSec)}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {/* Party members */}
@@ -484,6 +680,42 @@ export default function PeerSessionPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Party Health Bar (bottom, separate from boss HP) ──────────── */}
+      {hasPartyHealth && (
+        <div className="pointer-events-none absolute left-1/2 bottom-4 z-20 w-full max-w-xl -translate-x-1/2 px-4">
+          <div className={`${glass} px-4 py-3`}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Shield className={`w-4 h-4 ${partyDefeated ? 'text-red-400' : 'text-cyan-300'}`} />
+                <span className="text-sm font-bold text-white">Party HP</span>
+                {partyDefeated && (
+                  <span className="text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full">DEFEATED</span>
+                )}
+              </div>
+              <span className="text-xs font-mono text-white/60">
+                {Math.round(partyCurrent)} / {Math.round(partyMax)} HP
+              </span>
+            </div>
+            <div className="h-3 w-full rounded-full bg-white/[0.06] overflow-hidden">
+              <div
+                className={`h-full transition-all duration-700 ease-out rounded-full ${
+                  partyDefeated
+                    ? 'bg-gradient-to-r from-red-700 to-red-500'
+                    : 'bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-500'
+                }`}
+                style={{ width: `${partyPct}%` }}
+              />
+            </div>
+            {questionRemainingSec !== null && (
+              <p className={`mt-2 text-xs flex items-center gap-1 ${timerUrgent ? 'text-red-300' : 'text-cyan-200/80'}`}>
+                <Clock3 className="w-3 h-3" />
+                Answer timer: {formatTime(questionRemainingSec)} remaining
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Video Overlay (bottom-left) ───────────────────────────────── */}
       <div className={`absolute bottom-4 left-4 z-20 transition-all duration-300 ${videoCollapsed ? 'w-12 h-12' : 'w-72'}`}>
@@ -580,10 +812,16 @@ export default function PeerSessionPage() {
                         ))}
                       </select>
                     </div>
+                    {questionRemainingSec !== null && (
+                      <p className={`text-xs flex items-center gap-1 ${timerUrgent ? 'text-red-300' : 'text-cyan-200/75'}`}>
+                        <Clock3 className="w-3 h-3" />
+                        Time left to avoid boss counterattack: {formatTime(questionRemainingSec)}
+                      </p>
+                    )}
 
-                    {currentQuestion.type === 'mcq' && currentQuestion.options ? (
+                    {currentQuestion.type === 'mcq' && currentMcqOptions.length > 0 ? (
                       <div className="space-y-2">
-                        {currentQuestion.options.map((opt, idx) => (
+                        {currentMcqOptions.map((opt, idx) => (
                           <button
                             key={idx}
                             onClick={() => setMcqSelection(idx)}
@@ -683,6 +921,12 @@ export default function PeerSessionPage() {
                         {Math.round(feedback?.damage_dealt ?? existingAnswer?.damage_dealt ?? 0)} damage dealt
                       </p>
                     )}
+                    {(feedback?.boss_attacked || existingAnswer?.boss_attacked) && (
+                      <p className="text-xs text-rose-300 mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        Boss counterattack: -{Math.round(feedback?.party_damage_taken ?? existingAnswer?.party_damage_taken ?? 0)} party HP
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -703,6 +947,11 @@ export default function PeerSessionPage() {
                             <span className={`flex items-center gap-1 ${memberAnswer.is_correct ? 'text-emerald-400' : 'text-red-400'}`}>
                               {memberAnswer.is_correct ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                               {Math.round(memberAnswer.score * 100)}% &middot; -{Math.round(memberAnswer.damage_dealt ?? 0)} HP
+                              {(memberAnswer.party_damage_taken ?? 0) > 0 && (
+                                <span className="text-rose-300">
+                                  &middot; party -{Math.round(memberAnswer.party_damage_taken ?? 0)}
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <span className="text-white/30 animate-pulse">Waiting...</span>

@@ -36,7 +36,7 @@ function pageShell(children: React.ReactNode) {
     <div className="relative min-h-full overflow-hidden">
       <div
         className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: "url('/backgrounds/castleviews.jpg')" }}
+        style={{ backgroundImage: "url('/backgrounds/peerhubbackground.png')" }}
         aria-hidden
       />
       <div className="pointer-events-none absolute inset-0 bg-slate-950/50" aria-hidden />

@@ -38,6 +38,9 @@ export interface SubmittedAnswer {
   ai_feedback: string;
   hint: string;
   damage_dealt?: number | null;
+  boss_attacked?: boolean | null;
+  party_damage_taken?: number | null;
+  attack_reason?: 'weak_answer' | 'timeout' | null;
   updated_mastery?: number | null;
   mastery_status?: string | null;
 }
@@ -55,6 +58,15 @@ export interface SessionState {
   boss_health_max?: number;
   boss_health_current?: number;
   boss_defeated?: boolean;
+  party_health_max?: number;
+  party_health_current?: number;
+  party_defeated?: boolean;
+  battle_outcome?: 'pending' | 'victory' | 'defeat' | null;
+  boss_attack_count?: number;
+  current_question_started_at?: string | null;
+  question_time_limit_sec?: number | null;
+  question_timeout_penalties?: Array<Record<string, unknown>>;
+  boss_attack_log?: Array<Record<string, unknown>>;
   status: 'waiting' | 'active' | 'completed';
   created_by: string;
   created_at?: string;
@@ -84,6 +96,14 @@ export interface SubmitAnswerResponse {
   boss_health_max?: number;
   boss_health_current?: number;
   boss_defeated?: boolean;
+  party_health_max?: number;
+  party_health_current?: number;
+  party_defeated?: boolean;
+  battle_outcome?: 'pending' | 'victory' | 'defeat' | null;
+  boss_attacked?: boolean;
+  party_damage_taken?: number;
+  attack_reason?: 'weak_answer' | 'timeout' | null;
+  boss_attack_count?: number;
   already_submitted?: boolean;
   updated_mastery?: number | null;
   mastery_status?: string | null;

@@ -473,10 +473,14 @@ function BossModel({
   healthCurrent,
   healthMax,
   preset,
+  bossAttackTrigger,
+  allowAmbientAttacks,
 }: {
   healthCurrent: number;
   healthMax: number;
   preset: BossAnimationPreset;
+  bossAttackTrigger: number;
+  allowAmbientAttacks: boolean;
 }) {
   const gltf = useGLTF(preset.modelUrl);
   const horseHead = useFBX('/models/horse_head.fbx');
@@ -488,12 +492,20 @@ function BossModel({
   const fitGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
   const prevHealthRef = useRef<number>(healthCurrent);
-  const nextAttackAtRef = useRef<number>(preset.attackIntervalSec);
   const isAttackingRef = useRef<boolean>(false);
   const activeAttackRef = useRef<string | null>(null);
+  const activeHitTimeoutRef = useRef<number | null>(null);
+  const pendingAttackCountRef = useRef<number>(0);
+  const lastBossAttackTriggerRef = useRef<number>(bossAttackTrigger);
+  const nextAmbientAttackAtRef = useRef<number>(preset.attackIntervalSec);
   const swordAttachedRef = useRef<boolean>(false);
   const hiddenHeadNodesRef = useRef<VisibilitySnapshot[]>([]);
   const defeated = healthCurrent <= 0;
+
+  const getNextAmbientDelay = React.useCallback(() => {
+    const base = Math.max(1.0, Number(preset.attackIntervalSec) || 3);
+    return base * (0.75 + Math.random() * 1.1);
+  }, [preset.attackIntervalSec]);
 
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
@@ -564,6 +576,13 @@ function BossModel({
     const dropped = healthCurrent < prev;
 
     if (defeated) {
+      if (activeHitTimeoutRef.current !== null) {
+        window.clearTimeout(activeHitTimeoutRef.current);
+        activeHitTimeoutRef.current = null;
+      }
+      if (hit) {
+        hit.stop();
+      }
       if (death) {
         idle.fadeOut(0.15);
         death.reset();
@@ -576,18 +595,54 @@ function BossModel({
     }
 
     if (dropped && hit) {
+      if (activeHitTimeoutRef.current !== null) {
+        window.clearTimeout(activeHitTimeoutRef.current);
+        activeHitTimeoutRef.current = null;
+      }
+
       hit.reset();
       hit.setLoop(THREE.LoopOnce, 1);
-      hit.clampWhenFinished = true;
+      // Keep hit as a short overlay and return control back to ambient/random loop.
+      hit.clampWhenFinished = false;
       hit.fadeIn(0.08).play();
 
-      window.setTimeout(() => {
+      const hitDurationMs = Math.max(220, Math.round(hit.getClip().duration * 1000));
+      activeHitTimeoutRef.current = window.setTimeout(() => {
         hit.fadeOut(0.12);
-      }, 320);
+        hit.stop();
+        if (!defeated && !isAttackingRef.current) {
+          idle.reset().fadeIn(0.12).play();
+        }
+        activeHitTimeoutRef.current = null;
+      }, hitDurationMs);
     }
 
     prevHealthRef.current = healthCurrent;
+    return () => {
+      if (activeHitTimeoutRef.current !== null) {
+        window.clearTimeout(activeHitTimeoutRef.current);
+        activeHitTimeoutRef.current = null;
+      }
+    };
   }, [actions, defeated, healthCurrent, healthMax, preset.deathClip, preset.hitClip, preset.idleClip]);
+
+  useEffect(() => {
+    const incoming = Math.max(0, Math.floor(bossAttackTrigger));
+    if (incoming < lastBossAttackTriggerRef.current) {
+      lastBossAttackTriggerRef.current = incoming;
+      pendingAttackCountRef.current = 0;
+      return;
+    }
+    if (incoming > lastBossAttackTriggerRef.current) {
+      pendingAttackCountRef.current += incoming - lastBossAttackTriggerRef.current;
+      lastBossAttackTriggerRef.current = incoming;
+    }
+  }, [bossAttackTrigger]);
+
+  useEffect(() => {
+    pendingAttackCountRef.current = 0;
+    nextAmbientAttackAtRef.current = getNextAmbientDelay();
+  }, [allowAmbientAttacks, getNextAmbientDelay, preset.characterId, preset.attackIntervalSec]);
 
   useFrame(({ clock }) => {
     // Attach weapon on first frame when world matrices are ready
@@ -665,6 +720,7 @@ function BossModel({
         activeAttackRef.current = null;
       }
       isAttackingRef.current = false;
+      pendingAttackCountRef.current = 0;
       return;
     }
 
@@ -673,7 +729,9 @@ function BossModel({
 
     if (attackCandidates.length === 0) return;
 
-    if (!isAttackingRef.current && t >= nextAttackAtRef.current) {
+    const shouldTriggerScripted = pendingAttackCountRef.current > 0;
+    const shouldTriggerAmbient = allowAmbientAttacks && t >= nextAmbientAttackAtRef.current;
+    if (!isAttackingRef.current && (shouldTriggerScripted || shouldTriggerAmbient)) {
       const idx = Math.floor(Math.random() * attackCandidates.length);
       const attackName = attackCandidates[idx];
       const attackAction = actions?.[attackName];
@@ -681,6 +739,11 @@ function BossModel({
 
       isAttackingRef.current = true;
       activeAttackRef.current = attackName;
+      if (shouldTriggerScripted) {
+        pendingAttackCountRef.current = Math.max(0, pendingAttackCountRef.current - 1);
+      } else {
+        nextAmbientAttackAtRef.current = t + getNextAmbientDelay();
+      }
 
       idle.fadeOut(0.1);
       attackAction.reset();
@@ -695,7 +758,6 @@ function BossModel({
       if (!attackAction) {
         isAttackingRef.current = false;
         activeAttackRef.current = null;
-        nextAttackAtRef.current = t + preset.attackIntervalSec;
         return;
       }
 
@@ -706,7 +768,9 @@ function BossModel({
         idle.reset().fadeIn(0.12).play();
         isAttackingRef.current = false;
         activeAttackRef.current = null;
-        nextAttackAtRef.current = t + preset.attackIntervalSec;
+        if (allowAmbientAttacks) {
+          nextAmbientAttackAtRef.current = t + getNextAmbientDelay();
+        }
       }
     }
   });
@@ -836,12 +900,16 @@ export default function BossBattleScene3D({
   lobbyId,
   forcedBossId,
   sceneSettingsOverride,
+  bossAttackTrigger = 0,
+  allowAmbientAttacks = false,
 }: {
   healthCurrent: number;
   healthMax: number;
   lobbyId?: string;
   forcedBossId?: BossId;
   sceneSettingsOverride?: BossSceneSettings;
+  bossAttackTrigger?: number;
+  allowAmbientAttacks?: boolean;
 }) {
   const [basePreset, setBasePreset] = React.useState<BossAnimationPreset>(DEFAULT_BOSS_PRESET);
   const [activeBossId, setActiveBossId] = React.useState<BossId>(BOSS_RANDOM_POOL[0].id);
@@ -980,6 +1048,8 @@ export default function BossBattleScene3D({
               healthCurrent={healthCurrent}
               healthMax={healthMax}
               preset={preset}
+              bossAttackTrigger={bossAttackTrigger}
+              allowAmbientAttacks={allowAmbientAttacks}
             />
 
             {/* Platform under the boss (hidden for punk to keep it fantasy-only). */}

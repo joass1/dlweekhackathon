@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,9 @@ class SubmittedAnswer(BaseModel):
     ai_feedback: str = ""
     hint: str = ""
     damage_dealt: float = 0.0
+    boss_attacked: bool = False
+    party_damage_taken: float = 0.0
+    attack_reason: Optional[Literal["weak_answer", "timeout"]] = None
     updated_mastery: Optional[float] = None
     mastery_status: Optional[str] = None
 
@@ -93,6 +96,15 @@ class SessionStateResponse(BaseModel):
     boss_health_max: float = 0.0
     boss_health_current: float = 0.0
     boss_defeated: bool = False
+    party_health_max: float = 0.0
+    party_health_current: float = 0.0
+    party_defeated: bool = False
+    battle_outcome: Optional[Literal["pending", "victory", "defeat"]] = None
+    boss_attack_count: int = 0
+    current_question_started_at: Optional[datetime] = None
+    question_time_limit_sec: Optional[int] = None
+    question_timeout_penalties: List[Dict[str, Any]] = []
+    boss_attack_log: List[Dict[str, Any]] = []
     status: Literal["waiting", "active", "completed"]
     created_by: str
     created_at: Optional[datetime] = None
@@ -117,6 +129,14 @@ class SubmitAnswerResponse(BaseModel):
     boss_health_max: float = 0.0
     boss_health_current: float = 0.0
     boss_defeated: bool = False
+    party_health_max: float = 0.0
+    party_health_current: float = 0.0
+    party_defeated: bool = False
+    battle_outcome: Optional[Literal["pending", "victory", "defeat"]] = None
+    boss_attacked: bool = False
+    party_damage_taken: float = 0.0
+    attack_reason: Optional[Literal["weak_answer", "timeout"]] = None
+    boss_attack_count: int = 0
     already_submitted: bool = False
     updated_mastery: Optional[float] = None
     mastery_status: Optional[str] = None
