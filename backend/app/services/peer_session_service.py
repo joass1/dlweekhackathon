@@ -1728,6 +1728,8 @@ class PeerSessionService:
                 concept_id=concept_to_update,
                 is_correct=False,
                 mistake_type="conceptual",
+                session_data=data,
+                persist=False,
             )
             penalties.append(
                 {
@@ -1747,6 +1749,8 @@ class PeerSessionService:
         updates: Dict[str, Any] = {
             "question_timeout_penalties": penalties,
             "question_time_limit_sec": time_limit_sec,
+            "pending_mastery_states": data.get("pending_mastery_states", {}),
+            "pending_mastery_meta": data.get("pending_mastery_meta", {}),
         }
         data.update(updates)
 
@@ -1914,6 +1918,135 @@ class PeerSessionService:
             .set(payload, merge=True)
         )
 
+    @staticmethod
+    def _pending_mastery_key(student_id: str, concept_id: str) -> str:
+        return f"{student_id}::{concept_id}"
+
+    @staticmethod
+    def _serialize_concept_state(state: ConceptState) -> Dict[str, Any]:
+        normalized = ConceptState(**state.__dict__).normalized()
+        return {
+            "concept_id": normalized.concept_id,
+            "mastery": normalized.mastery,
+            "p_learn": normalized.p_learn,
+            "p_guess": normalized.p_guess,
+            "p_slip": normalized.p_slip,
+            "decay_rate": normalized.decay_rate,
+            "last_updated": normalized.last_updated.isoformat(),
+            "attempts": normalized.attempts,
+            "correct": normalized.correct,
+            "careless_count": normalized.careless_count,
+        }
+
+    @staticmethod
+    def _deserialize_concept_state(payload: Dict[str, Any], fallback: ConceptState) -> ConceptState:
+        return ConceptState(
+            concept_id=str(payload.get("concept_id") or fallback.concept_id),
+            mastery=float(payload.get("mastery", fallback.mastery)),
+            p_learn=float(payload.get("p_learn", fallback.p_learn)),
+            p_guess=float(payload.get("p_guess", fallback.p_guess)),
+            p_slip=float(payload.get("p_slip", fallback.p_slip)),
+            decay_rate=float(payload.get("decay_rate", fallback.decay_rate)),
+            last_updated=_parse_dt(payload.get("last_updated"), fallback.last_updated),
+            attempts=int(payload.get("attempts", fallback.attempts) or 0),
+            correct=int(payload.get("correct", fallback.correct) or 0),
+            careless_count=int(payload.get("careless_count", fallback.careless_count) or 0),
+        ).normalized()
+
+    def _load_staged_student_concept_state(
+        self,
+        session_data: Optional[Dict[str, Any]],
+        student_id: str,
+        concept_id: str,
+    ) -> ConceptState:
+        persisted = self._load_student_concept_state(student_id, concept_id)
+        if not isinstance(session_data, dict):
+            return persisted
+        staged = session_data.get("pending_mastery_states") or {}
+        if not isinstance(staged, dict):
+            return persisted
+        payload = staged.get(self._pending_mastery_key(student_id, concept_id))
+        if not isinstance(payload, dict):
+            return persisted
+        return self._deserialize_concept_state(payload, persisted)
+
+    def _stage_student_mastery_state(
+        self,
+        session_data: Dict[str, Any],
+        student_id: str,
+        state: ConceptState,
+        *,
+        mistake_type: str,
+        is_correct: bool,
+    ) -> None:
+        key = self._pending_mastery_key(student_id, state.concept_id)
+        staged_states = dict(session_data.get("pending_mastery_states") or {})
+        staged_meta = dict(session_data.get("pending_mastery_meta") or {})
+        existing_meta = staged_meta.get(key) if isinstance(staged_meta.get(key), dict) else {}
+        staged_states[key] = self._serialize_concept_state(state)
+        staged_meta[key] = {
+            "student_id": student_id,
+            "concept_id": state.concept_id,
+            "last_mistake_type": str(mistake_type or "normal").strip().lower(),
+            "last_is_correct": bool(is_correct),
+            "careless_badge": bool(existing_meta.get("careless_badge", False))
+            or (str(mistake_type or "").strip().lower() == "careless" and not is_correct),
+            "updated_at": _utc_now().isoformat(),
+        }
+        session_data["pending_mastery_states"] = staged_states
+        session_data["pending_mastery_meta"] = staged_meta
+
+    def _flush_pending_mastery_updates(
+        self,
+        session_id: str,
+        data: Dict[str, Any],
+        *,
+        ref: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        if not self.db:
+            return {}
+        if str(data.get("mastery_updates_applied_at") or "").strip():
+            return {}
+
+        staged_states = data.get("pending_mastery_states") or {}
+        staged_meta = data.get("pending_mastery_meta") or {}
+        if not isinstance(staged_states, dict):
+            staged_states = {}
+        if not isinstance(staged_meta, dict):
+            staged_meta = {}
+
+        for key, payload in staged_states.items():
+            if not isinstance(payload, dict):
+                continue
+            meta = staged_meta.get(key) if isinstance(staged_meta.get(key), dict) else {}
+            concept_id = str(meta.get("concept_id") or payload.get("concept_id") or "").strip()
+            student_id = str(meta.get("student_id") or "").strip()
+            if not student_id and "::" in str(key):
+                student_id = str(key).split("::", 1)[0].strip()
+            if not concept_id and "::" in str(key):
+                concept_id = str(key).split("::", 1)[1].strip()
+            if not student_id or not concept_id:
+                continue
+            persisted = self._load_student_concept_state(student_id, concept_id)
+            final_state = self._deserialize_concept_state(payload, persisted)
+            self._save_student_concept_state(student_id, final_state)
+            self._sync_user_kg_node(
+                student_id=student_id,
+                concept_id=concept_id,
+                state=final_state,
+                mistake_type=str(meta.get("last_mistake_type") or "normal"),
+                is_correct=bool(meta.get("last_is_correct", False)),
+                careless_badge=bool(meta.get("careless_badge", False)),
+            )
+
+        applied_at = _utc_now().isoformat()
+        updates = {"mastery_updates_applied_at": applied_at}
+        if ref is None:
+            ref = self.db.collection(self.collection).document(session_id)
+        ref.update(updates)
+        data.update(updates)
+        return updates
+
     def _sync_user_kg_node(
         self,
         student_id: str,
@@ -1921,6 +2054,7 @@ class PeerSessionService:
         state: ConceptState,
         mistake_type: str,
         is_correct: bool,
+        careless_badge: Optional[bool] = None,
     ) -> None:
         if not self.db:
             return
@@ -1943,7 +2077,11 @@ class PeerSessionService:
                 "attempt_count": state.attempts,
                 "correct_count": state.correct,
                 "careless_count": state.careless_count,
-                "careless_badge": (mistake_type == "careless" and not is_correct),
+                "careless_badge": (
+                    bool(careless_badge)
+                    if careless_badge is not None
+                    else (mistake_type == "careless" and not is_correct)
+                ),
                 "decay_rate": state.decay_rate,
                 "last_practice_at": _utc_now().isoformat(),
                 "updated_at": _utc_now().isoformat(),
@@ -1986,9 +2124,12 @@ class PeerSessionService:
         concept_id: str,
         is_correct: bool,
         mistake_type: str,
+        *,
+        session_data: Optional[Dict[str, Any]] = None,
+        persist: bool = True,
     ) -> Dict[str, Any]:
         concept_id = self._resolve_student_concept_id(student_id, concept_id)
-        state = self._load_student_concept_state(student_id, concept_id)
+        state = self._load_staged_student_concept_state(session_data, student_id, concept_id)
         bkt_result = self.adaptive_engine.update_bkt(
             state=state,
             is_correct=is_correct,
@@ -2007,8 +2148,17 @@ class PeerSessionService:
         )
         calibrated_state = ConceptState(**updated_state.__dict__).normalized()
         calibrated_state.mastery = calibrated_mastery
-        self._save_student_concept_state(student_id, calibrated_state)
-        self._sync_user_kg_node(student_id, concept_id, calibrated_state, mistake_type, is_correct)
+        if session_data is not None:
+            self._stage_student_mastery_state(
+                session_data,
+                student_id,
+                calibrated_state,
+                mistake_type=mistake_type,
+                is_correct=is_correct,
+            )
+        if persist:
+            self._save_student_concept_state(student_id, calibrated_state)
+            self._sync_user_kg_node(student_id, concept_id, calibrated_state, mistake_type, is_correct)
         return {
             "concept_id": concept_id,
             "prior_mastery": round(prior_after_decay, 6),
@@ -2137,6 +2287,9 @@ class PeerSessionService:
             "current_question_index": 0,
             "round_index": 1,
             "answers": [],
+            "pending_mastery_states": {},
+            "pending_mastery_meta": {},
+            "mastery_updates_applied_at": None,
         }
         self._normalize_session_member_names(session_doc)
 
@@ -2460,6 +2613,11 @@ class PeerSessionService:
         if timeout_updates:
             data.update(timeout_updates)
 
+        if str(data.get("status", "")).strip().lower() == "completed":
+            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            if flush_updates:
+                data.update(flush_updates)
+
         return data
 
     def get_active_session(self, hub_id: str) -> Optional[Dict[str, Any]]:
@@ -2517,6 +2675,9 @@ class PeerSessionService:
         if timeout_updates:
             data.update(timeout_updates)
         if str(data.get("status", "")) == "completed":
+            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            if flush_updates:
+                data.update(flush_updates)
             if bool(data.get("party_defeated", False)):
                 return {"error": "Session has ended. Your party was defeated."}
             return {"error": "Session has already ended."}
@@ -2611,6 +2772,8 @@ class PeerSessionService:
             concept_id=concept_to_update,
             is_correct=is_correct,
             mistake_type=mistake_type,
+            session_data=data,
+            persist=False,
         )
         resolved_concept_id = str(mastery_update.get("concept_id") or concept_to_update or "general_topic")
 
@@ -2690,6 +2853,8 @@ class PeerSessionService:
             "boss_health_current": boss_health_current,
             "boss_defeated": boss_defeated,
             "battle_outcome": battle_outcome,
+            "pending_mastery_states": data.get("pending_mastery_states", {}),
+            "pending_mastery_meta": data.get("pending_mastery_meta", {}),
             "last_player_event": {
                 "question_id": question_id,
                 "attacker": student_id,
@@ -2703,6 +2868,10 @@ class PeerSessionService:
         updates.update(party_updates)
         data.update(updates)
         ref.update(updates)
+        if str(data.get("status", "")).strip().lower() == "completed":
+            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            if flush_updates:
+                data.update(flush_updates)
 
         return {
             "question_id": question_id,
@@ -2775,6 +2944,9 @@ class PeerSessionService:
             data.update(boss_sync_updates)
 
         if str(data.get("status", "")) == "completed":
+            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            if flush_updates:
+                data.update(flush_updates)
             return {
                 "status": "completed",
                 "current_question_index": int(data.get("current_question_index", 0) or 0),
@@ -2783,6 +2955,9 @@ class PeerSessionService:
                 "party_defeated": bool(data.get("party_defeated", False)),
             }
         if bool(data.get("party_defeated", False)):
+            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            if flush_updates:
+                data.update(flush_updates)
             return {
                 "status": "completed",
                 "current_question_index": int(data.get("current_question_index", 0) or 0),
@@ -2926,6 +3101,13 @@ class PeerSessionService:
                 "ended_at": _utc_now().isoformat(),
             }
         )
+        data.update(
+            {
+                "status": "completed",
+                "battle_outcome": battle_outcome,
+            }
+        )
+        self._flush_pending_mastery_updates(session_id, data, ref=ref)
         return {"status": "completed"}
 
     def get_all_active_sessions(self) -> List[Dict[str, Any]]:
