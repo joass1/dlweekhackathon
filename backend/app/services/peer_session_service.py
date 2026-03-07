@@ -12,6 +12,8 @@ import json
 import os
 import re
 import threading
+import random
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -46,13 +48,22 @@ TEAM_HP_PER_LEVEL: Dict[int, float] = {
 }
 
 QUESTION_TIME_LIMIT_SEC_BY_LEVEL: Dict[int, int] = {
-    3: 120,
-    4: 120,
+    3: 60,
+    4: 60,
 }
 
 MIN_DEFENSE_SCORE = 0.7
 MCQ_MAX_OPTIONS = 6
 MCQ_MIN_OPTIONS = 2
+TARGET_MCQ_RATIO = 0.6
+MIN_QUESTIONS_PER_ROUND = 2
+FORCE_MCQ_ONLY = True
+INITIAL_QUESTION_BANK_ROUNDS_BY_LEVEL: Dict[int, int] = {
+    1: 1,
+    2: 1,
+    3: 1,
+    4: 1,
+}
 RUBRIC_PHRASE_STOPWORDS = {
     "the", "and", "for", "with", "from", "that", "this", "your", "their", "what", "which",
     "when", "where", "into", "onto", "over", "under", "just", "does", "did", "have", "has",
@@ -78,6 +89,24 @@ def _to_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _read_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(raw) if raw is not None else int(default)
+    except (TypeError, ValueError):
+        value = int(default)
+    return max(minimum, min(maximum, value))
+
+
+def _read_env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.getenv(name)
+    try:
+        value = float(raw) if raw is not None else float(default)
+    except (TypeError, ValueError):
+        value = float(default)
+    return max(minimum, min(maximum, value))
 
 
 def _normalize_key(value: str) -> str:
@@ -170,6 +199,27 @@ def _contains_latex_markup(value: Any) -> bool:
     )
 
 
+def _looks_math_content(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if _contains_latex_markup(text):
+        return True
+    if re.search(
+        r"\b(?:equation|solve|simplify|differentiate|derivative|integrate|integral|matrix|probability|variance|mean|median|function|quadratic|logarithm|limit)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(r"\b\d+(?:\.\d+)?\s*(?:[+\-*/^=<>]|%|mod)\s*\d+(?:\.\d+)?\b", text):
+        return True
+    if re.search(r"\b(?:x|y|z|n|k|m)\s*(?:=|[+\-*/^]|<|>)\s*[-+]?\d", text, flags=re.IGNORECASE):
+        return True
+    if re.search(r"\b\d+\s*/\s*\d+\b", text):
+        return True
+    return False
+
+
 def _latexify_math_text(value: Any) -> str:
     text = str(value or "").strip()
     if not text or _contains_latex_markup(text):
@@ -185,6 +235,60 @@ def _latexify_math_text(value: Any) -> str:
     return converted
 
 
+def _clean_material_text_for_facts(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    cleaned = text.replace("\u00a0", " ").replace("\u200b", " ")
+    cleaned = re.sub(r"\S+@\S+", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bAY\s*\d{2}\s*/\s*\d{2}\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bsemester\s*\d+\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)\badjunct\s+faculty\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bthe\s+law\s+of\s+torts\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bweek\s*\d+\s*:?\s*[A-Za-z ]{0,25}", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bintroduction\s*:?", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    markers = [
+        "one evening",
+        "in this scenario",
+        "consider",
+        "suppose",
+        "assume",
+        "when ",
+        "where ",
+        "if ",
+        "claimant",
+        "defendant",
+    ]
+    lowered = cleaned.lower()
+    marker_pos = min([lowered.find(m) for m in markers if lowered.find(m) != -1] or [-1])
+    if marker_pos > 0 and marker_pos < 220:
+        tail = cleaned[marker_pos:].strip()
+        if len(tail) >= 40:
+            cleaned = tail
+
+    return cleaned
+
+
+def _is_low_signal_fact_sentence(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    low = text.lower()
+    if "@" in low:
+        return True
+    if any(token in low for token in ("semester", "adjunct faculty", "copyright", "all rights reserved")):
+        return True
+    words = re.findall(r"[A-Za-z]+", text)
+    if len(words) < 7:
+        return True
+    alpha_ratio = sum(ch.isalpha() for ch in text) / max(1, len(text))
+    if alpha_ratio < 0.55:
+        return True
+    return False
+
+
 def _is_placeholder_choice(value: Any) -> bool:
     text = str(value or "").strip()
     if not text:
@@ -195,6 +299,35 @@ def _is_placeholder_choice(value: Any) -> bool:
             text,
         )
     )
+
+
+def _is_placeholder_answer_template(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    patterns = (
+        "a correct answer that applies the material fact",
+        "a correct explanation grounded in the course material",
+        "a complete, context-grounded answer about",
+        "this checks understanding of",
+        "shared discussion prompt",
+        "using the uploaded materials for",
+        "answer this prompt on",
+    )
+    return any(p in text for p in patterns)
+
+
+def _is_placeholder_stem(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    if "shared discussion prompt" in text:
+        return True
+    if "using the uploaded materials for" in text and "answer this prompt on" in text:
+        return True
+    if text.startswith("topic:") and "course fact:" in text:
+        return True
+    return False
 
 
 def _strip_choice_label(value: Any) -> str:
@@ -252,6 +385,18 @@ class PeerSessionService:
         self._display_name_cache: Dict[str, str] = {}
         self._concept_id_cache: Dict[Tuple[str, str], str] = {}
         self._concept_presence_cache: Dict[Tuple[str, str], bool] = {}
+        fast_default_model = str(os.getenv("OPENAI_FAST_MODEL") or "gpt-4o-mini").strip()
+        self.peer_question_model = str(os.getenv("PEER_QUESTION_MODEL") or fast_default_model).strip()
+        self.peer_eval_model = str(os.getenv("PEER_EVAL_MODEL") or self.peer_question_model).strip()
+        self.peer_fallback_model = str(os.getenv("PEER_FALLBACK_MODEL") or "gpt-4.1-mini").strip()
+        self.peer_generation_max_tokens = _read_env_int("PEER_GENERATION_MAX_TOKENS", 900, 260, 2200)
+        self.peer_eval_fast_max_tokens = _read_env_int("PEER_EVAL_FAST_MAX_TOKENS", 130, 80, 480)
+        self.peer_eval_deep_max_tokens = _read_env_int("PEER_EVAL_DEEP_MAX_TOKENS", 200, 100, 700)
+        self.peer_generation_timeout_sec = _read_env_float("PEER_GENERATION_TIMEOUT_SEC", 12.0, 2.0, 45.0)
+        self.peer_eval_timeout_sec = _read_env_float("PEER_EVAL_TIMEOUT_SEC", 2.2, 1.0, 30.0)
+        self.peer_eval_allow_deep_pass = str(os.getenv("PEER_EVAL_ALLOW_DEEP_PASS", "0")).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
 
     def _resolve_display_name(self, student_id: str) -> Optional[str]:
         sid = str(student_id or "").strip()
@@ -885,7 +1030,7 @@ class PeerSessionService:
         )
         return {
             "session_context_chunks": chunks,
-            "session_context_text": self._format_context(chunks),
+            "session_context_text": self._format_context(chunks, max_chars=2200),
             "session_context_generated_at": _utc_now().isoformat(),
         }
 
@@ -947,12 +1092,40 @@ class PeerSessionService:
             return
         if bool(data.get("boss_defeated", False)) or bool(data.get("party_defeated", False)):
             return
-        if data.get("prefetched_next_round_questions"):
-            return
-        if str(data.get("next_round_prefetch_status") or "").strip().lower() == "pending":
-            return
 
         current_round = max(1, int(data.get("round_index", 1) or 1))
+        prefetched_round = max(0, int(data.get("prefetched_for_round_index", 0) or 0))
+        prefetched_questions = data.get("prefetched_next_round_questions") or []
+        if isinstance(prefetched_questions, list) and prefetched_questions:
+            if prefetched_round == current_round:
+                return
+            # Clear stale prefetch payloads from old rounds so new prefetch can start.
+            try:
+                ref.update(
+                    {
+                        "prefetched_next_round_questions": [],
+                        "prefetched_for_round_index": None,
+                        "next_round_prefetch_status": "idle",
+                    }
+                )
+            except Exception:
+                pass
+
+        prefetch_status = str(data.get("next_round_prefetch_status") or "").strip().lower()
+        if prefetch_status == "pending":
+            pending_round = max(0, int(data.get("prefetched_for_round_index", 0) or 0))
+            if pending_round == current_round:
+                return
+            try:
+                ref.update(
+                    {
+                        "next_round_prefetch_status": "idle",
+                        "prefetched_for_round_index": None,
+                    }
+                )
+            except Exception:
+                pass
+
         try:
             ref.update(
                 {
@@ -1000,6 +1173,52 @@ class PeerSessionService:
                 context_chunks=context_chunks,
                 context_text=context_text,
             )
+            if self.openai and self._round_needs_ai_refresh(questions):
+                retry_questions = self._generate_round_robin_questions(
+                    member_profiles=self._build_member_profiles_from_session(data),
+                    topic=str(data.get("topic") or "general topic"),
+                    selected_concept_id=data.get("selected_concept_id"),
+                    created_by=str(data.get("created_by") or ""),
+                    course_id=data.get("course_id"),
+                    course_name=data.get("course_name"),
+                    context_chunks=context_chunks,
+                    context_text=context_text,
+                )
+                if retry_questions and not self._round_needs_ai_refresh(retry_questions):
+                    questions = retry_questions
+            normalized_prefetch: List[Dict[str, Any]] = []
+            for idx, raw_q in enumerate(questions or []):
+                if not isinstance(raw_q, dict):
+                    continue
+                sanitized_q, _ = self._sanitize_existing_question(raw_q)
+                if FORCE_MCQ_ONLY:
+                    sanitized_q = self._coerce_question_to_mcq(
+                        sanitized_q,
+                        seed_hint=f"prefetch:{session_id}:{current_round}:{idx}",
+                        fact_hint=str(sanitized_q.get("stem") or sanitized_q.get("explanation") or ""),
+                    )
+                normalized_prefetch.append(sanitized_q)
+            questions = normalized_prefetch
+
+            latest_doc = ref.get()
+            if not latest_doc.exists:
+                return
+            latest_data = latest_doc.to_dict() or {}
+            latest_round = max(1, int(latest_data.get("round_index", 1) or 1))
+            if (
+                str(latest_data.get("status") or "").strip().lower() != "active"
+                or bool(latest_data.get("boss_defeated", False))
+                or bool(latest_data.get("party_defeated", False))
+                or latest_round != current_round
+            ):
+                ref.update(
+                    {
+                        "next_round_prefetch_status": "idle",
+                        "prefetched_next_round_questions": [],
+                        "prefetched_for_round_index": None,
+                    }
+                )
+                return
 
             ref.update(
                 {
@@ -1043,6 +1262,378 @@ class PeerSessionService:
                 "concept_profile": {},
             }
         return list(by_id.values())
+
+    @staticmethod
+    def _initial_question_bank_rounds(level: int) -> int:
+        normalized_level = _normalize_level(level, default=1)
+        return max(1, int(INITIAL_QUESTION_BANK_ROUNDS_BY_LEVEL.get(normalized_level, 3)))
+
+    @staticmethod
+    def _build_fast_mcq_options(
+        correct_answer: str,
+        common_misconceptions: Optional[List[str]] = None,
+    ) -> Optional[List[str]]:
+        canonical = _strip_choice_label(correct_answer).strip() or str(correct_answer or "").strip()
+        if (
+            not canonical
+            or _is_placeholder_choice(canonical)
+            or _is_placeholder_answer_template(canonical)
+        ):
+            return None
+
+        cleaned_misconceptions: List[str] = []
+        options: List[str] = [canonical]
+        seen: set[str] = {canonical.casefold()}
+
+        for raw in common_misconceptions or []:
+            candidate = _strip_choice_label(raw).strip()
+            if (
+                not candidate
+                or _is_placeholder_choice(candidate)
+                or _is_placeholder_answer_template(candidate)
+            ):
+                continue
+            key = candidate.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append(candidate)
+            cleaned_misconceptions.append(candidate)
+            if len(options) >= 4:
+                break
+
+        # Do not synthesize generic distractors; if we don't have material-based misconceptions,
+        # keep the question open-ended instead of producing placeholder MCQs.
+        if len(cleaned_misconceptions) < 2:
+            return None
+
+        if len(options) < MCQ_MIN_OPTIONS:
+            return None
+        if len(options) > MCQ_MAX_OPTIONS:
+            options = options[:MCQ_MAX_OPTIONS]
+        return options
+
+    @staticmethod
+    def _stable_seed(*parts: str) -> int:
+        joined = "|".join(str(p or "") for p in parts)
+        digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()
+        return int(digest[:8], 16)
+
+    @staticmethod
+    def _stable_shuffle(values: List[str], *seed_parts: str) -> List[str]:
+        copy_vals = list(values)
+        rng = random.Random(PeerSessionService._stable_seed(*seed_parts))
+        rng.shuffle(copy_vals)
+        return copy_vals
+
+    def _build_material_distractors(
+        self,
+        *,
+        concept_id: str,
+        key_points: List[str],
+        must_mention: List[str],
+        fact_text: str,
+        seed_hint: str,
+    ) -> List[str]:
+        concept_label = _humanize_key(concept_id) or concept_id or "the concept"
+        fact_snippet = str(fact_text or "").strip()
+        if len(fact_snippet) > 80:
+            fact_snippet = f"{fact_snippet[:77]}..."
+
+        scaffolds = [
+            f"Defines {concept_label} generally but omits one required element from the test.",
+            f"Uses a related concept instead of the governing rule for {concept_label}.",
+            "States a conclusion without applying the rule step-by-step to the scenario facts.",
+            "Treats liability as all-or-nothing and ignores partial or calibrated outcomes.",
+            "Focuses on a factual detail that is not legally decisive under the rule.",
+        ]
+
+        if key_points:
+            point = str(key_points[0]).strip()
+            if point:
+                scaffolds.append(f"Addresses some reasoning but omits this key point: {point}.")
+        if len(key_points) > 1:
+            point = str(key_points[1]).strip()
+            if point:
+                scaffolds.append(f"Mentions the rule but ignores this required point: {point}.")
+        if must_mention:
+            term = str(must_mention[0]).strip()
+            if term:
+                scaffolds.append(f"Appears plausible but does not correctly handle '{term}'.")
+        if fact_snippet:
+            scaffolds.append(f"Misreads the scenario facts and over-relies on \"{fact_snippet}\".")
+
+        unique: List[str] = []
+        seen: set[str] = set()
+        for raw in self._stable_shuffle(scaffolds, concept_id, seed_hint, fact_snippet):
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(text)
+            if len(unique) >= 5:
+                break
+        return unique
+
+    def _coerce_question_to_mcq(
+        self,
+        question: Dict[str, Any],
+        *,
+        seed_hint: str = "",
+        fact_hint: str = "",
+    ) -> Dict[str, Any]:
+        row = dict(question or {})
+        concept_id = str(row.get("concept_id") or row.get("weak_concept") or "current_topic").strip() or "current_topic"
+        concept_label = _humanize_key(concept_id) or concept_id
+        stem = str(row.get("stem") or "").strip()
+        if not stem or _is_placeholder_stem(stem):
+            clean_fact = _clean_material_text_for_facts(fact_hint)
+            if len(clean_fact) > 140:
+                clean_fact = f"{clean_fact[:137]}..."
+            stem_variants = [
+                f"For {concept_label}, which option best applies the governing rule to the scenario facts?",
+                f"Which option gives the strongest legal analysis for {concept_label} on these facts?",
+                f"In this {concept_label} scenario, which answer applies the test correctly and reaches the best conclusion?",
+                f"Choose the option that correctly states and applies {concept_label} to the scenario.",
+                f"Which response most accurately applies {concept_label} to the given facts and legal issue?",
+            ]
+            variant_index = self._stable_seed(str(row.get("question_id") or ""), concept_id, seed_hint) % len(stem_variants)
+            stem = stem_variants[variant_index]
+            if key_points := self._coerce_string_list(row.get("key_points"), limit=1):
+                stem += f" Focus on: {key_points[0]}."
+            if clean_fact:
+                stem += f" Scenario fact: {clean_fact}"
+            stem = stem.strip()
+        key_points = self._coerce_string_list(row.get("key_points"), limit=4)
+        must_mention = self._coerce_string_list(row.get("must_mention"), limit=3)
+        explanation = str(row.get("explanation") or "").strip()
+        correct_answer = str(row.get("correct_answer") or "").strip()
+        if not correct_answer or _is_placeholder_answer_template(correct_answer):
+            if key_points:
+                correct_answer = f"The best answer must include: {'; '.join(key_points[:3])}."
+            elif explanation and not _is_placeholder_answer_template(explanation):
+                correct_answer = explanation
+            else:
+                correct_answer = (
+                    f"The best answer states the governing rule for {_humanize_key(concept_id) or concept_id}, "
+                    "applies it to the given facts, and reaches a justified conclusion."
+                )
+
+        options = self._normalize_mcq_options(row.get("options"))
+        valid_existing = bool(options and not _is_placeholder_answer_template(" ".join(options)))
+        if valid_existing:
+            options = [str(opt).strip() for opt in options or [] if str(opt).strip()]
+            if correct_answer and all(correct_answer.casefold() != opt.casefold() for opt in options):
+                options = [correct_answer, *options]
+        else:
+            distractors = self._build_material_distractors(
+                concept_id=concept_id,
+                key_points=key_points,
+                must_mention=must_mention,
+                fact_text=fact_hint,
+                seed_hint=seed_hint,
+            )
+            options = [correct_answer, *distractors]
+
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for raw in options:
+            text = _strip_choice_label(raw).strip()
+            if not text or _is_placeholder_choice(text) or _is_placeholder_answer_template(text):
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(text)
+            if len(deduped) >= 4:
+                break
+
+        if len(deduped) < 4:
+            fillers = self._build_material_distractors(
+                concept_id=concept_id,
+                key_points=key_points,
+                must_mention=must_mention,
+                fact_text=fact_hint,
+                seed_hint=f"{seed_hint}|fillers",
+            )
+            for fill in fillers:
+                key = fill.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(fill)
+                if len(deduped) >= 4:
+                    break
+
+        if len(deduped) < 4:
+            generic_fillers = self._stable_shuffle(
+                [
+                    f"States part of the rule for {concept_label} but misses a required element.",
+                    f"Describes {concept_label} accurately in theory but does not apply it to the facts.",
+                    "Focuses on background facts while skipping the governing legal test.",
+                    "Gives a confident conclusion without legal reasoning tied to the scenario.",
+                    "Mixes up a related doctrine and applies the wrong legal threshold.",
+                ],
+                concept_id,
+                seed_hint,
+                "generic-fillers",
+            )
+            for fill in generic_fillers:
+                key = fill.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(fill)
+                if len(deduped) >= 4:
+                    break
+
+        if len(deduped) < 2:
+            # Last-resort safe options to keep gameplay functional.
+            deduped = [
+                correct_answer,
+                "Provides a partial explanation but misses a required legal element.",
+                "Uses a related rule that does not govern the given facts.",
+                "Gives a conclusion without applying the rule to the scenario facts.",
+            ]
+
+        deduped = self._stable_shuffle(deduped[:4], str(row.get("question_id") or ""), concept_id, seed_hint)
+        normalized_correct = self._normalize_mcq_correct_answer(correct_answer, deduped)
+        if normalized_correct and all(normalized_correct.casefold() != opt.casefold() for opt in deduped):
+            ranked = sorted(
+                deduped,
+                key=lambda opt: _token_overlap_score(normalized_correct, opt),
+                reverse=True,
+            )
+            normalized_correct = ranked[0] if ranked else deduped[0]
+        if stem and "select the best answer" not in stem.lower():
+            stem = f"{stem}\n\nSelect the best answer."
+
+        row["type"] = "mcq"
+        row["stem"] = stem
+        row["options"] = deduped
+        row["correct_answer"] = normalized_correct
+        return row
+
+    def _rebalance_mcq_share(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not questions:
+            return questions
+
+        if FORCE_MCQ_ONLY:
+            enforced: List[Dict[str, Any]] = []
+            for idx, raw in enumerate(questions):
+                if not isinstance(raw, dict):
+                    continue
+                fact_hint = str(raw.get("explanation") or "")
+                enforced.append(
+                    self._coerce_question_to_mcq(
+                        raw,
+                        seed_hint=f"mcq-only:{idx}",
+                        fact_hint=fact_hint,
+                    )
+                )
+            return enforced
+
+        total = len(questions)
+        target_mcq = max(1, int(total * TARGET_MCQ_RATIO + 0.999))
+        normalized_rows: List[Dict[str, Any]] = [dict(row) for row in questions if isinstance(row, dict)]
+        mcq_count = 0
+
+        for row in normalized_rows:
+            q_type = str(row.get("type") or "open").strip().lower()
+            if q_type != "mcq":
+                continue
+            options = self._normalize_mcq_options(row.get("options"))
+            if not options:
+                row["type"] = "open"
+                row["options"] = None
+                continue
+            row["options"] = options
+            row["correct_answer"] = self._normalize_mcq_correct_answer(row.get("correct_answer"), options)
+            mcq_count += 1
+
+        if mcq_count >= target_mcq:
+            return normalized_rows
+
+        for row in normalized_rows:
+            if mcq_count >= target_mcq:
+                break
+            q_type = str(row.get("type") or "open").strip().lower()
+            if q_type != "open":
+                continue
+            options = self._build_fast_mcq_options(
+                correct_answer=str(row.get("correct_answer") or ""),
+                common_misconceptions=list(row.get("common_misconceptions") or []),
+            )
+            if not options:
+                continue
+            row["type"] = "mcq"
+            row["options"] = options
+            row["correct_answer"] = self._normalize_mcq_correct_answer(row.get("correct_answer"), options)
+            stem = str(row.get("stem") or "").strip()
+            if stem and "select the best answer" not in stem.lower():
+                row["stem"] = f"{stem}\n\nSelect the best answer."
+            mcq_count += 1
+
+        return normalized_rows
+
+    def _generate_initial_question_bank(
+        self,
+        *,
+        member_profiles: List[Dict[str, Any]],
+        topic: str,
+        selected_concept_id: Optional[str],
+        created_by: str,
+        level: int,
+        course_id: Optional[str] = None,
+        course_name: Optional[str] = None,
+        context_chunks: Optional[List[Dict[str, str]]] = None,
+        context_text: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        rounds_to_build = self._initial_question_bank_rounds(level)
+        bank: List[Dict[str, Any]] = []
+
+        for round_no in range(rounds_to_build):
+            generated = self._generate_round_robin_questions(
+                member_profiles=member_profiles,
+                topic=topic,
+                selected_concept_id=selected_concept_id,
+                created_by=created_by,
+                course_id=course_id,
+                course_name=course_name,
+                context_chunks=context_chunks,
+                context_text=context_text,
+            )
+            if not generated:
+                generated = self._fallback_questions(
+                    member_profiles,
+                    topic,
+                    selected_concept_id,
+                    context_chunks or [],
+                    created_by=created_by,
+                    round_hint=round_no + 1,
+                )
+            generated = self._rebalance_mcq_share(generated)
+            bank.extend(generated)
+
+        if not bank:
+            fallback = self._fallback_questions(
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks or [],
+                created_by=created_by,
+                round_hint=1,
+            )
+            bank = self._rebalance_mcq_share(fallback)
+
+        bank = self._assign_question_ids(bank, start_index=0)
+        round_size = max(1, len(member_profiles))
+        generated_rounds = max(1, (len(bank) + round_size - 1) // round_size)
+        return bank, generated_rounds
 
     @staticmethod
     def _normalize_mcq_options(raw_options: Any) -> Optional[List[str]]:
@@ -1101,8 +1692,14 @@ class PeerSessionService:
 
         if _is_placeholder_choice(raw):
             return options[0]
+        if _is_placeholder_answer_template(raw):
+            return options[0]
 
-        return stripped or raw
+        candidate = stripped or raw
+        ranked = sorted(options, key=lambda opt: _token_overlap_score(candidate, opt), reverse=True)
+        if ranked and _token_overlap_score(candidate, ranked[0]) > 0:
+            return ranked[0]
+        return options[0]
 
     @staticmethod
     def _sanitize_existing_question(question: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
@@ -1124,6 +1721,7 @@ class PeerSessionService:
             changed = True
 
         answer = str(row.get("correct_answer") or "").strip()
+        options_for_math: List[str] = []
         if q_type == "mcq":
             options = PeerSessionService._normalize_mcq_options(row.get("options"))
             if not options:
@@ -1143,6 +1741,7 @@ class PeerSessionService:
                 if normalized_answer != answer:
                     row["correct_answer"] = normalized_answer
                     changed = True
+                options_for_math = options
         else:
             if row.get("options") is not None:
                 row["options"] = None
@@ -1151,13 +1750,31 @@ class PeerSessionService:
                 row["correct_answer"] = explanation or f"A complete, context-grounded answer about {concept_id}."
                 changed = True
 
-        if row.get("type") == "math":
+        math_blob = " ".join([str(row.get("stem") or ""), str(row.get("correct_answer") or ""), str(row.get("explanation") or ""), " ".join(options_for_math)])
+        mathish = _looks_math_content(math_blob)
+        if row.get("type") in {"open", "code"} and mathish:
+            row["type"] = "math"
+            changed = True
+
+        if row.get("type") == "math" or mathish:
             math_fields = ("stem", "correct_answer", "explanation")
             for field in math_fields:
                 original = str(row.get(field) or "")
                 converted = _latexify_math_text(original)
                 if converted != original:
                     row[field] = converted
+                    changed = True
+            if row.get("type") == "mcq" and isinstance(row.get("options"), list):
+                converted_options = [_latexify_math_text(opt) for opt in list(row.get("options") or [])]
+                if converted_options != list(row.get("options") or []):
+                    row["options"] = converted_options
+                    changed = True
+                normalized_answer = PeerSessionService._normalize_mcq_correct_answer(
+                    str(row.get("correct_answer") or ""),
+                    converted_options,
+                )
+                if normalized_answer != str(row.get("correct_answer") or ""):
+                    row["correct_answer"] = normalized_answer
                     changed = True
 
         return row, changed
@@ -1521,6 +2138,8 @@ class PeerSessionService:
                 course_name=course_name,
             )
         context_text = str(context_text or "").strip() or self._format_context(context_chunks)
+        if len(context_text) > 1400:
+            context_text = context_text[:1400]
 
         if not self.openai:
             return self._fallback_questions(
@@ -1554,6 +2173,8 @@ class PeerSessionService:
             return sum(vals) / len(vals) if vals else 0.0
 
         sorted_members = sorted(member_profiles, key=avg_mastery)
+        question_count = max(len(sorted_members), MIN_QUESTIONS_PER_ROUND)
+        target_mcq_count = question_count if FORCE_MCQ_ONLY else max(1, int(question_count * TARGET_MCQ_RATIO + 0.999))
         preferred_concept_by_member: Dict[str, str] = {}
         members_desc: List[str] = []
         for m in sorted_members:
@@ -1579,62 +2200,42 @@ class PeerSessionService:
             )
 
         prompt = (
-            "You are generating collaborative peer-learning questions.\n\n"
-            f"Session topic: {topic}\n"
-            f"Course id: {course_id or 'n/a'}\n"
-            f"Course name: {course_name or 'n/a'}\n"
+            "Generate collaborative boss-battle questions grounded in the provided course material.\n\n"
+            f"Topic: {topic}\n"
+            f"Course: {course_name or course_id or 'n/a'}\n"
             f"Focus concept_id: {focus_concept}\n"
-            f"Members (weakest first):\n{chr(10).join(members_desc)}\n\n"
-            "Use the course context below when available. Keep questions faithful to it.\n"
-            "If context is empty, generate high-quality domain-appropriate questions for the concept.\n\n"
-            f"Course context:\n{context_text or '(no context found)'}\n\n"
-            f"Generate exactly {len(sorted_members)} shared discussion questions (one question inspired by each member's preferred concept).\n"
-            "Return ONLY JSON object: {\"questions\":[...]} with items:\n"
+            f"Members:\n{chr(10).join(members_desc)}\n\n"
+            f"Material excerpts:\n{context_text or '(no context found)'}\n\n"
+            f"Return ONLY JSON object with key \"questions\" containing exactly {question_count} items.\n"
+            f"Exactly {target_mcq_count} items must be type \"mcq\".\n"
+            "Each item fields:\n"
             "{"
             "\"question_id\":\"q_0\","
             "\"target_member\":\"<student_id>\","
             "\"target_member_name\":\"<name>\","
-            "\"concept_id\":\"<specific weak sub-concept id>\","
-            "\"weak_concept\":\"<same specific sub-concept id>\","
-            "\"type\":\"open|code|math|mcq\","
-            "\"stem\":\"<question>\","
-            "\"options\":[\"<full option text>\",\"<full option text>\",\"<full option text>\",\"<full option text>\"] or null,"
-            "\"correct_answer\":\"<ground-truth answer>\","
-            "\"explanation\":\"<why correct>\","
-            "\"key_points\":[\"2-4 short grading points\"],"
-            "\"must_mention\":[\"2-3 atomic ideas that must be present semantically\"],"
-            "\"allowed_equivalents\":[\"short accepted paraphrases, aliases, or legal/technical synonyms\"],"
-            "\"common_misconceptions\":[\"specific plausible confusions or false contrasts to penalize\"],"
-            "\"grading_notes\":\"brief grading instruction describing minimum semantic coverage\""
+            "\"concept_id\":\"<specific topic-level concept id>\","
+            "\"weak_concept\":\"<same or closely related concept id>\","
+            "\"type\":\"mcq\","
+            "\"stem\":\"<question grounded in provided material>\","
+            "\"options\":[\"full option sentence\", \"full option sentence\", \"full option sentence\", \"full option sentence\"],"
+            "\"correct_answer\":\"<exactly one full option sentence from options, never A/B/C/D>\","
+            "\"explanation\":\"<why correct with reference to material>\","
+            "\"key_points\":[\"short grading point\", \"short grading point\"],"
+            "\"must_mention\":[\"semantic checkpoint\", \"semantic checkpoint\"],"
+            "\"allowed_equivalents\":[\"accepted paraphrase\", \"accepted paraphrase\"],"
+            "\"common_misconceptions\":[\"specific likely mistake\", \"specific likely mistake\"],"
+            "\"grading_notes\":\"brief grading guidance\""
             "}\n"
-            "Rules:\n"
-            "- Set concept_id to a specific topic-level concept id, not a broad slide/week title.\n"
-            "- Use each member's preferred_concept when provided, but write the stem as a shared prompt for the whole group.\n"
-            "- Every question must be answerable and discussable by every member in the room.\n"
-            "- Do not address a specific student in the stem. The same question content is shared with all members.\n"
-            "- Make each question answerable from provided context when available.\n"
-            "- Stay strictly inside the selected course/topic. Do not import concepts from other courses or domains.\n"
-            "- Do not create cross-domain analogies unless both sides of the analogy appear in the provided context.\n"
-            "- Rubric fields must be concise and directly usable for grading later.\n"
-            "- must_mention items should be short semantic checkpoints, not full sentences.\n"
-            "- allowed_equivalents should contain accepted alternate wording, not repeats of the same phrase.\n"
-            "- common_misconceptions should be specific likely mistakes, not generic notes like 'confused answer'.\n"
-            "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
-            "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
-            "- For math type, format formulas/equations using LaTeX delimiters: inline `$...$`, display `$$...$$`.\n"
-            "- For math type, keep `correct_answer` and `explanation` in valid LaTeX where equations appear.\n"
-            "- No markdown, no prose outside JSON."
+            "Rules: keep every question answerable from the provided material; avoid repeated stems; do not use placeholder/template text."
         )
 
         try:
-            resp = self.openai.chat.completions.create(
-                model="gpt-5.2",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=1800,
+            parsed = self._call_peer_json_chat(
+                prompt,
+                model=self.peer_question_model,
+                max_completion_tokens=self.peer_generation_max_tokens,
+                timeout_sec=self.peer_generation_timeout_sec,
             )
-            raw = resp.choices[0].message.content or "{}"
-            parsed = json.loads(raw)
             if isinstance(parsed, dict):
                 questions = parsed.get("questions", [])
             else:
@@ -1647,6 +2248,7 @@ class PeerSessionService:
                 context_chunks=context_chunks,
                 preferred_concept_by_member=preferred_concept_by_member,
             )
+            normalized_questions = self._rebalance_mcq_share(normalized_questions)
             linked_questions, _ = self._link_questions_to_creator_kg(
                 questions=normalized_questions,
                 member_profiles=member_profiles,
@@ -1658,12 +2260,55 @@ class PeerSessionService:
             return linked_questions
         except Exception as e:
             print(f"[PeerSessionService] AI question generation failed: {e}")
+            retry_message = str(e or "").lower()
+            should_retry = any(token in retry_message for token in ("timeout", "timed out", "deadline"))
+            if should_retry and self.openai:
+                try:
+                    retry_context = (context_text or "")[:900]
+                    retry_prompt = (
+                        "Generate concise boss-battle questions from course material.\n"
+                        f"Topic: {topic}\n"
+                        f"Focus concept_id: {focus_concept}\n"
+                        f"Need exactly {question_count} questions and all must be MCQ.\n"
+                        f"Members:\n{chr(10).join(members_desc)}\n"
+                        f"Material excerpts:\n{retry_context or '(no context)'}\n"
+                        "Return only JSON: {\"questions\":[{question_id,target_member,target_member_name,concept_id,weak_concept,type:\"mcq\",stem,options:[4 full options],correct_answer:\"one full option text\",explanation,key_points,must_mention,allowed_equivalents,common_misconceptions,grading_notes}]}"
+                    )
+                    retry_parsed = self._call_peer_json_chat(
+                        retry_prompt,
+                        model=self.peer_question_model,
+                        max_completion_tokens=min(700, self.peer_generation_max_tokens),
+                        timeout_sec=max(8.0, self.peer_generation_timeout_sec),
+                    )
+                    retry_questions = retry_parsed.get("questions", []) if isinstance(retry_parsed, dict) else retry_parsed
+                    retry_normalized = self._normalize_questions(
+                        retry_questions,
+                        member_profiles,
+                        topic,
+                        selected_concept_id,
+                        context_chunks=context_chunks,
+                        preferred_concept_by_member=preferred_concept_by_member,
+                    )
+                    retry_normalized = self._rebalance_mcq_share(retry_normalized)
+                    retry_linked, _ = self._link_questions_to_creator_kg(
+                        questions=retry_normalized,
+                        member_profiles=member_profiles,
+                        creator_id=created_by,
+                        focus_concept=focus_concept,
+                        topic=topic,
+                        preferred_concept_by_member=preferred_concept_by_member,
+                    )
+                    if retry_linked:
+                        return retry_linked
+                except Exception as retry_error:
+                    print(f"[PeerSessionService] AI question retry failed: {retry_error}")
             return self._fallback_questions(
                 member_profiles,
                 topic,
                 selected_concept_id,
                 context_chunks,
                 created_by=created_by,
+                round_hint=1,
             )
 
     def _normalize_questions(
@@ -1701,7 +2346,7 @@ class PeerSessionService:
                 continue
             target_member = str(q.get("target_member") or "")
             if target_member not in by_id and member_profiles:
-                target_member = str(member_profiles[min(i, len(member_profiles) - 1)].get("student_id", ""))
+                target_member = str(member_profiles[i % len(member_profiles)].get("student_id", ""))
             if not target_member:
                 continue
 
@@ -1760,6 +2405,21 @@ class PeerSessionService:
                 correct_answer = explanation or f"A complete, context-grounded answer about {concept_id}."
             if not correct_answer:
                 continue
+
+            math_blob = " ".join([stem, correct_answer, explanation, " ".join(options or [])])
+            mathish = _looks_math_content(math_blob)
+            if q_type in {"open", "code"} and mathish:
+                q_type = "math"
+
+            if q_type == "math" or mathish:
+                stem = _latexify_math_text(stem)
+                correct_answer = _latexify_math_text(correct_answer)
+                explanation = _latexify_math_text(explanation)
+                if options:
+                    options = [_latexify_math_text(opt) for opt in options]
+                    if q_type == "mcq":
+                        correct_answer = self._normalize_mcq_correct_answer(correct_answer, options)
+
             rubric_fields = self._build_question_rubric(
                 concept_id=concept_id,
                 correct_answer=correct_answer,
@@ -1776,34 +2436,113 @@ class PeerSessionService:
             common_misconceptions = rubric_fields["common_misconceptions"]
             grading_notes = rubric_fields["grading_notes"]
 
-            if q_type == "math":
-                stem = _latexify_math_text(stem)
-                correct_answer = _latexify_math_text(correct_answer)
-                explanation = _latexify_math_text(explanation)
-
-            normalized.append(
-                {
-                    "question_id": str(q.get("question_id") or f"q_{len(normalized)}"),
-                    "target_member": target_member,
-                    "target_member_name": str(q.get("target_member_name") or member_name),
-                    "concept_id": concept_id,
-                    "weak_concept": weak_concept,
-                    "type": q_type,
-                    "stem": stem,
-                    "options": options,
-                    "correct_answer": correct_answer,
-                    "explanation": explanation,
-                    "key_points": key_points,
-                    "must_mention": must_mention,
-                    "allowed_equivalents": allowed_equivalents,
-                    "common_misconceptions": common_misconceptions,
-                    "grading_notes": grading_notes,
-                }
-            )
+            row = {
+                "question_id": str(q.get("question_id") or f"q_{len(normalized)}"),
+                "target_member": target_member,
+                "target_member_name": str(q.get("target_member_name") or member_name),
+                "concept_id": concept_id,
+                "weak_concept": weak_concept,
+                "type": q_type,
+                "stem": stem,
+                "options": options,
+                "correct_answer": correct_answer,
+                "explanation": explanation,
+                "key_points": key_points,
+                "must_mention": must_mention,
+                "allowed_equivalents": allowed_equivalents,
+                "common_misconceptions": common_misconceptions,
+                "grading_notes": grading_notes,
+            }
+            if FORCE_MCQ_ONLY:
+                row = self._coerce_question_to_mcq(
+                    row,
+                    seed_hint=f"normalize:{len(normalized)}:{concept_id}",
+                    fact_hint=str(stem or explanation),
+                )
+            normalized.append(row)
 
         if not normalized:
             return self._fallback_questions(member_profiles, topic, selected_concept_id, [])
+
+        desired_count = max(len(member_profiles), MIN_QUESTIONS_PER_ROUND)
+        if len(normalized) < desired_count:
+            filler = self._fallback_questions(
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks or [],
+                round_hint=2,
+            )
+            for item in filler:
+                if len(normalized) >= desired_count:
+                    break
+                candidate = dict(item)
+                candidate["question_id"] = f"q_{len(normalized)}"
+                normalized.append(candidate)
         return normalized
+
+    @staticmethod
+    def _extract_chunk_sentences(text: str, limit: int = 8) -> List[str]:
+        clean = _clean_material_text_for_facts(text)
+        if not clean:
+            return []
+        raw_sentences = re.split(r"(?<=[\.\!\?\:;])\s+", clean)
+        out: List[str] = []
+        for raw in raw_sentences:
+            sentence = str(raw or "").strip(" -\t\r\n")
+            if not sentence:
+                continue
+            if _is_low_signal_fact_sentence(sentence):
+                continue
+            words = sentence.split()
+            if len(words) < 7:
+                continue
+            candidate = " ".join(words[:36]).strip()
+            if len(candidate) < 36:
+                continue
+            out.append(candidate[:220])
+            if len(out) >= limit:
+                break
+
+        if out:
+            return out
+
+        # Fallback when source text is poorly punctuated.
+        words = clean.split()
+        if len(words) < 10:
+            return [] if _is_low_signal_fact_sentence(clean) else [clean[:220]]
+        out = []
+        step = 16
+        span = 24
+        for start in range(0, min(len(words), 180), step):
+            segment = " ".join(words[start:start + span]).strip()
+            if len(segment) < 36:
+                continue
+            if _is_low_signal_fact_sentence(segment):
+                continue
+            out.append(segment[:220])
+            if len(out) >= limit:
+                break
+        return out
+
+    def _build_material_fact_bank(self, context_chunks: List[Dict[str, str]], limit: int = 18) -> List[str]:
+        facts: List[str] = []
+        seen: set[str] = set()
+        for chunk in context_chunks or []:
+            text = str(chunk.get("text") or "").strip()
+            if not text:
+                continue
+            for sentence in self._extract_chunk_sentences(text, limit=6):
+                key = _normalize_key(sentence)
+                if not key or key in seen:
+                    continue
+                if _is_low_signal_fact_sentence(sentence):
+                    continue
+                seen.add(key)
+                facts.append(sentence)
+                if len(facts) >= limit:
+                    return facts
+        return facts
 
     def _fallback_questions(
         self,
@@ -1812,12 +2551,12 @@ class PeerSessionService:
         selected_concept_id: Optional[str],
         context_chunks: List[Dict[str, str]],
         created_by: Optional[str] = None,
+        round_hint: int = 1,
     ) -> List[Dict[str, Any]]:
         """Generate deterministic questions when AI output is unavailable."""
         focus = selected_concept_id or _normalize_key(topic) or topic
-        anchor = ""
-        if context_chunks:
-            anchor = context_chunks[0].get("text", "")[:220].strip()
+        fact_bank = self._build_material_fact_bank(context_chunks, limit=18)
+        anchor = fact_bank[0] if fact_bank else ""
         allowed_concepts = list(dict.fromkeys([
             *[
                 str(chunk.get("concept_id") or "").strip()
@@ -1829,30 +2568,61 @@ class PeerSessionService:
         ]))
 
         questions: List[Dict[str, Any]] = []
-        for i, m in enumerate(member_profiles):
-            member_concept = self._pick_member_question_concept(
-                m,
-                focus,
-                topic,
-                context_chunks,
-                allowed_concepts=allowed_concepts,
-            )
-            stem = f"Shared discussion prompt: explain the key ideas of '{member_concept}' and how they relate to '{topic}'."
-            if anchor:
-                stem += f" Use this course fact in your explanation: \"{anchor}\"."
+        if not member_profiles:
+            return questions
+
+        total_questions = max(len(member_profiles), MIN_QUESTIONS_PER_ROUND)
+        offset = max(0, int(round_hint) - 1) * 3
+        scenario_templates = [
+            "State the legal test and apply each element to the scenario facts.",
+            "Distinguish the correct rule from one likely misconception.",
+            "Explain what must be proved and conclude the likely outcome.",
+            "Apply the principle step by step and justify the remedy or reduction.",
+            "Identify the key facts that change liability and explain why.",
+            "Explain the strongest argument for each side and then conclude.",
+        ]
+        context_concepts = [
+            str(chunk.get("concept_id") or "").strip()
+            for chunk in context_chunks
+            if str(chunk.get("concept_id") or "").strip()
+        ]
+        if not context_concepts:
+            context_concepts = [str(c).strip() for c in allowed_concepts if str(c).strip()]
+
+        for i in range(total_questions):
+            m = member_profiles[i % len(member_profiles)]
+            if context_concepts:
+                member_concept = context_concepts[(offset + i) % len(context_concepts)]
+            else:
+                member_concept = self._pick_member_question_concept(
+                    m,
+                    focus,
+                    topic,
+                    context_chunks,
+                    allowed_concepts=allowed_concepts,
+                )
+            material_fact = fact_bank[(offset + i) % len(fact_bank)] if fact_bank else anchor
+            scenario_line = scenario_templates[(offset + i) % len(scenario_templates)]
+            concept_label = _humanize_key(member_concept) or member_concept
+            stem = f"In this {concept_label} question, {scenario_line}"
+            if material_fact:
+                stem += f" Scenario fact: {material_fact}."
             rubric_fields = self._build_question_rubric(
                 concept_id=member_concept,
-                correct_answer=f"A correct explanation grounded in the course material for {member_concept}.",
-                explanation=f"This checks understanding of {member_concept}.",
+                correct_answer=(
+                    f"A strong answer states the governing rule for {concept_label}, "
+                    f"applies it to the cited facts, and gives a clear conclusion."
+                ),
+                explanation=f"This checks practical understanding of {concept_label} using uploaded course material.",
                 key_points=self._derive_brief_points(
-                    f"Explain the core idea of {member_concept}",
-                    anchor,
+                    f"Apply the principle for {concept_label}",
+                    material_fact,
                     limit=3,
                 ),
                 must_mention=[],
                 allowed_equivalents=[],
                 common_misconceptions=[],
-                grading_notes="Reward conceptually accurate explanations grounded in the study material.",
+                grading_notes="Reward conceptually accurate explanations that directly reference the cited course fact.",
             )
             questions.append(
                 {
@@ -1864,8 +2634,10 @@ class PeerSessionService:
                     "type": "open",
                     "stem": stem,
                     "options": None,
-                    "correct_answer": f"A correct explanation grounded in the course material for {member_concept}.",
-                    "explanation": f"This checks understanding of {member_concept}.",
+                    "correct_answer": (
+                        f"State the rule for {concept_label}, apply it accurately to the given facts, and conclude."
+                    ),
+                    "explanation": f"This checks practical understanding of {concept_label} using uploaded material evidence.",
                     "key_points": rubric_fields["key_points"],
                     "must_mention": rubric_fields["must_mention"],
                     "allowed_equivalents": rubric_fields["allowed_equivalents"],
@@ -1873,6 +2645,8 @@ class PeerSessionService:
                     "grading_notes": rubric_fields["grading_notes"],
                 }
             )
+        questions = self._rebalance_mcq_share(questions)
+
         if created_by:
             linked_questions, _ = self._link_questions_to_creator_kg(
                 questions=questions,
@@ -1883,6 +2657,48 @@ class PeerSessionService:
             )
             return linked_questions
         return questions
+
+    def _question_needs_regeneration(self, question: Dict[str, Any]) -> bool:
+        if not isinstance(question, dict):
+            return True
+        stem = str(question.get("stem") or "").strip()
+        if not stem or _is_placeholder_stem(stem):
+            return True
+        stem_low = stem.lower()
+        if any(
+            marker in stem_low
+            for marker in (
+                "shared discussion prompt",
+                "using the uploaded materials for",
+                "answer this prompt on",
+                "this checks practical understanding of",
+                "uploaded material evidence",
+            )
+        ):
+            return True
+
+        answer = str(question.get("correct_answer") or "").strip()
+        if not answer or _is_placeholder_answer_template(answer):
+            return True
+
+        options = self._normalize_mcq_options(question.get("options")) or []
+        if FORCE_MCQ_ONLY and len(options) < MCQ_MIN_OPTIONS:
+            return True
+        if options and all(answer.casefold() != opt.casefold() for opt in options):
+            answer_idx = _extract_choice_index(answer)
+            if answer_idx is None or not (0 <= answer_idx < len(options)):
+                return True
+
+        explanation = str(question.get("explanation") or "").strip().lower()
+        if "this checks practical understanding of" in explanation and "uploaded material evidence" in explanation:
+            return True
+        return False
+
+    def _round_needs_ai_refresh(self, questions: List[Dict[str, Any]]) -> bool:
+        if not isinstance(questions, list) or not questions:
+            return True
+        flagged = sum(1 for q in questions if self._question_needs_regeneration(q))
+        return flagged >= max(1, len(questions) // 2)
 
     def _retarget_questions_to_specific_concepts(
         self,
@@ -1969,18 +2785,57 @@ class PeerSessionService:
         prompt: str,
         *,
         max_completion_tokens: int,
+        model: Optional[str] = None,
+        timeout_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         if not self.openai:
             raise RuntimeError("OpenAI client unavailable")
-        resp = self.openai.chat.completions.create(
-            model="gpt-5.2",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            max_completion_tokens=max_completion_tokens,
+        primary_model = str(model or self.peer_eval_model or "gpt-5.2").strip()
+        fallback_model = str(self.peer_fallback_model or "").strip()
+        timeout_value = float(timeout_sec if timeout_sec is not None else self.peer_eval_timeout_sec)
+        timeout_value = max(3.0, timeout_value)
+
+        def run_chat(model_name: str) -> Dict[str, Any]:
+            resp = self.openai.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_completion_tokens=max_completion_tokens,
+                timeout=timeout_value,
+            )
+            raw = resp.choices[0].message.content or "{}"
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+
+        try:
+            return run_chat(primary_model)
+        except Exception as exc:
+            if (
+                fallback_model
+                and fallback_model != primary_model
+                and self._is_model_lookup_error(exc)
+            ):
+                return run_chat(fallback_model)
+            raise
+
+    @staticmethod
+    def _is_model_lookup_error(exc: Exception) -> bool:
+        message = str(exc or "").lower()
+        if "model" not in message:
+            return False
+        return any(
+            marker in message
+            for marker in (
+                "not found",
+                "does not exist",
+                "invalid model",
+                "unsupported",
+                "unknown model",
+                "do not have access",
+                "permission",
+                "not available",
+            )
         )
-        raw = resp.choices[0].message.content or "{}"
-        parsed = json.loads(raw)
-        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _should_escalate_peer_evaluation(
@@ -1992,13 +2847,57 @@ class PeerSessionService:
         confidence = _clamp(_to_float(parsed.get("confidence"), 0.55))
         if bool(parsed.get("needs_escalation", False)):
             return True
-        if confidence < 0.68:
+        if confidence < 0.45:
             return True
-        if 0.45 <= score <= 0.8:
+        if 0.56 <= score <= 0.72 and confidence < 0.75:
             return True
-        if len(str(answer_text or "").strip()) <= 12 and score >= 0.35:
+        if len(str(answer_text or "").strip()) <= 18 and 0.35 <= score <= 0.85:
             return True
         return False
+
+    def _evaluate_mcq_answer(
+        self,
+        question: Dict[str, Any],
+        answer_text: str,
+    ) -> Dict[str, Any]:
+        options = self._normalize_mcq_options(question.get("options")) or []
+        if not options:
+            return self._evaluate_answer(question, answer_text, [])
+
+        correct_answer = self._normalize_mcq_correct_answer(question.get("correct_answer"), options)
+        raw_answer = str(answer_text or "").strip()
+        selected_answer = raw_answer
+
+        choice_idx = _extract_choice_index(raw_answer)
+        if choice_idx is not None and 0 <= choice_idx < len(options):
+            selected_answer = options[choice_idx]
+        else:
+            stripped = _strip_choice_label(raw_answer).strip()
+            if stripped:
+                selected_answer = stripped
+                for opt in options:
+                    if opt.casefold() == stripped.casefold():
+                        selected_answer = opt
+                        break
+
+        is_correct = bool(selected_answer) and selected_answer.casefold() == correct_answer.casefold()
+        explanation = str(question.get("explanation") or "").strip()
+
+        if is_correct:
+            feedback = explanation or "Correct choice."
+            hint = ""
+        else:
+            feedback = "That option does not match the best answer for this question."
+            hint = f"Review the option that states: {correct_answer}"
+
+        return {
+            "is_correct": is_correct,
+            "score": 1.0 if is_correct else 0.0,
+            "feedback": feedback,
+            "hint": hint,
+            "mistake_type": "normal" if is_correct else "conceptual",
+            "confidence": 1.0,
+        }
 
     def _evaluate_answer(
         self,
@@ -2023,7 +2922,7 @@ class PeerSessionService:
             "common_misconceptions": self._coerce_string_list(question.get("common_misconceptions"), limit=3),
             "grading_notes": str(question.get("grading_notes") or "").strip(),
         }
-        evidence_text = self._format_context(context_chunks, max_chars=900)
+        evidence_text = self._format_context(context_chunks, max_chars=640)
         fast_prompt = (
             "Evaluate this student answer for a shared peer-learning discussion.\n\n"
             f"Question: {question.get('stem', '')}\n"
@@ -2056,10 +2955,12 @@ class PeerSessionService:
         try:
             parsed = self._call_peer_json_chat(
                 fast_prompt,
-                max_completion_tokens=260,
+                model=self.peer_eval_model,
+                max_completion_tokens=self.peer_eval_fast_max_tokens,
+                timeout_sec=self.peer_eval_timeout_sec,
             )
             fast_score = _clamp(float(parsed.get("score", 0.0)))
-            if self._should_escalate_peer_evaluation(
+            if self.peer_eval_allow_deep_pass and self._should_escalate_peer_evaluation(
                 parsed=parsed,
                 score=fast_score,
                 answer_text=answer_text,
@@ -2093,17 +2994,13 @@ class PeerSessionService:
                 )
                 parsed = self._call_peer_json_chat(
                     deep_prompt,
-                    max_completion_tokens=360,
+                    model=self.peer_eval_model,
+                    max_completion_tokens=self.peer_eval_deep_max_tokens,
+                    timeout_sec=self.peer_eval_timeout_sec,
                 )
         except Exception as e:
             print(f"[PeerSessionService] AI evaluation failed: {e}")
-            parsed = {
-                "is_correct": False,
-                "score": 0.0,
-                "feedback": "Could not evaluate answer. Please try again.",
-                "hint": "",
-                "mistake_type": "conceptual",
-            }
+            return self._fallback_evaluate_answer(question, answer_text)
 
         is_correct = bool(parsed.get("is_correct", False))
         score = _clamp(float(parsed.get("score", 0.0)))
@@ -2122,6 +3019,59 @@ class PeerSessionService:
             "hint": hint,
             "mistake_type": mistake_type,
             "confidence": _clamp(_to_float(parsed.get("confidence"), 0.55)),
+        }
+
+    def _fallback_evaluate_answer(self, question: Dict[str, Any], answer_text: str) -> Dict[str, Any]:
+        answer_norm = _normalize_key(str(answer_text or ""))
+        if not answer_norm:
+            return {
+                "is_correct": False,
+                "score": 0.0,
+                "feedback": "Your answer is empty.",
+                "hint": "State the key legal principle and apply it to the facts.",
+                "mistake_type": "conceptual",
+                "confidence": 0.35,
+            }
+
+        answer_tokens = [t for t in answer_norm.split("_") if t and t not in RUBRIC_PHRASE_STOPWORDS]
+        answer_token_set = set(answer_tokens)
+        target_terms = " ".join(
+            [
+                str(question.get("correct_answer") or ""),
+                str(question.get("explanation") or ""),
+                " ".join(self._coerce_string_list(question.get("must_mention"), limit=5)),
+                " ".join(self._coerce_string_list(question.get("key_points"), limit=6)),
+            ]
+        )
+        target_tokens = [
+            t for t in _normalize_key(target_terms).split("_")
+            if t and t not in RUBRIC_PHRASE_STOPWORDS
+        ]
+        target_token_set = set(target_tokens)
+
+        if not target_token_set:
+            score = 0.65 if len(answer_token_set) >= 4 else 0.45
+        else:
+            overlap = len(answer_token_set.intersection(target_token_set))
+            score = overlap / max(3, min(12, len(target_token_set)))
+            score = max(0.0, min(1.0, score))
+
+        is_correct = score >= 0.45
+        return {
+            "is_correct": is_correct,
+            "score": round(score, 2),
+            "feedback": (
+                "Answer is broadly on track."
+                if is_correct
+                else "Answer misses key required points from the model answer."
+            ),
+            "hint": (
+                ""
+                if is_correct
+                else "Include the core test elements and apply them directly to the facts."
+            ),
+            "mistake_type": "normal" if is_correct else "conceptual",
+            "confidence": 0.5,
         }
 
     @staticmethod
@@ -2152,7 +3102,7 @@ class PeerSessionService:
         override = BOSS_HEALTH_OVERRIDES.get(boss_character)
         if override is not None:
             return float(override)
-        return float(max(80.0, min(500.0, total_expected_answers * 22.0)))
+        return 80.0
 
     @staticmethod
     def _question_time_limit_for_level(level: int) -> Optional[int]:
@@ -2881,25 +3831,17 @@ class PeerSessionService:
             course_name=resolved_course_name,
             limit=8,
         )
-        questions = self._generate_round_robin_questions(
+        questions, initial_round_count = self._generate_initial_question_bank(
             member_profiles=normalized_profiles,
             topic=resolved_topic,
             selected_concept_id=resolved_concept_id,
             created_by=created_by,
+            level=normalized_level,
             course_id=resolved_course_id,
             course_name=resolved_course_name,
             context_chunks=evidence_pack.get("session_context_chunks"),
             context_text=evidence_pack.get("session_context_text"),
         )
-        if not questions:
-            questions = self._fallback_questions(
-                normalized_profiles,
-                resolved_topic,
-                resolved_concept_id,
-                list(evidence_pack.get("session_context_chunks") or []),
-                created_by=created_by,
-            )
-        questions = self._assign_question_ids(questions, start_index=0)
 
         creator_name = created_by
         for m in normalized_profiles:
@@ -2909,7 +3851,8 @@ class PeerSessionService:
         creator_name = self._clean_member_name(created_by, creator_name, fallback_label="Host")
 
         now = _utc_now()
-        total_expected_answers = max(1, max(2, len(normalized_profiles)) * max(1, len(questions)))
+        baseline_round_questions = max(1, len(questions) // max(1, initial_round_count))
+        total_expected_answers = max(1, max(2, len(normalized_profiles)) * baseline_round_questions)
         boss_character_id = _boss_character_for_level(normalized_level)
         boss_health_max = self._initial_boss_health(normalized_level, total_expected_answers, boss_character_id)
         party_health_max = self._initial_party_health(normalized_level, total_expected_answers)
@@ -2944,7 +3887,7 @@ class PeerSessionService:
             "expected_members": max(2, len(normalized_profiles)),
             "questions": questions,
             "current_question_index": 0,
-            "round_index": 1,
+            "round_index": max(1, int(initial_round_count)),
             "answers": [],
             **evidence_pack,
             "prefetched_next_round_questions": [],
@@ -2954,6 +3897,7 @@ class PeerSessionService:
             "pending_mastery_meta": {},
             "mastery_updates_applied_at": None,
             "mastery_flush_status": "idle",
+            "runtime_optimized_v1": True,
         }
         self._normalize_session_member_names(session_doc)
 
@@ -2998,6 +3942,7 @@ class PeerSessionService:
                 data.get("selected_concept_id"),
                 [],
                 created_by=str(data.get("created_by") or ""),
+                round_hint=1,
             )
             updates["questions"] = self._assign_question_ids(fresh_questions, start_index=0)
             updates["current_question_index"] = 0
@@ -3010,6 +3955,72 @@ class PeerSessionService:
             self._schedule_next_round_prefetch(session_id)
         return {"status": final_status, "already_joined": False}
 
+    @staticmethod
+    def _build_lightweight_question_row(raw: Dict[str, Any], index: int, *, current: bool) -> Dict[str, Any]:
+        if current:
+            return dict(raw)
+
+        q_type = str(raw.get("type") or "open").strip().lower()
+        if q_type not in {"open", "code", "math", "mcq"}:
+            q_type = "open"
+
+        return {
+            "question_id": str(raw.get("question_id") or f"q_{index}"),
+            "target_member": str(raw.get("target_member") or ""),
+            "target_member_name": str(raw.get("target_member_name") or ""),
+            "concept_id": str(raw.get("concept_id") or ""),
+            "weak_concept": str(raw.get("weak_concept") or ""),
+            "stem": "",
+            "type": q_type,
+            "options": None,
+            "correct_answer": "",
+            "explanation": "",
+            "key_points": [],
+            "must_mention": [],
+            "allowed_equivalents": [],
+            "common_misconceptions": [],
+            "grading_notes": None,
+        }
+
+    def _build_session_response_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(data)
+        status = str(data.get("status") or "").strip().lower()
+        if status not in {"active", "waiting"}:
+            return payload
+
+        questions = list(data.get("questions", []) or [])
+        if not questions:
+            payload["questions"] = []
+            payload["answers"] = []
+            return payload
+
+        current_idx = max(0, min(int(data.get("current_question_index", 0) or 0), len(questions) - 1))
+        current_qid = str(questions[current_idx].get("question_id") or "")
+
+        slim_questions: List[Dict[str, Any]] = []
+        for idx, raw in enumerate(questions):
+            if not isinstance(raw, dict):
+                continue
+            slim_questions.append(self._build_lightweight_question_row(raw, idx, current=idx == current_idx))
+
+        all_answers = list(data.get("answers", []) or [])
+        current_answers = [
+            dict(answer)
+            for answer in all_answers
+            if isinstance(answer, dict) and str(answer.get("question_id") or "") == current_qid
+        ]
+        current_q_penalties = [
+            dict(entry)
+            for entry in list(data.get("question_timeout_penalties", []) or [])
+            if isinstance(entry, dict) and str(entry.get("question_id") or "") == current_qid
+        ]
+
+        payload["questions"] = slim_questions
+        payload["answers"] = current_answers
+        payload["question_timeout_penalties"] = current_q_penalties
+        payload["boss_attack_log"] = list(data.get("boss_attack_log", []) or [])[-20:]
+        return payload
+
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get full session state."""
         if not self.db:
@@ -3020,23 +4031,25 @@ class PeerSessionService:
         if not doc.exists:
             return None
         data = doc.to_dict() or {}
+        runtime_optimized = bool(data.get("runtime_optimized_v1", False))
 
         if "member_profiles" not in data:
             profiles = self._build_member_profiles_from_session(data)
             data["member_profiles"] = profiles
             ref.update({"member_profiles": profiles})
 
-        names_changed, _ = self._normalize_session_member_names(data)
-        if names_changed:
-            updates: Dict[str, Any] = {}
-            if "members" in data:
-                updates["members"] = data.get("members", [])
-            if "member_profiles" in data:
-                updates["member_profiles"] = data.get("member_profiles", [])
-            if "questions" in data:
-                updates["questions"] = data.get("questions", [])
-            if updates:
-                ref.update(updates)
+        if not runtime_optimized:
+            names_changed, _ = self._normalize_session_member_names(data)
+            if names_changed:
+                updates: Dict[str, Any] = {}
+                if "members" in data:
+                    updates["members"] = data.get("members", [])
+                if "member_profiles" in data:
+                    updates["member_profiles"] = data.get("member_profiles", [])
+                if "questions" in data:
+                    updates["questions"] = data.get("questions", [])
+                if updates:
+                    ref.update(updates)
 
         if not data.get("questions"):
             member_profiles = self._build_member_profiles_from_session(data)
@@ -3048,6 +4061,7 @@ class PeerSessionService:
                         data.get("selected_concept_id"),
                         [],
                         created_by=str(data.get("created_by") or ""),
+                        round_hint=1,
                     ),
                     start_index=0,
                 )
@@ -3055,96 +4069,128 @@ class PeerSessionService:
                 data["current_question_index"] = 0
                 ref.update({"questions": questions, "current_question_index": 0})
 
-        # Backfill IDs for legacy sessions that may have duplicates.
-        questions = data.get("questions", []) or []
-        expected_ids = [f"q_{idx}" for idx in range(len(questions))]
-        actual_ids = [str(q.get("question_id", "")) for q in questions]
-        if actual_ids != expected_ids and questions:
-            questions = self._assign_question_ids(questions, start_index=0)
-            data["questions"] = questions
-            current_idx = max(0, min(int(data.get("current_question_index", 0)), len(questions) - 1))
-            data["current_question_index"] = current_idx
-            ref.update({"questions": questions, "current_question_index": current_idx})
-
-        # Sanitize malformed MCQs from legacy sessions (e.g., options like ["A", "B", "C", "D"]).
+        # Runtime-safe question normalization for both new and legacy sessions.
+        # Ensures active sessions never surface malformed/placeholder/open questions when MCQ-only mode is enabled.
         questions = data.get("questions", []) or []
         if questions:
-            sanitized_questions: List[Dict[str, Any]] = []
+            normalized_questions: List[Dict[str, Any]] = []
             questions_changed = False
-            for q in questions:
-                if not isinstance(q, dict):
+            for idx, raw_q in enumerate(questions):
+                if not isinstance(raw_q, dict):
+                    questions_changed = True
                     continue
-                sanitized_q, changed = self._sanitize_existing_question(q)
-                sanitized_questions.append(sanitized_q)
+                sanitized_q, changed = self._sanitize_existing_question(raw_q)
+                if FORCE_MCQ_ONLY:
+                    already_enforced = bool(data.get("mcq_only_enforced_v1", False))
+                    current_type = str(sanitized_q.get("type") or "").strip().lower()
+                    current_options = self._normalize_mcq_options(sanitized_q.get("options"))
+                    current_stem = str(sanitized_q.get("stem") or "")
+                    current_answer = str(sanitized_q.get("correct_answer") or "")
+                    needs_mcq_coerce = (
+                        not already_enforced
+                        or current_type != "mcq"
+                        or not current_options
+                        or _is_placeholder_stem(current_stem)
+                        or _is_placeholder_answer_template(current_answer)
+                    )
+                    if needs_mcq_coerce:
+                        coerced_q = self._coerce_question_to_mcq(
+                            sanitized_q,
+                            seed_hint=f"session:{session_id}:{idx}",
+                            fact_hint=str(sanitized_q.get("stem") or sanitized_q.get("explanation") or ""),
+                        )
+                        if coerced_q != sanitized_q:
+                            changed = True
+                        sanitized_q = coerced_q
+                expected_qid = f"q_{idx}"
+                if str(sanitized_q.get("question_id") or "") != expected_qid:
+                    sanitized_q["question_id"] = expected_qid
+                    changed = True
+                normalized_questions.append(sanitized_q)
                 if changed:
                     questions_changed = True
-            if sanitized_questions and questions_changed:
-                data["questions"] = sanitized_questions
-                questions = sanitized_questions
-                ref.update({"questions": sanitized_questions})
 
-        # Backfill course metadata for legacy sessions.
-        if "course_id" not in data or "course_name" not in data:
-            seed = self._resolve_session_seed(
-                user_id=str(data.get("created_by") or ""),
-                topic=str(data.get("topic") or ""),
-                concept_id=data.get("selected_concept_id"),
-                course_id=data.get("course_id"),
-                course_name=data.get("course_name"),
-            )
-            data["course_id"] = str(seed.get("course_id") or "").strip() or None
-            data["course_name"] = str(seed.get("course_name") or "").strip() or None
-            ref.update({"course_id": data["course_id"], "course_name": data["course_name"]})
+            enforce_flag = FORCE_MCQ_ONLY and not bool(data.get("mcq_only_enforced_v1", False))
+            if normalized_questions and (questions_changed or enforce_flag):
+                current_idx = max(0, min(int(data.get("current_question_index", 0) or 0), len(normalized_questions) - 1))
+                updates: Dict[str, Any] = {
+                    "questions": normalized_questions,
+                    "current_question_index": current_idx,
+                }
+                if enforce_flag:
+                    updates["mcq_only_enforced_v1"] = True
+                ref.update(updates)
+                data["questions"] = normalized_questions
+                data["current_question_index"] = current_idx
+                if enforce_flag:
+                    data["mcq_only_enforced_v1"] = True
+            elif enforce_flag:
+                ref.update({"mcq_only_enforced_v1": True})
+                data["mcq_only_enforced_v1"] = True
 
-        # Retarget broad legacy question concepts to specific sub-topics when possible.
-        questions = data.get("questions", []) or []
-        if questions:
-            topic_text = str(data.get("topic") or "")
-            focus_concept = str(data.get("selected_concept_id") or _normalize_key(topic_text) or topic_text).strip()
-            focus_norm = _normalize_key(focus_concept)
-            topic_norm = _normalize_key(topic_text)
-            needs_retarget = False
-            creator_id = str(data.get("created_by") or "")
-            for q in questions:
-                if not isinstance(q, dict):
-                    continue
-                concept_id = str(q.get("concept_id") or "").strip()
-                weak_concept = str(q.get("weak_concept") or "").strip()
-                concept_norm = _normalize_key(concept_id)
-                weak_norm = _normalize_key(weak_concept)
-                concept_missing = bool(concept_id) and not self._student_has_concept_node(creator_id, concept_id)
-                weak_missing = bool(weak_concept) and not self._student_has_concept_node(creator_id, weak_concept)
-                if (
-                    concept_norm in {"", focus_norm, topic_norm}
-                    or weak_norm in {"", focus_norm, topic_norm}
-                    or concept_missing
-                    or weak_missing
-                ):
-                    needs_retarget = True
-                    break
-
-            if needs_retarget:
-                member_profiles = self._build_member_profiles_from_session(data)
-                context_chunks = self._fetch_concept_context(
+        if not runtime_optimized:
+            # Backfill course metadata for legacy sessions.
+            if "course_id" not in data or "course_name" not in data:
+                seed = self._resolve_session_seed(
                     user_id=str(data.get("created_by") or ""),
+                    topic=str(data.get("topic") or ""),
                     concept_id=data.get("selected_concept_id"),
-                    topic=topic_text,
-                    limit=8,
                     course_id=data.get("course_id"),
                     course_name=data.get("course_name"),
                 )
-                retargeted_questions, retargeted_changed = self._retarget_questions_to_specific_concepts(
-                    questions=questions,
-                    member_profiles=member_profiles,
-                    topic=topic_text,
-                    selected_concept_id=data.get("selected_concept_id"),
-                    context_chunks=context_chunks,
-                    created_by=creator_id,
-                )
-                if retargeted_changed:
-                    data["questions"] = retargeted_questions
-                    questions = retargeted_questions
-                    ref.update({"questions": retargeted_questions})
+                data["course_id"] = str(seed.get("course_id") or "").strip() or None
+                data["course_name"] = str(seed.get("course_name") or "").strip() or None
+                ref.update({"course_id": data["course_id"], "course_name": data["course_name"]})
+
+            # Retarget broad legacy question concepts to specific sub-topics when possible.
+            questions = data.get("questions", []) or []
+            if questions:
+                topic_text = str(data.get("topic") or "")
+                focus_concept = str(data.get("selected_concept_id") or _normalize_key(topic_text) or topic_text).strip()
+                focus_norm = _normalize_key(focus_concept)
+                topic_norm = _normalize_key(topic_text)
+                needs_retarget = False
+                creator_id = str(data.get("created_by") or "")
+                for q in questions:
+                    if not isinstance(q, dict):
+                        continue
+                    concept_id = str(q.get("concept_id") or "").strip()
+                    weak_concept = str(q.get("weak_concept") or "").strip()
+                    concept_norm = _normalize_key(concept_id)
+                    weak_norm = _normalize_key(weak_concept)
+                    concept_missing = bool(concept_id) and not self._student_has_concept_node(creator_id, concept_id)
+                    weak_missing = bool(weak_concept) and not self._student_has_concept_node(creator_id, weak_concept)
+                    if (
+                        concept_norm in {"", focus_norm, topic_norm}
+                        or weak_norm in {"", focus_norm, topic_norm}
+                        or concept_missing
+                        or weak_missing
+                    ):
+                        needs_retarget = True
+                        break
+
+                if needs_retarget:
+                    member_profiles = self._build_member_profiles_from_session(data)
+                    context_chunks = self._fetch_concept_context(
+                        user_id=str(data.get("created_by") or ""),
+                        concept_id=data.get("selected_concept_id"),
+                        topic=topic_text,
+                        limit=8,
+                        course_id=data.get("course_id"),
+                        course_name=data.get("course_name"),
+                    )
+                    retargeted_questions, retargeted_changed = self._retarget_questions_to_specific_concepts(
+                        questions=questions,
+                        member_profiles=member_profiles,
+                        topic=topic_text,
+                        selected_concept_id=data.get("selected_concept_id"),
+                        context_chunks=context_chunks,
+                        created_by=creator_id,
+                    )
+                    if retargeted_changed:
+                        data["questions"] = retargeted_questions
+                        questions = retargeted_questions
+                        ref.update({"questions": retargeted_questions})
 
         # Backfill boss state for legacy sessions.
         if "boss_health_max" not in data or "boss_health_current" not in data:
@@ -3180,9 +4226,7 @@ class PeerSessionService:
             total_expected_answers,
             expected_boss_character,
         )
-        boss_health_max = _to_float(data.get("boss_health_max"), expected_boss_health_max)
-        if expected_boss_character == "suit":
-            boss_health_max = expected_boss_health_max
+        boss_health_max = float(expected_boss_health_max)
         boss_health_max = round(max(1.0, boss_health_max), 2)
         boss_health_current = _to_float(data.get("boss_health_current"), boss_health_max)
         boss_health_current = round(max(0.0, min(boss_health_current, boss_health_max)), 2)
@@ -3275,11 +4319,18 @@ class PeerSessionService:
             }
         )
 
-        context_chunks, context_text = self._ensure_session_evidence_pack(ref, data)
-        if not str(data.get("session_context_text") or "").strip() and context_text:
-            updates["session_context_text"] = context_text
-        if not self._read_session_context_chunks(data) and context_chunks:
-            updates["session_context_chunks"] = context_chunks
+        has_context_text = bool(str(data.get("session_context_text") or "").strip())
+        has_context_chunks = bool(self._read_session_context_chunks(data))
+        if not has_context_text or not has_context_chunks:
+            context_chunks, context_text = self._ensure_session_evidence_pack(ref, data)
+            if not has_context_text and context_text:
+                updates["session_context_text"] = context_text
+            if not has_context_chunks and context_chunks:
+                updates["session_context_chunks"] = context_chunks
+
+        if not runtime_optimized:
+            updates["runtime_optimized_v1"] = True
+            data["runtime_optimized_v1"] = True
 
         if updates:
             ref.update(updates)
@@ -3288,12 +4339,7 @@ class PeerSessionService:
         if timeout_updates:
             data.update(timeout_updates)
 
-        if str(data.get("status", "")).strip().lower() == "completed":
-            self._schedule_pending_mastery_flush(session_id)
-        elif str(data.get("status", "")).strip().lower() == "active":
-            self._schedule_next_round_prefetch(session_id)
-
-        return data
+        return self._build_session_response_payload(data)
 
     def get_active_session(self, hub_id: str) -> Optional[Dict[str, Any]]:
         """Find an active or waiting session for a hub."""
@@ -3424,16 +4470,20 @@ class PeerSessionService:
         if not concept_to_update:
             concept_to_update = "general_topic"
 
-        session_context_chunks, _ = self._ensure_session_evidence_pack(ref, data)
-        eval_context = session_context_chunks or self._fetch_concept_context(
-            student_id,
-            concept_to_update,
-            data.get("topic", concept_to_update),
-            limit=5,
-            course_id=data.get("course_id"),
-            course_name=data.get("course_name"),
-        )
-        evaluation = self._evaluate_answer(question, answer_text, eval_context)
+        question_type = str(question.get("type") or "open").strip().lower()
+        if question_type == "mcq":
+            evaluation = self._evaluate_mcq_answer(question, answer_text)
+        else:
+            session_context_chunks, _ = self._ensure_session_evidence_pack(ref, data)
+            eval_context = session_context_chunks or self._fetch_concept_context(
+                student_id,
+                concept_to_update,
+                data.get("topic", concept_to_update),
+                limit=5,
+                course_id=data.get("course_id"),
+                course_name=data.get("course_name"),
+            )
+            evaluation = self._evaluate_answer(question, answer_text, eval_context)
         is_correct = bool(evaluation.get("is_correct", False))
         mistake_type = str(evaluation.get("mistake_type", "normal")).strip().lower()
         if mistake_type not in {"normal", "careless", "conceptual"}:
@@ -3725,24 +4775,75 @@ class PeerSessionService:
             and prefetched_round == max(1, int(data.get("round_index", 1) or 1))
         )
 
-        new_questions = list(prefetched_questions_raw) if use_prefetched else self._generate_round_robin_questions(
-            member_profiles=member_profiles,
-            topic=topic,
-            selected_concept_id=selected_concept_id,
-            created_by=created_by,
-            course_id=course_id,
-            course_name=course_name,
-            context_chunks=context_chunks,
-            context_text=context_text,
-        )
+        if use_prefetched:
+            new_questions = list(prefetched_questions_raw)
+            if self.openai and self._round_needs_ai_refresh(new_questions):
+                use_prefetched = False
+                new_questions = []
+        else:
+            new_questions = []
+
+        if not new_questions and self.openai:
+            ai_questions = self._generate_round_robin_questions(
+                member_profiles=member_profiles,
+                topic=topic,
+                selected_concept_id=selected_concept_id,
+                created_by=created_by,
+                course_id=course_id,
+                course_name=course_name,
+                context_chunks=context_chunks,
+                context_text=context_text,
+            )
+            if self._round_needs_ai_refresh(ai_questions):
+                ai_retry_questions = self._generate_round_robin_questions(
+                    member_profiles=member_profiles,
+                    topic=topic,
+                    selected_concept_id=selected_concept_id,
+                    created_by=created_by,
+                    course_id=course_id,
+                    course_name=course_name,
+                    context_chunks=context_chunks,
+                    context_text=context_text,
+                )
+                if ai_retry_questions and not self._round_needs_ai_refresh(ai_retry_questions):
+                    ai_questions = ai_retry_questions
+            if ai_questions and not self._round_needs_ai_refresh(ai_questions):
+                new_questions = ai_questions
+
         if not new_questions:
+            fallback_round = max(1, int(data.get("round_index", 1) or 1)) + 1
             new_questions = self._fallback_questions(
                 member_profiles,
                 topic,
                 selected_concept_id,
                 context_chunks,
                 created_by=created_by,
+                round_hint=fallback_round,
             )
+            new_questions = self._rebalance_mcq_share(new_questions)
+        if not new_questions:
+            fallback_round = max(1, int(data.get("round_index", 1) or 1)) + 1
+            new_questions = self._fallback_questions(
+                member_profiles,
+                topic,
+                selected_concept_id,
+                context_chunks,
+                created_by=created_by,
+                round_hint=fallback_round,
+            )
+        normalized_new_questions: List[Dict[str, Any]] = []
+        for idx, raw_q in enumerate(new_questions or []):
+            if not isinstance(raw_q, dict):
+                continue
+            sanitized_q, _ = self._sanitize_existing_question(raw_q)
+            if FORCE_MCQ_ONLY:
+                sanitized_q = self._coerce_question_to_mcq(
+                    sanitized_q,
+                    seed_hint=f"advance:{session_id}:{data.get('round_index', 1)}:{idx}",
+                    fact_hint=str(sanitized_q.get("stem") or sanitized_q.get("explanation") or ""),
+                )
+            normalized_new_questions.append(sanitized_q)
+        new_questions = normalized_new_questions
         if not new_questions:
             return {"error": "Failed to generate next round of questions"}
 
@@ -3784,11 +4885,15 @@ class PeerSessionService:
             return {"error": "Session not found"}
 
         data = doc.to_dict() or {}
-        battle_outcome = str(data.get("battle_outcome") or "pending")
-        if bool(data.get("party_defeated", False)):
-            battle_outcome = "defeat"
-        elif bool(data.get("boss_defeated", False)):
+        boss_defeated = bool(data.get("boss_defeated", False))
+        party_defeated = bool(data.get("party_defeated", False))
+        if boss_defeated:
             battle_outcome = "victory"
+        elif party_defeated:
+            battle_outcome = "defeat"
+        else:
+            # Manual early end counts as a loss if boss is still alive.
+            battle_outcome = "defeat"
 
         ref.update(
             {

@@ -157,3 +157,10 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #03b2e6;
 }
+
+/* Boss battle prompt text should be easy to highlight/copy. */
+.copyable-text,
+.copyable-text * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}

@@ -290,7 +290,7 @@ export default function PeerSessionPage() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [loading, setLoading] = useState(true);
   const [answerText, setAnswerText] = useState('');
-  const [mcqSelection, setMcqSelection] = useState<number | null>(null);
+  const [mcqSelection, setMcqSelection] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<SubmitAnswerResponse | null>(null);
   const [advancing, setAdvancing] = useState(false);
@@ -303,9 +303,14 @@ export default function PeerSessionPage() {
   const [questionElapsed, setQuestionElapsed] = useState(0);
   const [bossAttackTrigger, setBossAttackTrigger] = useState(0);
   const [victoryCutsceneActive, setVictoryCutsceneActive] = useState(false);
-  const lastBossAttackCountRef = useRef(0);
+  const [summaryAutoReturnSec, setSummaryAutoReturnSec] = useState<number | null>(null);
+  const lastBossAttackSyncRef = useRef<{ count: number; partyHp: number | null }>({ count: 0, partyHp: null });
+  const fetchSessionInFlightRef = useRef<Promise<void> | null>(null);
   const lastAutoQuestionIdRef = useRef<string>('');
+  const timeoutSyncKeyRef = useRef<string>('');
   const victoryCutsceneTimerRef = useRef<number | null>(null);
+  const summaryAutoReturnTimerRef = useRef<number | null>(null);
+  const summaryAutoReturnIntervalRef = useRef<number | null>(null);
   const lastVictoryStateRef = useRef<{ bossDefeated: boolean; status: string | null; sessionId: string | null }>({
     bossDefeated: false,
     status: null,
@@ -315,26 +320,57 @@ export default function PeerSessionPage() {
 
   // ── Poll session state every 3s ──────────────────────────────────────
 
-  const fetchSession = useCallback(async () => {
+  const fetchSession = useCallback(async (force = false) => {
     if (!sessionId) return;
+    if (!force && fetchSessionInFlightRef.current) {
+      await fetchSessionInFlightRef.current;
+      return;
+    }
+
+    if (force && fetchSessionInFlightRef.current) {
+      await fetchSessionInFlightRef.current;
+    }
+
+    const task = (async () => {
+      try {
+        const token = await getIdToken();
+        const s = await getSession(sessionId, token);
+        setSession(s);
+      } catch (err) {
+        console.error('Failed to fetch session:', err);
+      }
+    })();
+
+    fetchSessionInFlightRef.current = task;
     try {
-      const token = await getIdToken();
-      const s = await getSession(sessionId, token);
-      setSession(s);
-    } catch (err) {
-      console.error('Failed to fetch session:', err);
+      await task;
+    } finally {
+      if (fetchSessionInFlightRef.current === task) {
+        fetchSessionInFlightRef.current = null;
+      }
     }
   }, [sessionId, getIdToken]);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      await fetchSession();
+      await fetchSession(true);
       if (!cancelled) setLoading(false);
     };
     load();
 
-    const pollMs = session?.status === 'completed' && !victoryCutsceneActive ? 2500 : 1000;
+    if (ending) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const pollMs =
+      session?.status === 'active'
+        ? 1500
+        : session?.status === 'completed' && !victoryCutsceneActive
+          ? 2800
+          : 2200;
     const interval = setInterval(() => {
       if (!cancelled) void fetchSession();
     }, pollMs);
@@ -343,7 +379,7 @@ export default function PeerSessionPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [fetchSession, session?.status, victoryCutsceneActive]);
+  }, [ending, fetchSession, session?.status, victoryCutsceneActive]);
 
   useEffect(() => {
     const syncNow = () => {
@@ -430,17 +466,36 @@ export default function PeerSessionPage() {
 
   useEffect(() => {
     const count = Number(session?.boss_attack_count ?? 0);
-    if (!Number.isFinite(count)) return;
-    if (count > lastBossAttackCountRef.current) {
-      const diff = count - lastBossAttackCountRef.current;
-      setBossAttackTrigger((prev) => prev + diff);
+    const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    const partyHpRaw = Number(session?.party_health_current);
+    const partyHp = Number.isFinite(partyHpRaw) ? partyHpRaw : null;
+    const previous = lastBossAttackSyncRef.current;
+
+    let triggerDelta = 0;
+    if (normalizedCount > previous.count) {
+      triggerDelta += normalizedCount - previous.count;
     }
-    lastBossAttackCountRef.current = count;
-  }, [session?.boss_attack_count]);
+
+    const hpDropped =
+      previous.partyHp !== null &&
+      partyHp !== null &&
+      partyHp < previous.partyHp - 0.01;
+    if (hpDropped && triggerDelta === 0 && session?.status === 'active' && !session?.party_defeated) {
+      // Fallback path: if counterattack damage arrived without a count increment, still play attack animation.
+      triggerDelta += 1;
+    }
+
+    if (triggerDelta > 0) {
+      setBossAttackTrigger((prev) => prev + triggerDelta);
+    }
+
+    lastBossAttackSyncRef.current = { count: normalizedCount, partyHp };
+  }, [session?.boss_attack_count, session?.party_health_current, session?.status, session?.party_defeated]);
 
   useEffect(() => {
-    lastBossAttackCountRef.current = 0;
+    lastBossAttackSyncRef.current = { count: 0, partyHp: null };
     setBossAttackTrigger(0);
+    timeoutSyncKeyRef.current = '';
   }, [sessionId]);
 
   useEffect(() => {
@@ -448,6 +503,14 @@ export default function PeerSessionPage() {
       if (victoryCutsceneTimerRef.current !== null) {
         window.clearTimeout(victoryCutsceneTimerRef.current);
         victoryCutsceneTimerRef.current = null;
+      }
+      if (summaryAutoReturnTimerRef.current !== null) {
+        window.clearTimeout(summaryAutoReturnTimerRef.current);
+        summaryAutoReturnTimerRef.current = null;
+      }
+      if (summaryAutoReturnIntervalRef.current !== null) {
+        window.clearInterval(summaryAutoReturnIntervalRef.current);
+        summaryAutoReturnIntervalRef.current = null;
       }
     };
   }, []);
@@ -606,10 +669,10 @@ export default function PeerSessionPage() {
   );
 
   useEffect(() => {
-    if (mcqSelection !== null && mcqSelection >= currentMcqOptions.length) {
+    if (mcqSelection !== null && !currentMcqOptions.includes(mcqSelection)) {
       setMcqSelection(null);
     }
-  }, [mcqSelection, currentMcqOptions.length]);
+  }, [mcqSelection, currentMcqOptions]);
 
   useEffect(() => {
     const qid = String(currentQuestion?.question_id || '');
@@ -666,7 +729,7 @@ export default function PeerSessionPage() {
   const handleSubmitAnswer = async () => {
     if (!session || !currentQuestion) return;
     const text = currentQuestion.type === 'mcq' && mcqSelection !== null
-      ? currentMcqOptions?.[mcqSelection] || ''
+      ? mcqSelection
       : answerText.trim();
     if (!text) return;
 
@@ -704,6 +767,9 @@ export default function PeerSessionPage() {
             : prev.status,
         };
       });
+      if (result.boss_attacked && typeof result.boss_attack_count !== 'number') {
+        setBossAttackTrigger((prev) => prev + 1);
+      }
       if (result.boss_defeated || result.battle_outcome === 'victory') {
         setVictoryCutsceneActive(true);
         if (victoryCutsceneTimerRef.current !== null) {
@@ -724,7 +790,7 @@ export default function PeerSessionPage() {
           };
         });
       }
-      await fetchSession();
+      await fetchSession(true);
     } catch (err) {
       console.error('Failed to submit answer:', err);
     } finally {
@@ -743,7 +809,7 @@ export default function PeerSessionPage() {
     try {
       const token = await getIdToken();
       await advanceQuestion(session.session_id, token);
-      await fetchSession();
+      await fetchSession(true);
     } catch (err) {
       console.error('Failed to advance question:', err);
       setAdvanceError(toFriendlyAdvanceError(err));
@@ -758,9 +824,10 @@ export default function PeerSessionPage() {
     try {
       const token = await getIdToken();
       await endSession(session.session_id, token);
-      router.push(`/groups/${groupId}`);
+      await fetchSession(true);
     } catch (err) {
       console.error('Failed to end session:', err);
+    } finally {
       setEnding(false);
     }
   };
@@ -790,14 +857,92 @@ export default function PeerSessionPage() {
     : bossDefeated
       ? 'victory'
       : (session?.battle_outcome ?? 'pending');
+  const showCompletedSummary =
+    session?.status === 'completed' &&
+    !(battleOutcome === 'victory' && victoryCutsceneActive);
   const bossDisplayCurrent = bossDefeated ? 0 : bossCurrent;
   const bossPct = Math.max(0, Math.min(100, (bossDisplayCurrent / bossMax) * 100));
-  const timeLimitSec = levelNumber >= 3 ? Number(session?.question_time_limit_sec ?? 120) : null;
+  const activeQuestionId = session?.questions?.[session.current_question_index]?.question_id ?? '';
+  const timeLimitSec = session?.status === 'active' && levelNumber >= 3 ? Number(session?.question_time_limit_sec ?? 60) : null;
   const questionRemainingSec =
     timeLimitSec && Number.isFinite(timeLimitSec)
       ? Math.max(0, timeLimitSec - questionElapsed)
       : null;
   const timerUrgent = questionRemainingSec !== null && questionRemainingSec <= 30;
+
+  useEffect(() => {
+    if (!showCompletedSummary) {
+      setSummaryAutoReturnSec(null);
+      if (summaryAutoReturnTimerRef.current !== null) {
+        window.clearTimeout(summaryAutoReturnTimerRef.current);
+        summaryAutoReturnTimerRef.current = null;
+      }
+      if (summaryAutoReturnIntervalRef.current !== null) {
+        window.clearInterval(summaryAutoReturnIntervalRef.current);
+        summaryAutoReturnIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const totalSec = 10;
+    const startedAt = Date.now();
+    setSummaryAutoReturnSec(totalSec);
+
+    if (summaryAutoReturnIntervalRef.current !== null) {
+      window.clearInterval(summaryAutoReturnIntervalRef.current);
+      summaryAutoReturnIntervalRef.current = null;
+    }
+    summaryAutoReturnIntervalRef.current = window.setInterval(() => {
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      const remaining = Math.max(0, totalSec - elapsedSec);
+      setSummaryAutoReturnSec(remaining);
+    }, 250);
+
+    if (summaryAutoReturnTimerRef.current !== null) {
+      window.clearTimeout(summaryAutoReturnTimerRef.current);
+      summaryAutoReturnTimerRef.current = null;
+    }
+    summaryAutoReturnTimerRef.current = window.setTimeout(() => {
+      router.push(`/groups/${groupId}`);
+    }, totalSec * 1000);
+
+    return () => {
+      if (summaryAutoReturnTimerRef.current !== null) {
+        window.clearTimeout(summaryAutoReturnTimerRef.current);
+        summaryAutoReturnTimerRef.current = null;
+      }
+      if (summaryAutoReturnIntervalRef.current !== null) {
+        window.clearInterval(summaryAutoReturnIntervalRef.current);
+        summaryAutoReturnIntervalRef.current = null;
+      }
+    };
+  }, [groupId, router, showCompletedSummary]);
+
+  useEffect(() => {
+    if (!session || session.status !== 'active') return;
+    if (!activeQuestionId) return;
+    if (questionRemainingSec === null || questionRemainingSec > 0) return;
+
+    const attackCount = Number(session.boss_attack_count ?? 0);
+    const partyHp = Number(session.party_health_current ?? -1);
+    const syncKey = `${session.session_id}:${activeQuestionId}:${Number.isFinite(attackCount) ? attackCount : 0}:${Number.isFinite(partyHp) ? partyHp : -1}`;
+    if (timeoutSyncKeyRef.current === syncKey) return;
+    timeoutSyncKeyRef.current = syncKey;
+    let cancelled = false;
+    const syncBurst = async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (cancelled) return;
+        await fetchSession();
+        if (attempt < 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 320));
+        }
+      }
+    };
+    void syncBurst();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeQuestionId, fetchSession, questionRemainingSec, session]);
 
   // Helper to get member display name
   const getMemberName = (memberId: string) => {
@@ -865,8 +1010,6 @@ export default function PeerSessionPage() {
     );
   }
 
-  const showCompletedSummary = session.status === 'completed' && !(battleOutcome === 'victory' && victoryCutsceneActive);
-
   if (showCompletedSummary) {
     const totalQuestions = session.questions.length;
     const totalAnswers = session.answers.length;
@@ -928,7 +1071,9 @@ export default function PeerSessionPage() {
               <div>
                 <h1 className="text-2xl font-bold text-white">{isDefeat ? 'Defeat' : 'Victory!'}</h1>
                 <p className="text-sm text-white/50">
-                  {isDefeat ? 'Your party HP reached zero.' : 'Session Complete'}
+                  {isDefeat
+                    ? (partyDefeated ? 'Your party HP reached zero.' : 'Session ended before the boss was defeated.')
+                    : 'Session Complete'}
                 </p>
               </div>
             </div>
@@ -1103,9 +1248,14 @@ export default function PeerSessionPage() {
               })}
             </div>
 
-            <Button onClick={() => router.push(`/groups/${groupId}`)} className="w-full bg-cyan-500 hover:bg-cyan-600 text-white">
-              Back to Hub
-            </Button>
+            <div className="space-y-2">
+              <p className="text-xs text-white/50 text-center">
+                Returning to hub in {summaryAutoReturnSec ?? 0}s
+              </p>
+              <Button onClick={() => router.push(`/groups/${groupId}`)} className="w-full bg-cyan-500 hover:bg-cyan-600 text-white">
+                Back to Hub
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -1344,14 +1494,14 @@ export default function PeerSessionPage() {
                     Shared discussion
                   </span>
                 </div>
-                <p className="text-xs text-white/40">
+                <p className="copyable-text text-xs text-white/40">
                   Inspired by: <span className="text-white/60">{getQuestionTargetName(currentQuestion)}&apos;s gap in {currentQuestion.weak_concept}</span>
                 </p>
               </div>
 
               <div className="p-5 space-y-4">
                 {/* Question stem */}
-                <div className={`${glassLight} p-4`}>
+                <div className={`${glassLight} copyable-text p-4`}>
                   <BossMarkdown
                     content={currentQuestion.stem}
                     className="text-sm text-white/90 whitespace-pre-wrap leading-relaxed"
@@ -1387,12 +1537,18 @@ export default function PeerSessionPage() {
                         {currentMcqOptions.map((opt, idx) => (
                           <button
                             key={idx}
-                            onClick={() => setMcqSelection(idx)}
+                            onClick={() => {
+                              const highlighted = typeof window !== 'undefined'
+                                ? window.getSelection()?.toString().trim() || ''
+                                : '';
+                              if (highlighted) return;
+                              setMcqSelection(opt);
+                            }}
                             className={`w-full text-left p-3 rounded-xl border text-sm transition-all duration-200 ${
-                              mcqSelection === idx
+                              mcqSelection === opt
                                 ? 'border-cyan-500/40 bg-cyan-500/10 text-white shadow-[0_0_12px_rgba(34,211,238,0.1)]'
                                 : 'border-white/[0.06] bg-white/[0.02] text-white/70 hover:bg-white/[0.05] hover:border-white/[0.12]'
-                            }`}
+                            } copyable-text`}
                           >
                             <span className="font-semibold mr-2 text-cyan-400">{String.fromCharCode(65 + idx)}.</span>
                             <BossMarkdown content={opt} className="inline-block align-top text-sm text-inherit" />
@@ -1421,7 +1577,7 @@ export default function PeerSessionPage() {
                       onClick={handleSubmitAnswer}
                       disabled={
                         submitting ||
-                        (currentQuestion.type === 'mcq' ? mcqSelection === null : !answerText.trim())
+                        (currentQuestion.type === 'mcq' ? !mcqSelection : !answerText.trim())
                       }
                       className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white font-semibold h-11 rounded-xl shadow-[0_0_20px_rgba(34,211,238,0.15)] transition-all duration-200"
                     >
@@ -1460,17 +1616,17 @@ export default function PeerSessionPage() {
                         {Math.round((feedback?.score ?? existingAnswer?.score ?? 0) * 100)}%
                       </span>
                     </div>
-                    <div className="text-sm text-white/70">
+                    <div className="copyable-text text-sm text-white/70">
                       <BossMarkdown content={feedback?.ai_feedback || existingAnswer?.ai_feedback || ''} />
                     </div>
                     {(feedback?.hint || existingAnswer?.hint) && (
-                      <div className="text-sm text-amber-300/80 mt-2">
+                      <div className="copyable-text text-sm text-amber-300/80 mt-2">
                         <span>Hint: </span>
                         <BossMarkdown content={feedback?.hint || existingAnswer?.hint || ''} className="inline-block align-top text-amber-300/80" />
                       </div>
                     )}
                     {feedback?.explanation && (
-                      <div className="text-sm text-white/50 mt-2">
+                      <div className="copyable-text text-sm text-white/50 mt-2">
                         <BossMarkdown content={feedback.explanation} className="text-white/50" />
                       </div>
                     )}
