@@ -4,91 +4,14 @@ import React, { Suspense, useEffect, useLayoutEffect, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { TutorMarkdown } from '@/components/ai/TutorMarkdown';
 import { Typewriter } from '@/components/ui/typewriter';
 
 type CharacterModelProps = {
   isSpeaking: boolean;
 };
 
-/** Expand [N] citations in a single text segment. */
-function inlineCitations(
-  text: string,
-  sectionIndex: number,
-  onCitationClick?: (n: number, sectionIndex: number) => void
-): React.ReactNode[] {
-  if (!/\[\d+\]/.test(text)) return [text];
-  const parts = text.split(/(\[\d+\])/);
-  return parts.map((part, i) => {
-    const m = part.match(/^\[(\d+)\]$/);
-    if (m) {
-      const n = Number(m[1]);
-      return (
-        <sup
-          key={i}
-          className="cursor-pointer inline-flex items-center justify-center w-4 h-4 text-[0.6em] font-bold text-white bg-[#03b2e6] hover:bg-[#0291be] rounded-full ml-0.5 mr-0.5 transition-colors"
-          onClick={() => onCitationClick?.(n, sectionIndex)}
-          title={`Jump to source ${n}`}
-        >
-          {n}
-        </sup>
-      );
-    }
-    return <React.Fragment key={i}>{part}</React.Fragment>;
-  });
-}
-
-/**
- * Deduplicate citation markers in a single section of text.
- * - Single unique source → one footnote at the very end.
- * - Contiguous same-source runs → keep only the last citation in the run.
- */
-function deduplicateSpeechCitations(content: string): string {
-  const allCites = [...content.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
-  if (allCites.length === 0) return content;
-
-  const uniqueCites = new Set(allCites);
-  if (uniqueCites.size === 1) {
-    const n = allCites[0];
-    return `${content.replace(/\s*\[\d+\]/g, '').trimEnd()} [${n}]`;
-  }
-
-  const sentencePattern = /([^.!?\n]+[.!?\n]+)/g;
-  const sentences: string[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = sentencePattern.exec(content)) !== null) {
-    sentences.push(match[1]);
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < content.length) sentences.push(content.slice(lastIndex));
-  if (sentences.length === 0) return content;
-
-  const parsed = sentences.map(s => {
-    const cites = [...s.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
-    const stripped = s.replace(/\s*\[\d+\]/g, '');
-    const source = cites.length > 0 ? cites[cites.length - 1] : null;
-    return { text: stripped, source };
-  });
-
-  const result: string[] = [];
-  for (let i = 0; i < parsed.length; i++) {
-    const curr = parsed[i];
-    const next = i + 1 < parsed.length ? parsed[i + 1] : null;
-    if (curr.source === null) {
-      result.push(curr.text);
-    } else if (next && next.source === curr.source) {
-      result.push(curr.text);
-    } else {
-      result.push(`${curr.text.trimEnd()} [${curr.source}]`);
-    }
-  }
-  return result.join('');
-}
-
-/** Split text on %%SEP%% markers (between assistant responses) and render <hr> dividers.
- *  Section index `i` is passed through to onCitationClick so callers know which
- *  message's [N] was clicked (section 0 = initial prompt, 1 = first assistant reply, …). */
-function expandSpeechCitations(
+function renderSpeechSections(
   text: string,
   onCitationClick?: (n: number, sectionIndex: number) => void,
   typingText?: string
@@ -97,42 +20,34 @@ function expandSpeechCitations(
   const animatedSectionIndex =
     typingText && sections[sections.length - 1] === typingText ? sections.length - 1 : -1;
 
-  if (sections.length <= 1) {
-    if (animatedSectionIndex === 0 && typingText) {
-      return (
-        <Typewriter
-          text={typingText}
-          speed={24}
-          initialDelay={120}
-          loop={false}
-          cursorChar="_"
-          cursorClassName="ml-1 text-[#8de7ff]"
-        />
-      );
-    }
-
-    return inlineCitations(deduplicateSpeechCitations(text), 0, onCitationClick);
-  }
-
-  return sections.map((section, i) => (
-    <React.Fragment key={i}>
-      {i > 0 && <hr className="my-2 border-slate-300" />}
-      <span>
-        {i === animatedSectionIndex && typingText ? (
-          <Typewriter
-            text={typingText}
-            speed={24}
-            initialDelay={120}
-            loop={false}
-            cursorChar="_"
-            cursorClassName="ml-1 text-[#8de7ff]"
-          />
+  return sections.map((section, index) => {
+    const isAnimatedSection = index === animatedSectionIndex && Boolean(typingText);
+    return (
+      <React.Fragment key={`${index}-${section.slice(0, 24)}`}>
+        {index > 0 && <hr className="my-3 border-white/15" />}
+        {isAnimatedSection && typingText ? (
+          <div className="text-[14px] leading-snug text-white/95">
+            <Typewriter
+              text={typingText}
+              speed={24}
+              initialDelay={120}
+              loop={false}
+              cursorChar="_"
+              cursorClassName="ml-1 text-[#8de7ff]"
+            />
+          </div>
         ) : (
-          inlineCitations(deduplicateSpeechCitations(section), i, onCitationClick)
+          <TutorMarkdown
+            content={section}
+            onCitationClick={(n) => onCitationClick?.(n, index)}
+            tone="dark"
+            compact
+            className="!prose-sm"
+          />
         )}
-      </span>
-    </React.Fragment>
-  ));
+      </React.Fragment>
+    );
+  });
 }
 
 function CharacterModel({ isSpeaking }: CharacterModelProps) {
@@ -254,30 +169,27 @@ export default function SocraticBackground3D({
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevSpeechTextRef = useRef('');
 
-  // Attach a non-passive native wheel listener so we can stopPropagation
-  // and guarantee the scroll container scrolls on every browser/OS.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    const onWheel = (e: WheelEvent) => {
+    const onWheel = (event: WheelEvent) => {
       const { scrollTop, scrollHeight, clientHeight } = el;
       const hasOverflow = scrollHeight > clientHeight;
       if (!hasOverflow) return;
 
-      const atTop = scrollTop <= 0 && e.deltaY < 0;
-      const atBottom = scrollTop + clientHeight >= scrollHeight - 1 && e.deltaY > 0;
+      const atTop = scrollTop <= 0 && event.deltaY < 0;
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 1 && event.deltaY > 0;
 
       if (!atTop && !atBottom) {
-        e.stopPropagation();
+        event.stopPropagation();
       }
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [speechText]); // re-attach when content changes
+  }, [speechText]);
 
-  // Auto-scroll to the newest generated content whenever the assistant reply updates.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -296,7 +208,6 @@ export default function SocraticBackground3D({
 
   return (
     <BackgroundErrorBoundary>
-      {/* Canvas wrapper — pointer-events-none so it never steals events */}
       <div className="absolute inset-0 pointer-events-none" aria-hidden>
         <Canvas
           dpr={[1, 1.5]}
@@ -315,23 +226,16 @@ export default function SocraticBackground3D({
         </Canvas>
       </div>
 
-      {/* Speech bubble — top-anchored just below the header bar, grows DOWNWARD.
-           top: calc(14% + 8px) clears the header (≈14% tall) with an 8px gap.
-           The tail triangle points down toward the character's head.
-           Scroll content is capped so the bubble never covers the character:
-             maxHeight = 60vh(character head) − 14vh(top) − 8px(gap) − 24px(padding) − 12px(safety)
-                       = calc(46vh − 44px) */}
       {speechText ? (
         <div
-          className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
+          className="absolute left-1/2 z-20 w-[min(545px,calc(100vw-2rem))] -translate-x-1/2 pointer-events-auto"
           style={{ top: 'calc(14% + 8px)' }}
         >
-          <div className="relative w-[545px] rounded-lg border border-white/20 bg-slate-900/60 px-3.5 py-3 text-[14px] leading-snug text-white shadow-xl backdrop-blur-md">
-            {/* Tail triangle — points down toward the character's head */}
+          <div className="relative rounded-lg border border-white/20 bg-slate-900/60 px-3.5 py-3 text-white shadow-xl backdrop-blur-md">
             <div className="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/20 bg-slate-900/60" />
             <div
               ref={scrollRef}
-              className="overflow-y-auto whitespace-pre-wrap pr-1"
+              className="overflow-y-auto pr-1"
               style={{
                 minHeight: '100px',
                 maxHeight: 'calc(46vh - 44px)',
@@ -340,7 +244,7 @@ export default function SocraticBackground3D({
                 touchAction: 'pan-y',
               }}
             >
-              {expandSpeechCitations(speechText, onCitationClick, typingText)}
+              {renderSpeechSections(speechText, onCitationClick, typingText)}
             </div>
           </div>
         </div>

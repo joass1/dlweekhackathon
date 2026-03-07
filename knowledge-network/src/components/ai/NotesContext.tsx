@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText } from 'lucide-react';
 
 export interface ContextItem {
@@ -43,6 +43,7 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
   const [expandedFullChunks, setExpandedFullChunks] = useState<Set<number>>(new Set()); // keyed by chunk.index
   const [showAll, setShowAll] = useState(false);
   const groupRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const chunkRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
 
   // Reset expansion state when a new response arrives
   useEffect(() => {
@@ -52,7 +53,7 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
   }, [activeNotes]);
 
   // Group chunks by concept_id, sort by maxScore desc, filter 0% groups
-  const allGroups: SourceGroup[] = (() => {
+  const allGroups = useMemo<SourceGroup[]>(() => {
     const map = new Map<string, ContextItem[]>();
     for (const note of activeNotes) {
       const key = note.concept_id || 'unknown';
@@ -67,29 +68,67 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
         chunks: [...chunks].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
       }))
       .sort((a, b) => b.maxScore - a.maxScore);
-  })();
+  }, [activeNotes]);
 
-  const relevantGroups = allGroups.filter(g => g.maxScore > 0);
+  const highlightedGroupMatches = (group: SourceGroup) =>
+    highlightedSourceIndex != null && group.chunks.some((chunk) => chunk.index === highlightedSourceIndex);
+
+  const relevantGroups = useMemo(
+    () => allGroups.filter((group) => group.maxScore > 0 || highlightedGroupMatches(group)),
+    [allGroups, highlightedSourceIndex]
+  );
   const hiddenCount = allGroups.length - relevantGroups.length;
-  const visibleGroups = showAll ? relevantGroups : relevantGroups.slice(0, MAX_VISIBLE);
+  const visibleGroups = useMemo(
+    () => (showAll ? relevantGroups : relevantGroups.slice(0, MAX_VISIBLE)),
+    [relevantGroups, showAll]
+  );
   const hasMore = relevantGroups.length > MAX_VISIBLE;
 
-  // Auto-expand and scroll to the group containing the highlighted citation
+  // Auto-expand and scroll to the group containing the highlighted citation.
+  // If the cited source is outside the collapsed top-N view, reveal all groups first.
   useEffect(() => {
     if (highlightedSourceIndex == null) return;
+    const allGroupIndex = relevantGroups.findIndex(g =>
+      g.chunks.some(c => c.index === highlightedSourceIndex)
+    );
+    if (allGroupIndex === -1) return;
+    if (!showAll && allGroupIndex >= MAX_VISIBLE) {
+      setShowAll(true);
+      return;
+    }
+
     const gi = visibleGroups.findIndex(g =>
       g.chunks.some(c => c.index === highlightedSourceIndex)
     );
     if (gi === -1) return;
+
+    let didExpandGroup = false;
     setExpandedGroupIds(prev => {
+      if (prev.has(gi)) return prev;
       const next = new Set(prev);
       next.add(gi);
+      didExpandGroup = true;
       return next;
     });
+    let didExpandChunk = false;
+    setExpandedFullChunks(prev => {
+      if (prev.has(highlightedSourceIndex)) return prev;
+      const next = new Set(prev);
+      next.add(highlightedSourceIndex);
+      didExpandChunk = true;
+      return next;
+    });
+    if (!didExpandGroup && !didExpandChunk) return;
+
     setTimeout(() => {
+      const chunkRef = chunkRefs.current.get(highlightedSourceIndex);
+      if (chunkRef) {
+        chunkRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
       groupRefs.current[gi]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 60);
-  }, [highlightedSourceIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, 90);
+  }, [highlightedSourceIndex, relevantGroups, showAll, visibleGroups]);
 
   const toggleGroup = (gi: number) => {
     setExpandedGroupIds(prev => {
@@ -162,7 +201,7 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
                   {group.label}
                 </span>
                 {/* Citation index badges */}
-                <span className="flex gap-0.5 flex-shrink-0 mr-1">
+                <span className="mr-1 flex max-w-[9rem] flex-wrap justify-end gap-0.5">
                   {group.chunks.filter(c => c.index != null).map(c => (
                     <span
                       key={c.index}
@@ -193,8 +232,13 @@ export function NotesContext({ activeNotes, onNoteClick, highlightedSourceIndex 
                     return (
                       <div
                         key={ci}
+                        ref={(el) => {
+                          if (chunk.index != null) {
+                            chunkRefs.current.set(chunk.index, el);
+                          }
+                        }}
                         className={`px-3 py-2 cursor-pointer transition-colors ${
-                          isChunkHighlighted ? 'bg-[#e0f4fb]/70' : 'bg-accent/50 hover:bg-accent'
+                          isChunkHighlighted ? 'bg-[#e0f4fb]/70 ring-1 ring-inset ring-[#03b2e6]/50' : 'bg-accent/50 hover:bg-accent'
                         }`}
                         onClick={() => onNoteClick(chunk)}
                       >

@@ -1,5 +1,6 @@
 // src/app/layout.tsx
 import './globals.css';
+import 'katex/dist/katex.min.css';
 import type { Metadata } from 'next';
 import { ClientLayout } from '@/components/layout';
 

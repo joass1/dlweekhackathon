@@ -131,23 +131,11 @@ export default function AIAssistantPage() {
     [messages]
   );
 
-  const cleanedAssistantMessages = useMemo(
-    () =>
-      assistantMessages.map((m) =>
-        m.content
-          .replace(/\*\*(.*?)\*\*/g, '$1')
-          .replace(/\*(.*?)\*/g, '$1')
-          .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-          .replace(/`([^`]+)`/g, '$1')
-      ),
-    [assistantMessages]
-  );
-
   const selectedAssistantSpeech = useMemo(() => {
-    const parts = [initialSocraticPrompt, ...cleanedAssistantMessages];
+    const parts = [initialSocraticPrompt, ...assistantMessages.map((message) => message.content)];
     if (isLoading) parts.push(thinkingPhrase);
     return parts.join('\n%%SEP%%\n');
-  }, [cleanedAssistantMessages, initialSocraticPrompt, isLoading, thinkingPhrase]);
+  }, [assistantMessages, initialSocraticPrompt, isLoading, thinkingPhrase]);
   const tutorEvidenceNote = useMemo(
     () => activeNotes.length > 0
       ? 'Tutor answers are grounded in the cited sources on the right. Click citation bubbles to inspect the exact supporting text.'
