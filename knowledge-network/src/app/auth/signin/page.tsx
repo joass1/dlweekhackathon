@@ -194,6 +194,14 @@ export default function SignInPage() {
     return `+65${digits}`;
   }
 
+  // Clean up reCAPTCHA verifier when the signin page unmounts to prevent
+  // "reCAPTCHA Timeout" errors on subsequent pages.
+  useEffect(() => {
+    return () => {
+      clearRecaptchaVerifier();
+    };
+  }, []);
+
   // If already authenticated, verified, and not in an MFA flow, redirect to dashboard
   useEffect(() => {
     if (!authLoading && user && user.emailVerified && mfaStep === "none" && !skipRedirect) {
@@ -304,8 +312,9 @@ export default function SignInPage() {
       const cred = PhoneAuthProvider.credential(verificationId, verificationCode);
       const assertion = PhoneMultiFactorGenerator.assertion(cred);
       await resolver.resolveSignIn(assertion);
+      // Don't navigate manually — onAuthStateChanged fires async, so let the
+      // useEffect below redirect once AuthContext picks up the new user state.
       setMfaStep("none");
-      router.replace("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -395,8 +404,9 @@ export default function SignInPage() {
       await multiFactor(currentUser).enroll(assertion, "Phone Number");
       setMfaStep("none");
       setMessage("");
+      // setSkipRedirect(false) lets AuthContext's route guard redirect to "/" once
+      // onAuthStateChanged propagates the updated user — no manual router.replace needed.
       setSkipRedirect(false);
-      router.replace("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Enrollment failed");
     } finally {

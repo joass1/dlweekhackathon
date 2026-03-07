@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
-import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles, ShieldCheck, Upload, Folder, FileText, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
+import { BookOpen, AlertTriangle, Target, Maximize2, Minimize2, X, ArrowRight, Sparkles, ShieldCheck, Upload, Folder, FileText, ChevronDown, ChevronRight, Pencil, Trash2, Plus, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import KnowledgeGraph from '@/components/graphs/KnowledgeGraph';
@@ -162,6 +162,17 @@ export default function Page() {
   const [renamingTopicName, setRenamingTopicName] = useState('');
   const [savingTopicKey, setSavingTopicKey] = useState<string | null>(null);
   const [courseTopicManagerError, setCourseTopicManagerError] = useState<string | null>(null);
+  const [addingCourseInput, setAddingCourseInput] = useState('');
+  const [savingNewCourse, setSavingNewCourse] = useState(false);
+  const [addingTopicForCourseId, setAddingTopicForCourseId] = useState<string | null>(null);
+  const [addingTopicInput, setAddingTopicInput] = useState('');
+  const [savingNewTopic, setSavingNewTopic] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<
+    | { type: 'course'; courseId: string; courseName: string }
+    | { type: 'topic'; topic: TopicOption }
+    | null
+  >(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showMapLabels, setShowMapLabels] = useState(false);
   const [actionCourse, setActionCourse] = useState('all');
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
@@ -528,6 +539,10 @@ export default function Page() {
     setRenamingTopicKey(null);
     setRenamingTopicName('');
     setSavingTopicKey(null);
+    setAddingCourseInput('');
+    setAddingTopicForCourseId(null);
+    setAddingTopicInput('');
+    setConfirmDelete(null);
   };
 
   const toggleManagerCourse = (courseId: string) => {
@@ -625,6 +640,93 @@ export default function Page() {
     } catch (error) {
       setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to rename topic.');
       setSavingTopicKey(null);
+    }
+  };
+
+  const handleAddCourse = async () => {
+    const name = addingCourseInput.trim();
+    if (!name) {
+      setCourseTopicManagerError('Course name cannot be empty.');
+      return;
+    }
+    setSavingNewCourse(true);
+    setCourseTopicManagerError(null);
+    try {
+      const created = await apiFetchWithAuth<{ course: CourseOption }>(
+        '/api/courses',
+        { method: 'POST', body: JSON.stringify({ name }) }
+      );
+      setCourses((prev) => [...prev, created.course]);
+      setAddingCourseInput('');
+    } catch (error) {
+      setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to create course.');
+    } finally {
+      setSavingNewCourse(false);
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    setDeletingId(courseId);
+    setCourseTopicManagerError(null);
+    try {
+      await apiFetchWithAuth(
+        `/api/courses/${encodeURIComponent(courseId)}`,
+        { method: 'DELETE' }
+      );
+      setCourses((prev) => prev.filter((c) => c.id !== courseId));
+      setTopics((prev) => prev.filter((t) => t.courseId !== courseId));
+      setConfirmDelete(null);
+    } catch (error) {
+      setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to delete course.');
+      setConfirmDelete(null);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleAddTopic = async (courseId: string, courseName: string) => {
+    const name = addingTopicInput.trim();
+    if (!name) {
+      setCourseTopicManagerError('Topic name cannot be empty.');
+      return;
+    }
+    setSavingNewTopic(true);
+    setCourseTopicManagerError(null);
+    try {
+      const created = await apiFetchWithAuth<{ topic: UserTopicApiRow }>(
+        '/api/user-topics',
+        { method: 'POST', body: JSON.stringify({ courseId, courseName, topicName: name }) }
+      );
+      setTopics((prev) => [...prev, normalizeTopicRow(created.topic)]);
+      setAddingTopicForCourseId(null);
+      setAddingTopicInput('');
+    } catch (error) {
+      setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to create topic.');
+    } finally {
+      setSavingNewTopic(false);
+    }
+  };
+
+  const handleDeleteTopic = async (topic: TopicOption) => {
+    if (!topic.docId) {
+      setCourseTopicManagerError('This topic cannot be deleted because its record id is missing.');
+      setConfirmDelete(null);
+      return;
+    }
+    setDeletingId(topic.docId);
+    setCourseTopicManagerError(null);
+    try {
+      await apiFetchWithAuth(
+        `/api/user-topics/${encodeURIComponent(topic.docId)}`,
+        { method: 'DELETE' }
+      );
+      setTopics((prev) => prev.filter((t) => t.docId !== topic.docId));
+      setConfirmDelete(null);
+    } catch (error) {
+      setCourseTopicManagerError(error instanceof Error ? error.message : 'Failed to delete topic.');
+      setConfirmDelete(null);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -1164,7 +1266,7 @@ export default function Page() {
               <div>
                 <h3 className="text-lg font-semibold text-white">Manage Courses & Topics</h3>
                 <p className="text-xs text-white/65 mt-1">
-                  Rename existing course and topic labels used across the dashboard.
+                  Add, rename, or delete courses and topics used across the dashboard.
                 </p>
               </div>
               <button
@@ -1186,7 +1288,7 @@ export default function Page() {
 
               {courseTopicGroups.length === 0 ? (
                 <div className="text-center py-10 text-sm text-slate-300">
-                  No courses yet. Upload materials to create your first course.
+                  No courses yet. Add your first course below.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1260,6 +1362,17 @@ export default function Page() {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
+                          <button
+                            type="button"
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-red-400 transition-opacity flex-shrink-0 rounded hover:bg-white/10"
+                            title="Delete course"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setConfirmDelete({ type: 'course', courseId: group.id, courseName: group.name });
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       )}
 
@@ -1321,11 +1434,19 @@ export default function Page() {
                                       </div>
                                       <button
                                         type="button"
-                                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-cyan-200 transition-opacity flex-shrink-0 rounded hover:bg-white/10 mr-1"
+                                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-cyan-200 transition-opacity flex-shrink-0 rounded hover:bg-white/10"
                                         title="Rename topic"
                                         onClick={() => startTopicRename(topic)}
                                       >
                                         <Pencil className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-200 hover:text-red-400 transition-opacity flex-shrink-0 rounded hover:bg-white/10 mr-1"
+                                        title="Delete topic"
+                                        onClick={() => setConfirmDelete({ type: 'topic', topic })}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
                                       </button>
                                     </>
                                   )}
@@ -1333,12 +1454,133 @@ export default function Page() {
                               );
                             })
                           )}
+
+                          {/* Add topic form */}
+                          {addingTopicForCourseId === group.id ? (
+                            <div className="flex items-center gap-2 rounded-md border border-cyan-200/30 bg-slate-800/60 px-2 py-1.5 mt-1">
+                              <FileText className="w-4 h-4 text-white/50 flex-shrink-0" />
+                              <input
+                                autoFocus
+                                value={addingTopicInput}
+                                onChange={(e) => setAddingTopicInput(e.target.value)}
+                                placeholder="New topic name…"
+                                className="flex-1 min-w-0 rounded border border-cyan-200/40 bg-slate-900/80 px-2 py-1 text-sm text-white outline-none focus:border-cyan-300"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') { e.preventDefault(); void handleAddTopic(group.id, group.name); }
+                                  else if (e.key === 'Escape') { e.preventDefault(); setAddingTopicForCourseId(null); setAddingTopicInput(''); }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleAddTopic(group.id, group.name)}
+                                disabled={savingNewTopic}
+                                className="px-2 py-1 rounded border border-cyan-200/40 text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60 text-xs"
+                              >
+                                {savingNewTopic ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setAddingTopicForCourseId(null); setAddingTopicInput(''); }}
+                                disabled={savingNewTopic}
+                                className="px-2 py-1 rounded border border-white/30 text-white/85 hover:bg-white/10 disabled:opacity-60 text-xs"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => { setCourseTopicManagerError(null); setAddingTopicForCourseId(group.id); setAddingTopicInput(''); }}
+                              className="flex items-center gap-1.5 mt-1 px-2 py-1 rounded text-xs text-white/50 hover:text-cyan-300 hover:bg-white/5 transition-colors"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              Add topic
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
               )}
+
+              {/* Add new course */}
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <div className="flex items-center gap-2">
+                  <input
+                    value={addingCourseInput}
+                    onChange={(e) => setAddingCourseInput(e.target.value)}
+                    placeholder="New course name…"
+                    className="flex-1 min-w-0 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none focus:border-cyan-300"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); void handleAddCourse(); }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAddCourse()}
+                    disabled={savingNewCourse || !addingCourseInput.trim()}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#03b2e6] text-white text-sm font-medium hover:bg-[#029ad0] disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                  >
+                    {savingNewCourse ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    Add Course
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-sm rounded-2xl border border-white/20 bg-slate-900/95 backdrop-blur-md shadow-2xl text-slate-100 p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-full bg-red-500/15 flex-shrink-0">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h4 className="font-semibold text-white">
+                  Delete {confirmDelete.type === 'course' ? 'Course' : 'Topic'}?
+                </h4>
+                <p className="text-sm text-white/65 mt-1">
+                  {confirmDelete.type === 'course'
+                    ? <>Are you sure you want to delete <span className="text-white font-medium">{confirmDelete.courseName}</span>? All topics under this course will also be removed.</>
+                    : <>Are you sure you want to delete <span className="text-white font-medium">{confirmDelete.topic.name}</span>? This cannot be undone.</>
+                  }
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                disabled={deletingId !== null}
+                className="px-4 py-2 rounded-lg border border-white/20 text-sm text-white/85 hover:bg-white/10 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingId !== null}
+                onClick={() => {
+                  if (confirmDelete.type === 'course') void handleDeleteCourse(confirmDelete.courseId);
+                  else void handleDeleteTopic(confirmDelete.topic);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-600 text-sm text-white font-medium hover:bg-red-500 disabled:opacity-60"
+              >
+                {deletingId !== null ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Delete
+              </button>
             </div>
           </div>
         </div>

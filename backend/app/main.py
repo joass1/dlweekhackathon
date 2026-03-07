@@ -734,6 +734,54 @@ async def update_course(course_id: str, request: CourseUpdateRequest, student_id
         raise HTTPException(status_code=500, detail=f"Failed to update course: {str(e)}")
 
 
+@app.delete("/api/courses/{course_id}")
+async def delete_course(course_id: str, student_id: str = Depends(get_student_id)):
+    normalized_course_id = _slugify_identifier(course_id, "course")
+    if db is None:
+        return {"status": "deleted", "course_id": normalized_course_id}
+
+    try:
+        courses_col = _courses_collection(student_id)
+        if courses_col is None:
+            raise HTTPException(status_code=503, detail="Courses collection unavailable")
+
+        course_ref = courses_col.document(normalized_course_id)
+        snap = course_ref.get()
+        if snap.exists:
+            data = snap.to_dict() or {}
+            if data.get("userId") and data.get("userId") != student_id:
+                raise HTTPException(status_code=403, detail="Not authorized")
+            course_ref.delete()
+
+        # Delete all user_topics belonging to this course
+        try:
+            topic_docs = (
+                db.collection("user_topics")
+                .where("userId", "==", student_id)
+                .where("courseId", "==", normalized_course_id)
+                .stream()
+            )
+            batch = db.batch()
+            pending = 0
+            for topic_doc in topic_docs:
+                batch.delete(topic_doc.reference)
+                pending += 1
+                if pending >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    pending = 0
+            if pending > 0:
+                batch.commit()
+        except Exception as exc:
+            print(f"Warning: cascade delete of user_topics failed for course={normalized_course_id}: {exc}")
+
+        return {"status": "deleted", "course_id": normalized_course_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete course: {str(e)}")
+
+
 _STUDY_MISSION_FLASHCARD_STOPWORDS = {
     "about", "above", "after", "again", "against", "among", "and", "because", "before", "being",
     "between", "both", "could", "during", "each", "from", "have", "into", "just", "like", "many",
@@ -2051,6 +2099,51 @@ async def get_user_topics(student_id: str = Depends(get_student_id)):
         return {"topics": topics}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CreateUserTopicRequest(BaseModel):
+    courseId: str
+    courseName: str
+    topicName: str
+
+
+@app.post("/api/user-topics")
+async def create_user_topic(request: CreateUserTopicRequest, student_id: str = Depends(get_student_id)):
+    if db is None:
+        raise HTTPException(status_code=503, detail="Firestore unavailable")
+
+    topic_name = (request.topicName or "").strip()
+    if not topic_name:
+        raise HTTPException(status_code=400, detail="topicName is required")
+
+    course_id = _slugify_identifier(request.courseId or "", "uncategorized")
+    course_name = (request.courseName or "").strip() or course_id
+    topic_id = _slugify_identifier(topic_name, "topic")
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "userId": student_id,
+        "courseId": course_id,
+        "courseName": course_name,
+        "topicId": topic_id,
+        "topicName": topic_name,
+        "title": topic_name,
+        "chunkCount": 0,
+        "createdAt": now,
+    }
+    ref = db.collection("user_topics").document()
+    ref.set(payload)
+    return {
+        "topic": {
+            "id": ref.id,
+            "courseId": course_id,
+            "courseName": course_name,
+            "topicId": topic_id,
+            "topicName": topic_name,
+            "title": topic_name,
+            "chunkCount": 0,
+        }
+    }
 
 
 class UpdateUserTopicRequest(BaseModel):
