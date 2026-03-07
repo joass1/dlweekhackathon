@@ -367,6 +367,8 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       const result = await apiFetch<{
         files?: { filename: string; chunks: number; status?: string; error?: string }[];
         comprehensive_quiz_ticket?: string;
+        quiz_ready?: boolean;
+        quiz_error?: string | null;
       }>(
         '/upload',
         {
@@ -387,16 +389,19 @@ export function SubjectsList({ onNoteSelect }: SubjectsListProps) {
       await fetchTopics();
 
       const ticket = typeof result?.comprehensive_quiz_ticket === 'string' ? result.comprehensive_quiz_ticket : '';
+      const hasSuccess = results.some((file) => file.status === 'success');
       if (ticket && typeof window !== 'undefined') {
         window.sessionStorage.setItem('comprehensive_quiz_ticket', ticket);
       }
-
-      setIsUploadModalOpen(false);
-      router.push(
-        ticket
-          ? `/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`
-          : '/assessment/all-concepts/take'
-      );
+      if (ticket) {
+        setIsUploadModalOpen(false);
+        router.push(`/assessment/all-concepts/take?ticket=${encodeURIComponent(ticket)}`);
+      } else if (hasSuccess) {
+        setModalError(
+          result?.quiz_error ||
+            'Upload finished, but Mentora could not build a grounded GPT quiz from this material. Try clearer text-based notes.'
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Upload failed';
       setModalError(message);
