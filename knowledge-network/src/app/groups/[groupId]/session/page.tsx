@@ -58,6 +58,7 @@ const LEVEL_TO_BOSS: Record<number, BossCharacterId> = {
   3: 'swat',
   4: 'suit',
 };
+const VICTORY_CUTSCENE_MS = 1800;
 
 const UID_LIKE_RE = /^[a-z0-9_-]{20,}$/i;
 
@@ -301,8 +302,15 @@ export default function PeerSessionPage() {
   const [videoCollapsed, setVideoCollapsed] = useState(false);
   const [questionElapsed, setQuestionElapsed] = useState(0);
   const [bossAttackTrigger, setBossAttackTrigger] = useState(0);
+  const [victoryCutsceneActive, setVictoryCutsceneActive] = useState(false);
   const lastBossAttackCountRef = useRef(0);
   const lastAutoQuestionIdRef = useRef<string>('');
+  const victoryCutsceneTimerRef = useRef<number | null>(null);
+  const lastVictoryStateRef = useRef<{ bossDefeated: boolean; status: string | null; sessionId: string | null }>({
+    bossDefeated: false,
+    status: null,
+    sessionId: null,
+  });
   const forcedBossId = resolveBossCharacterId(session);
 
   // ── Poll session state every 3s ──────────────────────────────────────
@@ -434,6 +442,56 @@ export default function PeerSessionPage() {
     lastBossAttackCountRef.current = 0;
     setBossAttackTrigger(0);
   }, [sessionId]);
+
+  useEffect(() => {
+    return () => {
+      if (victoryCutsceneTimerRef.current !== null) {
+        window.clearTimeout(victoryCutsceneTimerRef.current);
+        victoryCutsceneTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const prev = lastVictoryStateRef.current;
+    const sessionKey = session?.session_id || null;
+    const currentStatus = session?.status || null;
+    const currentBossDefeated = Boolean(session?.boss_defeated) || session?.battle_outcome === 'victory';
+    const currentPartyDefeated = Boolean(session?.party_defeated) || session?.battle_outcome === 'defeat';
+
+    const justWon =
+      Boolean(sessionKey) &&
+      !currentPartyDefeated &&
+      (
+        (prev.sessionId === sessionKey && !prev.bossDefeated && currentBossDefeated) ||
+        (prev.sessionId === sessionKey && prev.status !== 'completed' && currentStatus === 'completed' && currentBossDefeated)
+      );
+
+    if (justWon) {
+      setVictoryCutsceneActive(true);
+      if (victoryCutsceneTimerRef.current !== null) {
+        window.clearTimeout(victoryCutsceneTimerRef.current);
+      }
+      victoryCutsceneTimerRef.current = window.setTimeout(() => {
+        setVictoryCutsceneActive(false);
+        victoryCutsceneTimerRef.current = null;
+      }, VICTORY_CUTSCENE_MS);
+    }
+
+    if (prev.sessionId !== sessionKey) {
+      setVictoryCutsceneActive(false);
+      if (victoryCutsceneTimerRef.current !== null) {
+        window.clearTimeout(victoryCutsceneTimerRef.current);
+        victoryCutsceneTimerRef.current = null;
+      }
+    }
+
+    lastVictoryStateRef.current = {
+      bossDefeated: currentBossDefeated,
+      status: currentStatus,
+      sessionId: sessionKey,
+    };
+  }, [session?.session_id, session?.boss_defeated, session?.party_defeated, session?.battle_outcome, session?.status]);
 
   // ── Reset answer state when question changes ──────────────────────────
 
@@ -571,8 +629,7 @@ export default function PeerSessionPage() {
     : [];
   const existingAnswer = answersForCurrentQuestion.find((a) => a.submitted_by === studentId);
   const answeredMemberIds = new Set(answersForCurrentQuestion.map((a) => a.submitted_by));
-  const waitingMembers = (session?.members ?? []).filter((m) => !answeredMemberIds.has(m.student_id));
-  const allMembersAnswered = waitingMembers.length === 0 && (session?.members?.length ?? 0) > 0;
+  const rawWaitingMembers = (session?.members ?? []).filter((m) => !answeredMemberIds.has(m.student_id));
 
   const resolveDisplayNameFromId = (memberId: string) => {
     if (memberId === studentId) return displayName;
@@ -624,6 +681,30 @@ export default function PeerSessionPage() {
         token,
       );
       setFeedback(result);
+      if (result.boss_defeated || result.battle_outcome === 'victory') {
+        setVictoryCutsceneActive(true);
+        if (victoryCutsceneTimerRef.current !== null) {
+          window.clearTimeout(victoryCutsceneTimerRef.current);
+        }
+        victoryCutsceneTimerRef.current = window.setTimeout(() => {
+          setVictoryCutsceneActive(false);
+          victoryCutsceneTimerRef.current = null;
+        }, VICTORY_CUTSCENE_MS);
+        setSession((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            boss_health_max: result.boss_health_max ?? prev.boss_health_max,
+            boss_health_current: 0,
+            boss_defeated: true,
+            status: 'completed',
+            battle_outcome: 'victory',
+            party_health_max: result.party_health_max ?? prev.party_health_max,
+            party_health_current: result.party_health_current ?? prev.party_health_current,
+            party_defeated: result.party_defeated ?? prev.party_defeated,
+          };
+        });
+      }
       await fetchSession();
     } catch (err) {
       console.error('Failed to submit answer:', err);
@@ -683,6 +764,8 @@ export default function PeerSessionPage() {
     Boolean(session?.boss_defeated) ||
     bossCurrent <= 0 ||
     session?.battle_outcome === 'victory';
+  const waitingMembers = bossDefeated ? [] : rawWaitingMembers;
+  const allMembersAnswered = bossDefeated || (waitingMembers.length === 0 && (session?.members?.length ?? 0) > 0);
   const battleOutcome = partyDefeated
     ? 'defeat'
     : bossDefeated
@@ -763,7 +846,9 @@ export default function PeerSessionPage() {
     );
   }
 
-  if (session.status === 'completed') {
+  const showCompletedSummary = session.status === 'completed' && !(battleOutcome === 'victory' && victoryCutsceneActive);
+
+  if (showCompletedSummary) {
     const totalQuestions = session.questions.length;
     const totalAnswers = session.answers.length;
     const correctCount = session.answers.filter(a => a.is_correct).length;
@@ -1439,7 +1524,7 @@ export default function PeerSessionPage() {
                   </div>
                 </div>
 
-                {(existingAnswer || feedback) && !allMembersAnswered && (
+                {(existingAnswer || feedback) && !allMembersAnswered && !bossDefeated && (
                   <p className="text-xs text-amber-300/70 flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Waiting for: {waitingMembers.map((m) => getMemberName(m.student_id)).join(', ')}
@@ -1488,7 +1573,9 @@ export default function PeerSessionPage() {
                 {bossDefeated && (
                   <div className="rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 p-3 text-center">
                     <p className="text-sm text-emerald-300 font-medium">Boss Defeated!</p>
-                    <p className="text-xs text-white/40 mt-1">Continue discussing or end the session.</p>
+                    <p className="text-xs text-white/40 mt-1">
+                      {victoryCutsceneActive ? 'Ending battle and showing results...' : 'Battle resolved. Results are ready.'}
+                    </p>
                   </div>
                 )}
               </div>
