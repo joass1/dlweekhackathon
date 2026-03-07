@@ -727,8 +727,8 @@ export default function Page() {
       <div className="nav-safe-top p-6 max-w-7xl mx-auto overflow-x-hidden">
       <div className={`space-y-6 transition-opacity duration-300 ${isKGExpanded ? faded : visible}`}>
         <section>
-          <h1 className="text-3xl font-bold text-white">Welcome back, {displayName}</h1>
-          <p className="text-white/70 mt-1">Here&apos;s your learning overview</p>
+          <h1 className="text-3xl font-bold text-black">Welcome back, {displayName}</h1>
+          <p className="text-black mt-1">Here&apos;s your learning overview</p>
         </section>
 
         {loadWarning && (
