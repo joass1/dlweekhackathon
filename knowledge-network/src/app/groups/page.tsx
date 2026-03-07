@@ -36,7 +36,7 @@ interface KGNode {
   status: string;
 }
 
-const glassCardClass = 'rounded-3xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
+const glassCardClass = 'rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/70 via-slate-800/60 to-slate-900/70 backdrop-blur-md shadow-xl';
 
 export default function GroupsPage() {
   const studentId = useStudentId();
@@ -158,10 +158,36 @@ export default function GroupsPage() {
 
   return pageShell(
     <>
-      <h1 className="text-2xl font-bold mb-2 text-white">Peer Learning Hubs</h1>
-      <p className="text-sm text-white/70 mb-6">
-        Balanced groups where each member&apos;s strengths complement others&apos; weaknesses.
-      </p>
+      <Card className={`glow-card relative overflow-hidden ${glassCardClass} p-6 md:p-8 text-white`}>
+        <GlowingEffect spread={240} glow={true} disabled={false} proximity={84} borderWidth={2} variant="cyan" />
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-3">
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#4cc9f0]">
+              <Users className="h-3.5 w-3.5" />
+              Peer Learning Hubs
+            </p>
+            <div>
+              <h1 className="text-3xl font-bold text-white md:text-4xl">Find the right study squad</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70 md:text-base">
+                Balanced groups where each member&apos;s strengths complement others&apos; weaknesses, with the same dark
+                glass UI language used across the rest of Mentora.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:min-w-[320px]">
+            <div className="rounded-2xl border border-white/12 bg-white/6 p-4 backdrop-blur-sm">
+              <p className="text-xs uppercase tracking-[0.12em] text-white/50">Live Sessions</p>
+              <p className="mt-2 text-2xl font-bold text-white">{activeSessions.length}</p>
+              <p className="mt-1 text-xs text-white/55">Join one already in progress</p>
+            </div>
+            <div className="rounded-2xl border border-white/12 bg-white/6 p-4 backdrop-blur-sm">
+              <p className="text-xs uppercase tracking-[0.12em] text-white/50">Matched Hubs</p>
+              <p className="mt-2 text-2xl font-bold text-white">{hubs.length}</p>
+              <p className="mt-1 text-xs text-white/55">Built from your current graph</p>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* ── Active Sessions (browse & join any) ──────────────────────── */}
       {activeSessions.length > 0 && (
@@ -239,7 +265,7 @@ export default function GroupsPage() {
       )}
 
       {topicFromGraph && (
-        <div className="mb-5 p-4 rounded-xl border border-[#03b2e6]/30 bg-[#03b2e6]/15 backdrop-blur-sm">
+        <div className="mb-5 rounded-2xl border border-[#03b2e6]/25 bg-[#03b2e6]/12 p-4 backdrop-blur-sm">
           <p className="text-sm text-white">
             Focused topic from Knowledge Map: <span className="font-semibold">{topicFromGraph}</span>
           </p>
