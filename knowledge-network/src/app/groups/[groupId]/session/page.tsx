@@ -58,7 +58,7 @@ const LEVEL_TO_BOSS: Record<number, BossCharacterId> = {
   3: 'swat',
   4: 'suit',
 };
-const VICTORY_CUTSCENE_MS = 1800;
+const VICTORY_CUTSCENE_MS = 3000;
 
 const UID_LIKE_RE = /^[a-z0-9_-]{20,}$/i;
 
@@ -334,7 +334,7 @@ export default function PeerSessionPage() {
     };
     load();
 
-    const pollMs = session?.status === 'completed' ? 2500 : 1000;
+    const pollMs = session?.status === 'completed' && !victoryCutsceneActive ? 2500 : 1000;
     const interval = setInterval(() => {
       if (!cancelled) void fetchSession();
     }, pollMs);
@@ -343,7 +343,7 @@ export default function PeerSessionPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [fetchSession, session?.status]);
+  }, [fetchSession, session?.status, victoryCutsceneActive]);
 
   useEffect(() => {
     const syncNow = () => {
@@ -681,6 +681,29 @@ export default function PeerSessionPage() {
         token,
       );
       setFeedback(result);
+      setSession((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          boss_health_max: result.boss_health_max ?? prev.boss_health_max,
+          boss_health_current: typeof result.boss_health_current === 'number'
+            ? result.boss_health_current
+            : prev.boss_health_current,
+          boss_defeated: result.boss_defeated ?? prev.boss_defeated,
+          battle_outcome: result.battle_outcome ?? prev.battle_outcome,
+          boss_attack_count: typeof result.boss_attack_count === 'number'
+            ? result.boss_attack_count
+            : prev.boss_attack_count,
+          party_health_max: result.party_health_max ?? prev.party_health_max,
+          party_health_current: typeof result.party_health_current === 'number'
+            ? result.party_health_current
+            : prev.party_health_current,
+          party_defeated: result.party_defeated ?? prev.party_defeated,
+          status: result.boss_defeated || result.battle_outcome === 'victory'
+            ? 'completed'
+            : prev.status,
+        };
+      });
       if (result.boss_defeated || result.battle_outcome === 'victory') {
         setVictoryCutsceneActive(true);
         if (victoryCutsceneTimerRef.current !== null) {
@@ -694,14 +717,10 @@ export default function PeerSessionPage() {
           if (!prev) return prev;
           return {
             ...prev,
-            boss_health_max: result.boss_health_max ?? prev.boss_health_max,
             boss_health_current: 0,
             boss_defeated: true,
             status: 'completed',
             battle_outcome: 'victory',
-            party_health_max: result.party_health_max ?? prev.party_health_max,
-            party_health_current: result.party_health_current ?? prev.party_health_current,
-            party_defeated: result.party_defeated ?? prev.party_defeated,
           };
         });
       }
@@ -1094,7 +1113,10 @@ export default function PeerSessionPage() {
   }
 
   // ── Active / Waiting Session ──────────────────────────────────────────
-  const showBossScene = session.status === 'active' || session.status === 'waiting';
+  const showBossScene =
+    session.status === 'active' ||
+    session.status === 'waiting' ||
+    (battleOutcome === 'victory' && victoryCutsceneActive);
 
   return (
     <div className="fixed inset-0 bg-slate-950 overflow-hidden text-white">
@@ -1574,7 +1596,7 @@ export default function PeerSessionPage() {
                   <div className="rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 p-3 text-center">
                     <p className="text-sm text-emerald-300 font-medium">Boss Defeated!</p>
                     <p className="text-xs text-white/40 mt-1">
-                      {victoryCutsceneActive ? 'Ending battle and showing results...' : 'Battle resolved. Results are ready.'}
+                      {victoryCutsceneActive ? 'Playing death animation and preparing summary...' : 'Battle resolved. Results are ready.'}
                     </p>
                   </div>
                 )}

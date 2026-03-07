@@ -518,6 +518,27 @@ function BossModel({
     return base * (0.75 + Math.random() * 1.1);
   }, [preset.attackIntervalSec]);
 
+  const playOneShot = React.useCallback((
+    action: THREE.AnimationAction | undefined | null,
+    {
+      fadeIn = 0.1,
+      clamp = true,
+    }: {
+      fadeIn?: number;
+      clamp?: boolean;
+    } = {},
+  ) => {
+    if (!action) return;
+    action.reset();
+    action.enabled = true;
+    action.paused = false;
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = clamp;
+    action.setEffectiveTimeScale(1);
+    action.setEffectiveWeight(1);
+    action.fadeIn(fadeIn).play();
+  }, []);
+
   useLayoutEffect(() => {
     if (!fitGroupRef.current) return;
     const box = new THREE.Box3().setFromObject(modelScene);
@@ -596,10 +617,7 @@ function BossModel({
       }
       if (death) {
         idle.fadeOut(0.15);
-        death.reset();
-        death.setLoop(THREE.LoopOnce, 1);
-        death.clampWhenFinished = true;
-        death.fadeIn(0.12).play();
+        playOneShot(death, { fadeIn: 0.12, clamp: true });
       }
       prevHealthRef.current = healthCurrent;
       return;
@@ -611,11 +629,16 @@ function BossModel({
         activeHitTimeoutRef.current = null;
       }
 
-      hit.reset();
-      hit.setLoop(THREE.LoopOnce, 1);
+      if (activeAttackRef.current && actions?.[activeAttackRef.current]) {
+        actions[activeAttackRef.current]?.fadeOut(0.06);
+        actions[activeAttackRef.current]?.stop();
+        activeAttackRef.current = null;
+        isAttackingRef.current = false;
+      }
+
+      idle.fadeOut(0.06);
       // Keep hit as a short overlay and return control back to ambient/random loop.
-      hit.clampWhenFinished = false;
-      hit.fadeIn(0.08).play();
+      playOneShot(hit, { fadeIn: 0.08, clamp: false });
 
       const hitDurationMs = Math.max(220, Math.round(hit.getClip().duration * 1000));
       activeHitTimeoutRef.current = window.setTimeout(() => {
@@ -635,7 +658,7 @@ function BossModel({
         activeHitTimeoutRef.current = null;
       }
     };
-  }, [actions, defeated, healthCurrent, healthMax, preset.deathClip, preset.hitClip, preset.idleClip]);
+  }, [actions, defeated, healthCurrent, healthMax, playOneShot, preset.deathClip, preset.hitClip, preset.idleClip]);
 
   useEffect(() => {
     const incoming = Math.max(0, Math.floor(bossAttackTrigger));
@@ -737,14 +760,17 @@ function BossModel({
 
     const attackCandidates = preset.attackClips
       .filter((name) => !!actions?.[name]);
+    const fallbackAttackCandidates = attackCandidates.length === 0
+      ? Object.keys(actions ?? {}).filter((name) => /(shoot|slash|punch|kick|attack|swing)/i.test(name))
+      : attackCandidates;
 
-    if (attackCandidates.length === 0) return;
+    if (fallbackAttackCandidates.length === 0) return;
 
     const shouldTriggerScripted = pendingAttackCountRef.current > 0;
     const shouldTriggerAmbient = allowAmbientAttacks && t >= nextAmbientAttackAtRef.current;
     if (!isAttackingRef.current && (shouldTriggerScripted || shouldTriggerAmbient)) {
-      const idx = Math.floor(Math.random() * attackCandidates.length);
-      const attackName = attackCandidates[idx];
+      const idx = Math.floor(Math.random() * fallbackAttackCandidates.length);
+      const attackName = fallbackAttackCandidates[idx];
       const attackAction = actions?.[attackName];
       if (!attackAction) return;
 
@@ -756,11 +782,14 @@ function BossModel({
         nextAmbientAttackAtRef.current = t + getNextAmbientDelay();
       }
 
+      if (activeHitTimeoutRef.current !== null) {
+        window.clearTimeout(activeHitTimeoutRef.current);
+        activeHitTimeoutRef.current = null;
+      }
+      const hitAction = actions?.[preset.hitClip] ?? actions?.HitRecieve ?? actions?.HitRecieve_2;
+      hitAction?.stop();
       idle.fadeOut(0.1);
-      attackAction.reset();
-      attackAction.setLoop(THREE.LoopOnce, 1);
-      attackAction.clampWhenFinished = true;
-      attackAction.fadeIn(0.1).play();
+      playOneShot(attackAction, { fadeIn: 0.1, clamp: true });
       return;
     }
 
