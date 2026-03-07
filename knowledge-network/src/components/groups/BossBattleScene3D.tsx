@@ -511,7 +511,19 @@ function BossModel({
   const nextAmbientAttackAtRef = useRef<number>(preset.attackIntervalSec);
   const swordAttachedRef = useRef<boolean>(false);
   const hiddenHeadNodesRef = useRef<VisibilitySnapshot[]>([]);
-  const defeated = healthCurrent <= 0;
+  const [defeatedLatch, setDefeatedLatch] = React.useState(false);
+  const defeated = healthCurrent <= 0 || defeatedLatch;
+
+  useEffect(() => {
+    if (healthCurrent <= 0 && !defeatedLatch) {
+      setDefeatedLatch(true);
+      return;
+    }
+    // New battle/session starts near full HP: clear latched defeat state.
+    if (healthCurrent > 0 && healthCurrent >= healthMax * 0.95 && defeatedLatch) {
+      setDefeatedLatch(false);
+    }
+  }, [defeatedLatch, healthCurrent, healthMax]);
 
   const getNextAmbientDelay = React.useCallback(() => {
     const base = Math.max(1.0, Number(preset.attackIntervalSec) || 3);
@@ -716,11 +728,17 @@ function BossModel({
 
     if (!motionGroupRef.current) return;
     const t = clock.getElapsedTime();
-    const sway = Math.sin(t * 0.55) * 0.02;
-    const bob = Math.sin(t * 0.9) * 0.015;
-    motionGroupRef.current.position.x = sway;
-    motionGroupRef.current.position.y = bob;
-    motionGroupRef.current.rotation.y = Math.sin(t * 0.35) * 0.05;
+    if (defeated) {
+      motionGroupRef.current.position.x = 0;
+      motionGroupRef.current.position.y = 0;
+      motionGroupRef.current.rotation.y = 0;
+    } else {
+      const sway = Math.sin(t * 0.55) * 0.02;
+      const bob = Math.sin(t * 0.9) * 0.015;
+      motionGroupRef.current.position.x = sway;
+      motionGroupRef.current.position.y = bob;
+      motionGroupRef.current.rotation.y = Math.sin(t * 0.35) * 0.05;
+    }
 
     const idle = actions?.[preset.idleClip] ?? actions?.Idle_Neutral ?? actions?.Idle;
     if (!idle) return;

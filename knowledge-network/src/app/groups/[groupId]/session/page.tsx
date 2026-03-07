@@ -242,6 +242,7 @@ function humanizeConceptId(value?: string | null): string {
 // ── Glass card style ──────────────────────────────────────────────────────
 const glass = 'rounded-2xl border border-white/[0.08] bg-black/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]';
 const glassLight = 'rounded-2xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-xl';
+const COMPLETION_SCENE_HOLD_MS = 1800;
 
 // ── Question type icon helper ─────────────────────────────────────────────
 
@@ -301,8 +302,11 @@ export default function PeerSessionPage() {
   const [videoCollapsed, setVideoCollapsed] = useState(false);
   const [questionElapsed, setQuestionElapsed] = useState(0);
   const [bossAttackTrigger, setBossAttackTrigger] = useState(0);
+  const [completionRevealReady, setCompletionRevealReady] = useState(false);
   const lastBossAttackCountRef = useRef(0);
   const lastAutoQuestionIdRef = useRef<string>('');
+  const completionRevealTimerRef = useRef<number | null>(null);
+  const lastCompletionKeyRef = useRef('');
   const forcedBossId = resolveBossCharacterId(session);
 
   // ── Poll session state every 3s ──────────────────────────────────────
@@ -326,7 +330,7 @@ export default function PeerSessionPage() {
     };
     load();
 
-    const pollMs = session?.status === 'completed' ? 2500 : 1000;
+    const pollMs = session?.status === 'completed' && completionRevealReady ? 2500 : 1000;
     const interval = setInterval(() => {
       if (!cancelled) void fetchSession();
     }, pollMs);
@@ -335,7 +339,7 @@ export default function PeerSessionPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [fetchSession, session?.status]);
+  }, [completionRevealReady, fetchSession, session?.status]);
 
   useEffect(() => {
     const syncNow = () => {
@@ -391,6 +395,49 @@ export default function PeerSessionPage() {
       cancelled = true;
     };
   }, [getIdToken]);
+
+  useEffect(() => {
+    return () => {
+      if (completionRevealTimerRef.current !== null) {
+        window.clearTimeout(completionRevealTimerRef.current);
+        completionRevealTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session || session.status !== 'completed') {
+      if (completionRevealTimerRef.current !== null) {
+        window.clearTimeout(completionRevealTimerRef.current);
+        completionRevealTimerRef.current = null;
+      }
+      lastCompletionKeyRef.current = '';
+      setCompletionRevealReady(false);
+      return;
+    }
+
+    const completionKey = [
+      session.session_id || sessionId,
+      session.battle_outcome || '',
+      session.boss_defeated ? 'boss' : 'party',
+      String(session.current_question_index ?? 0),
+      String(session.answers.length ?? 0),
+    ].join(':');
+
+    if (lastCompletionKeyRef.current === completionKey) {
+      return;
+    }
+
+    lastCompletionKeyRef.current = completionKey;
+    setCompletionRevealReady(false);
+    if (completionRevealTimerRef.current !== null) {
+      window.clearTimeout(completionRevealTimerRef.current);
+    }
+    completionRevealTimerRef.current = window.setTimeout(() => {
+      setCompletionRevealReady(true);
+      completionRevealTimerRef.current = null;
+    }, COMPLETION_SCENE_HOLD_MS);
+  }, [session, sessionId]);
 
   // ── Session timer ─────────────────────────────────────────────────────
 
@@ -758,6 +805,50 @@ export default function PeerSessionPage() {
           <Button onClick={() => router.push(`/groups/${groupId}`)} className="bg-cyan-500 hover:bg-cyan-600 text-white">
             Back to Hub
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const showCompletionHoldScene = session.status === 'completed' && !completionRevealReady;
+
+  if (showCompletionHoldScene) {
+    const isDefeat = battleOutcome === 'defeat';
+    return (
+      <div className="fixed inset-0 bg-slate-950 overflow-hidden text-white">
+        <div className="absolute inset-0 z-0">
+          <BossBattleScene3D
+            healthCurrent={bossDisplayCurrent}
+            healthMax={bossMax}
+            lobbyId={session.session_id || sessionId}
+            forcedBossId={forcedBossId}
+            bossAttackTrigger={bossAttackTrigger}
+            allowAmbientAttacks={!bossDefeated}
+          />
+        </div>
+        <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-b from-slate-950/45 via-transparent to-slate-950/70" />
+        <div className="relative z-20 flex min-h-screen items-center justify-center p-6">
+          <div className={`${glass} w-full max-w-xl p-6 text-center`}>
+            <p className="text-xs uppercase tracking-[0.3em] text-white/45">Battle Resolved</p>
+            <h1 className={`mt-3 text-3xl font-bold ${isDefeat ? 'text-red-300' : 'text-emerald-300'}`}>
+              {isDefeat ? 'Party Defeated' : 'Boss Defeated'}
+            </h1>
+            <p className="mt-2 text-sm text-white/60">
+              {isDefeat ? 'Holding the arena for the finishing animation.' : 'Letting the boss death animation complete before the summary.'}
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className={`${glassLight} p-4 text-left`}>
+                <p className="text-xs uppercase tracking-wide text-white/45">Boss HP</p>
+                <p className="mt-1 text-xl font-semibold text-white">{Math.round(bossDisplayCurrent)} / {Math.round(bossMax)}</p>
+              </div>
+              {hasPartyHealth && (
+                <div className={`${glassLight} p-4 text-left`}>
+                  <p className="text-xs uppercase tracking-wide text-white/45">Party HP</p>
+                  <p className="mt-1 text-xl font-semibold text-white">{Math.round(partyCurrent)} / {Math.round(partyMax)}</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
