@@ -125,8 +125,13 @@ export default function SignInPage() {
             await completeSignInIfEmailVerified(credential);
             setLoading(false);
           })
-          .catch((err) => {
-            setError(err.message);
+          .catch(async (err: unknown) => {
+            if (isMultiFactorError(err)) {
+              const resolver = getMultiFactorResolver(auth, err);
+              await startMfaPhoneChallenge(resolver);
+            } else {
+              setError(err instanceof Error ? err.message : "Magic link sign in failed");
+            }
             setLoading(false);
           });
       }
@@ -168,6 +173,35 @@ export default function SignInPage() {
     return false;
   };
 
+  const startMfaPhoneChallenge = async (resolver: MultiFactorResolver) => {
+    mfaResolverRef.current = resolver;
+    const phoneHint = resolver.hints.find(
+      (h) => h.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+    );
+    if (!phoneHint) {
+      setError("No phone factor enrolled. Contact support.");
+      return;
+    }
+
+    try {
+      const recaptcha = getRecaptchaVerifier();
+      const provider = new PhoneAuthProvider(auth);
+      const vId = await provider.verifyPhoneNumber(
+        { multiFactorHint: phoneHint, session: resolver.session },
+        recaptcha
+      );
+      clearRecaptchaVerifier();
+      setVerificationId(vId);
+      setMfaStep("challenge-code");
+      setMessage("A verification code was sent to your phone.");
+    } catch (innerErr) {
+      clearRecaptchaVerifier();
+      setError(
+        innerErr instanceof Error ? innerErr.message : "Failed to send MFA code"
+      );
+    }
+  };
+
   // ── Auth handlers ────────────────────────────────────────
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
@@ -180,34 +214,8 @@ export default function SignInPage() {
       await completeSignInIfEmailVerified(credential);
     } catch (err: unknown) {
       if (isMultiFactorError(err)) {
-        // MFA required — start challenge flow
         const resolver = getMultiFactorResolver(auth, err);
-        mfaResolverRef.current = resolver;
-
-        const phoneHint = resolver.hints.find(
-          (h) => h.factorId === PhoneMultiFactorGenerator.FACTOR_ID
-        );
-        if (phoneHint) {
-          try {
-            const recaptcha = getRecaptchaVerifier();
-            const provider = new PhoneAuthProvider(auth);
-            const vId = await provider.verifyPhoneNumber(
-              { multiFactorHint: phoneHint, session: resolver.session },
-              recaptcha
-            );
-            clearRecaptchaVerifier();
-            setVerificationId(vId);
-            setMfaStep("challenge-code");
-            setMessage("A verification code was sent to your phone.");
-          } catch (innerErr) {
-            clearRecaptchaVerifier();
-            setError(
-              innerErr instanceof Error ? innerErr.message : "Failed to send MFA code"
-            );
-          }
-        } else {
-          setError("No phone factor enrolled. Contact support.");
-        }
+        await startMfaPhoneChallenge(resolver);
       } else {
         setError(err instanceof Error ? err.message : "Sign in failed");
       }
@@ -451,29 +459,7 @@ export default function SignInPage() {
     } catch (err: unknown) {
       if (isMultiFactorError(err)) {
         const resolver = getMultiFactorResolver(auth, err);
-        mfaResolverRef.current = resolver;
-        const phoneHint = resolver.hints.find(
-          (h) => h.factorId === PhoneMultiFactorGenerator.FACTOR_ID
-        );
-        if (phoneHint) {
-          try {
-            const recaptcha2 = getRecaptchaVerifier();
-            const phoneProvider = new PhoneAuthProvider(auth);
-            const vId = await phoneProvider.verifyPhoneNumber(
-              { multiFactorHint: phoneHint, session: resolver.session },
-              recaptcha2
-            );
-            clearRecaptchaVerifier();
-            setVerificationId(vId);
-            setMfaStep("challenge-code");
-            setMessage("A verification code was sent to your phone.");
-          } catch (innerErr) {
-            clearRecaptchaVerifier();
-            setError(
-              innerErr instanceof Error ? innerErr.message : "Failed to send MFA code"
-            );
-          }
-        }
+        await startMfaPhoneChallenge(resolver);
       } else {
         setError(err instanceof Error ? err.message : "Google sign in failed");
       }
@@ -486,7 +472,7 @@ export default function SignInPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex h-dvh items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-[#03b2e6]" />
       </div>
     );
@@ -496,7 +482,7 @@ export default function SignInPage() {
   // Email verification step (after sign-up, before MFA enrollment)
   if (mfaStep === "verify-email") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex h-dvh items-start justify-center overflow-y-auto bg-background px-4 py-6 sm:items-center sm:py-8">
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center mb-8">
             <Image
@@ -564,7 +550,7 @@ export default function SignInPage() {
 
   if (mfaStep === "enroll-phone" || mfaStep === "enroll-code") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex h-dvh items-start justify-center overflow-y-auto bg-background px-4 py-6 sm:items-center sm:py-8">
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center mb-8">
             <Image
@@ -679,7 +665,7 @@ export default function SignInPage() {
   // MFA challenge flow (during sign-in)
   if (mfaStep === "challenge-code") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex h-dvh items-start justify-center overflow-y-auto bg-background px-4 py-6 sm:items-center sm:py-8">
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center mb-8">
             <Image
@@ -749,7 +735,7 @@ export default function SignInPage() {
   // ── Default sign-in / sign-up form ──────────────────────
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex h-dvh items-start justify-center overflow-y-auto bg-background px-4 py-6 sm:items-center sm:py-8">
       <div className="w-full max-w-md">
         {/* Brand */}
         <div className="flex flex-col items-center mb-8">
@@ -997,3 +983,4 @@ export default function SignInPage() {
     </div>
   );
 }
+
