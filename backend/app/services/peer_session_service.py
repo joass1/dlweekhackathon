@@ -53,6 +53,14 @@ QUESTION_TIME_LIMIT_SEC_BY_LEVEL: Dict[int, int] = {
 MIN_DEFENSE_SCORE = 0.7
 MCQ_MAX_OPTIONS = 6
 MCQ_MIN_OPTIONS = 2
+RUBRIC_PHRASE_STOPWORDS = {
+    "the", "and", "for", "with", "from", "that", "this", "your", "their", "what", "which",
+    "when", "where", "into", "onto", "over", "under", "just", "does", "did", "have", "has",
+    "had", "will", "would", "could", "should", "about", "explain", "question", "answer",
+    "topic", "week", "slide", "slides", "chapter", "lecture", "concept", "material",
+    "materials", "course", "study", "prompt", "shared", "discussion", "student", "students",
+    "member", "members", "idea", "ideas", "understanding", "explanation", "correct", "wrong",
+}
 
 
 def _utc_now() -> datetime:
@@ -694,6 +702,168 @@ class PeerSessionService:
                 if len(points) >= limit:
                     return points
         return points
+
+    @staticmethod
+    def _normalize_rubric_phrase(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = text.strip(" -\t\r\n.,;:()[]{}\"'")
+        text = re.sub(r"\s+", " ", text)
+        return text[:180]
+
+    @staticmethod
+    def _phrase_quality_score(value: str) -> int:
+        text = PeerSessionService._normalize_rubric_phrase(value)
+        if not text:
+            return -1
+        lowered = text.lower()
+        tokens = [token for token in re.split(r"[^a-z0-9]+", lowered) if token]
+        meaningful = [token for token in tokens if token not in RUBRIC_PHRASE_STOPWORDS and len(token) > 2]
+        if not meaningful:
+            return -1
+        score = len(meaningful) * 2
+        if len(tokens) <= 8:
+            score += 2
+        if len(text) <= 90:
+            score += 1
+        if any(ch.isdigit() for ch in text):
+            score -= 1
+        return score
+
+    @staticmethod
+    def _unique_rubric_phrases(values: List[str], *, limit: int, min_quality: int = 2) -> List[str]:
+        out: List[str] = []
+        seen: set[str] = set()
+        scored: List[Tuple[int, str]] = []
+        for raw in values:
+            text = PeerSessionService._normalize_rubric_phrase(raw)
+            if not text:
+                continue
+            key = _normalize_key(text)
+            if not key or key in seen:
+                continue
+            quality = PeerSessionService._phrase_quality_score(text)
+            if quality < min_quality:
+                continue
+            seen.add(key)
+            scored.append((quality, text))
+        for _, text in sorted(scored, key=lambda item: (-item[0], len(item[1]))):
+            out.append(text)
+            if len(out) >= limit:
+                break
+        return out
+
+    @staticmethod
+    def _extract_rubric_fragments(*sources: str, limit: int = 10) -> List[str]:
+        candidates: List[str] = []
+        for source in sources:
+            text = str(source or "").strip()
+            if not text:
+                continue
+            for raw in re.split(r"(?<=[.!?])\s+|;|\r?\n|:|,|\u2022", text):
+                part = PeerSessionService._normalize_rubric_phrase(raw)
+                if not part or len(part.split()) > 12:
+                    continue
+                candidates.append(part)
+                if len(candidates) >= limit * 3:
+                    break
+        return PeerSessionService._unique_rubric_phrases(candidates, limit=limit, min_quality=1)
+
+    @staticmethod
+    def _extract_parenthetical_aliases(*sources: str, limit: int = 6) -> List[str]:
+        candidates: List[str] = []
+        for source in sources:
+            text = str(source or "").strip()
+            if not text:
+                continue
+            for match in re.finditer(r"([A-Za-z][A-Za-z0-9 \-]{1,50})\s*\(([^()]{2,60})\)", text):
+                left = PeerSessionService._normalize_rubric_phrase(match.group(1))
+                right = PeerSessionService._normalize_rubric_phrase(match.group(2))
+                if left:
+                    candidates.append(left)
+                if right:
+                    candidates.append(right)
+        return PeerSessionService._unique_rubric_phrases(candidates, limit=limit, min_quality=1)
+
+    @staticmethod
+    def _extract_contrast_misconceptions(*sources: str, limit: int = 3) -> List[str]:
+        candidates: List[str] = []
+        patterns = [
+            r"rather than ([^.;,\n]{3,90})",
+            r"instead of ([^.;,\n]{3,90})",
+            r"not ([^.;,\n]{3,90})",
+            r"separate from ([^.;,\n]{3,90})",
+            r"does not require ([^.;,\n]{3,90})",
+        ]
+        for source in sources:
+            text = str(source or "").strip()
+            if not text:
+                continue
+            for pattern in patterns:
+                for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                    phrase = PeerSessionService._normalize_rubric_phrase(match.group(1))
+                    if not phrase:
+                        continue
+                    candidates.append(f"treating it as {phrase}")
+        return PeerSessionService._unique_rubric_phrases(candidates, limit=limit, min_quality=1)
+
+    def _build_question_rubric(
+        self,
+        *,
+        concept_id: str,
+        correct_answer: str,
+        explanation: str,
+        key_points: List[str],
+        must_mention: List[str],
+        allowed_equivalents: List[str],
+        common_misconceptions: List[str],
+        grading_notes: str,
+    ) -> Dict[str, Any]:
+        concept_label = _humanize_key(concept_id)
+        aliases = self._extract_parenthetical_aliases(concept_label, correct_answer, explanation, *key_points, limit=6)
+        fragments = self._extract_rubric_fragments(concept_label, correct_answer, explanation, *key_points, limit=10)
+
+        merged_key_points = self._unique_rubric_phrases(
+            [*key_points, *fragments, concept_label],
+            limit=4,
+            min_quality=1,
+        )
+        merged_must_mention = self._unique_rubric_phrases(
+            [*must_mention, concept_label, *aliases, *merged_key_points, *fragments],
+            limit=3,
+            min_quality=2,
+        )
+        merged_allowed_equivalents = self._unique_rubric_phrases(
+            [*allowed_equivalents, *aliases, *fragments, concept_label],
+            limit=5,
+            min_quality=1,
+        )
+        merged_common_misconceptions = self._unique_rubric_phrases(
+            [
+                *common_misconceptions,
+                *self._extract_contrast_misconceptions(correct_answer, explanation, *key_points),
+            ],
+            limit=3,
+            min_quality=1,
+        )
+
+        merged_grading_notes = str(grading_notes or "").strip()
+        if not merged_grading_notes:
+            core_terms = ", ".join(merged_must_mention[:2]) if merged_must_mention else concept_label or "the concept"
+            misconception_hint = merged_common_misconceptions[0] if merged_common_misconceptions else "missing the core distinction"
+            merged_grading_notes = (
+                f"Require semantic coverage of {core_terms}. "
+                f"Accept equivalent phrasing when the meaning is preserved, and mark answers down when they show {misconception_hint}."
+            )
+
+        return {
+            "key_points": merged_key_points or self._derive_brief_points(correct_answer, explanation, limit=3),
+            "must_mention": merged_must_mention[:3],
+            "allowed_equivalents": merged_allowed_equivalents[:5],
+            "common_misconceptions": merged_common_misconceptions[:3],
+            "grading_notes": merged_grading_notes[:280],
+        }
 
     def _build_session_evidence_pack(
         self,
@@ -1432,10 +1602,10 @@ class PeerSessionService:
             "\"correct_answer\":\"<ground-truth answer>\","
             "\"explanation\":\"<why correct>\","
             "\"key_points\":[\"2-4 short grading points\"],"
-            "\"must_mention\":[\"0-3 essential terms or ideas\"],"
-            "\"allowed_equivalents\":[\"accepted paraphrases or legal/technical synonyms\"],"
-            "\"common_misconceptions\":[\"common confusion to watch for\"],"
-            "\"grading_notes\":\"brief grading instruction for answer evaluation\""
+            "\"must_mention\":[\"2-3 atomic ideas that must be present semantically\"],"
+            "\"allowed_equivalents\":[\"short accepted paraphrases, aliases, or legal/technical synonyms\"],"
+            "\"common_misconceptions\":[\"specific plausible confusions or false contrasts to penalize\"],"
+            "\"grading_notes\":\"brief grading instruction describing minimum semantic coverage\""
             "}\n"
             "Rules:\n"
             "- Set concept_id to a specific topic-level concept id, not a broad slide/week title.\n"
@@ -1446,6 +1616,9 @@ class PeerSessionService:
             "- Stay strictly inside the selected course/topic. Do not import concepts from other courses or domains.\n"
             "- Do not create cross-domain analogies unless both sides of the analogy appear in the provided context.\n"
             "- Rubric fields must be concise and directly usable for grading later.\n"
+            "- must_mention items should be short semantic checkpoints, not full sentences.\n"
+            "- allowed_equivalents should contain accepted alternate wording, not repeats of the same phrase.\n"
+            "- common_misconceptions should be specific likely mistakes, not generic notes like 'confused answer'.\n"
             "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
             "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
             "- For math type, format formulas/equations using LaTeX delimiters: inline `$...$`, display `$$...$$`.\n"
@@ -1587,15 +1760,21 @@ class PeerSessionService:
                 correct_answer = explanation or f"A complete, context-grounded answer about {concept_id}."
             if not correct_answer:
                 continue
-            if not key_points:
-                key_points = self._derive_brief_points(correct_answer, explanation, limit=3)
-            if not must_mention:
-                must_mention = key_points[:2]
-            if not grading_notes:
-                grading_notes = (
-                    "Accept semantically correct paraphrases that cover the key points "
-                    "and reject answers that miss the central legal/technical distinction."
-                )
+            rubric_fields = self._build_question_rubric(
+                concept_id=concept_id,
+                correct_answer=correct_answer,
+                explanation=explanation,
+                key_points=key_points,
+                must_mention=must_mention,
+                allowed_equivalents=allowed_equivalents,
+                common_misconceptions=common_misconceptions,
+                grading_notes=grading_notes,
+            )
+            key_points = rubric_fields["key_points"]
+            must_mention = rubric_fields["must_mention"]
+            allowed_equivalents = rubric_fields["allowed_equivalents"]
+            common_misconceptions = rubric_fields["common_misconceptions"]
+            grading_notes = rubric_fields["grading_notes"]
 
             if q_type == "math":
                 stem = _latexify_math_text(stem)
@@ -1661,10 +1840,19 @@ class PeerSessionService:
             stem = f"Shared discussion prompt: explain the key ideas of '{member_concept}' and how they relate to '{topic}'."
             if anchor:
                 stem += f" Use this course fact in your explanation: \"{anchor}\"."
-            key_points = self._derive_brief_points(
-                f"Explain the core idea of {member_concept}",
-                anchor,
-                limit=3,
+            rubric_fields = self._build_question_rubric(
+                concept_id=member_concept,
+                correct_answer=f"A correct explanation grounded in the course material for {member_concept}.",
+                explanation=f"This checks understanding of {member_concept}.",
+                key_points=self._derive_brief_points(
+                    f"Explain the core idea of {member_concept}",
+                    anchor,
+                    limit=3,
+                ),
+                must_mention=[],
+                allowed_equivalents=[],
+                common_misconceptions=[],
+                grading_notes="Reward conceptually accurate explanations grounded in the study material.",
             )
             questions.append(
                 {
@@ -1678,11 +1866,11 @@ class PeerSessionService:
                     "options": None,
                     "correct_answer": f"A correct explanation grounded in the course material for {member_concept}.",
                     "explanation": f"This checks understanding of {member_concept}.",
-                    "key_points": key_points,
-                    "must_mention": key_points[:2],
-                    "allowed_equivalents": [],
-                    "common_misconceptions": [],
-                    "grading_notes": "Reward conceptually accurate explanations grounded in the study material.",
+                    "key_points": rubric_fields["key_points"],
+                    "must_mention": rubric_fields["must_mention"],
+                    "allowed_equivalents": rubric_fields["allowed_equivalents"],
+                    "common_misconceptions": rubric_fields["common_misconceptions"],
+                    "grading_notes": rubric_fields["grading_notes"],
                 }
             )
         if created_by:
@@ -1856,6 +2044,9 @@ class PeerSessionService:
             "\"needs_escalation\": true|false"
             "}\n"
             "Use the rubric as the primary grading authority. "
+            "Treat must_mention as the core semantic requirements. "
+            "Treat allowed_equivalents as valid alternate wording that can satisfy those requirements. "
+            "Treat common_misconceptions as specific errors that should reduce confidence or score when present. "
             "Accept semantically correct paraphrases when they satisfy the rubric. "
             "Set needs_escalation=true only when the answer is borderline, underspecified, or a synonym/paraphrase judgment is genuinely uncertain. "
             "Use \"normal\" when correct. If wrong, choose careless only for obvious slip; otherwise conceptual."
@@ -1894,6 +2085,7 @@ class PeerSessionService:
                     "\"confidence\": 0.0 to 1.0"
                     "}\n"
                     "Use the rubric first, then use the evidence snippets only to resolve ambiguity. "
+                    "Keep must_mention as the core semantic checks, allow accepted paraphrases from allowed_equivalents, and penalize misconceptions when they appear. "
                     "Do not invent facts beyond the snippets. "
                     "Accept semantically correct paraphrases that satisfy the rubric. "
                     "Use \"normal\" when correct. If wrong, choose careless only for obvious slip; otherwise conceptual."
@@ -2450,6 +2642,60 @@ class PeerSessionService:
         data.update(updates)
         return updates
 
+    def _schedule_pending_mastery_flush(self, session_id: str) -> None:
+        if not self.db:
+            return
+        ref = self.db.collection(self.collection).document(session_id)
+        doc = ref.get()
+        if not doc.exists:
+            return
+        data = doc.to_dict() or {}
+        if str(data.get("status") or "").strip().lower() != "completed":
+            return
+        if str(data.get("mastery_updates_applied_at") or "").strip():
+            return
+        if str(data.get("mastery_flush_status") or "").strip().lower() == "pending":
+            return
+        try:
+            ref.update({"mastery_flush_status": "pending"})
+        except Exception:
+            return
+
+        thread = threading.Thread(
+            target=self._pending_mastery_flush_worker,
+            args=(session_id,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _pending_mastery_flush_worker(self, session_id: str) -> None:
+        if not self.db:
+            return
+        ref = self.db.collection(self.collection).document(session_id)
+        try:
+            doc = ref.get()
+            if not doc.exists:
+                return
+            data = doc.to_dict() or {}
+            if str(data.get("status") or "").strip().lower() != "completed":
+                ref.update({"mastery_flush_status": "idle"})
+                return
+            if str(data.get("mastery_updates_applied_at") or "").strip():
+                ref.update({"mastery_flush_status": "applied"})
+                return
+            self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            ref.update({"mastery_flush_status": "applied"})
+        except Exception as exc:
+            try:
+                ref.update(
+                    {
+                        "mastery_flush_status": "error",
+                        "mastery_flush_error": str(exc)[:200],
+                    }
+                )
+            except Exception:
+                pass
+
     def _sync_user_kg_node(
         self,
         student_id: str,
@@ -2707,6 +2953,7 @@ class PeerSessionService:
             "pending_mastery_states": {},
             "pending_mastery_meta": {},
             "mastery_updates_applied_at": None,
+            "mastery_flush_status": "idle",
         }
         self._normalize_session_member_names(session_doc)
 
@@ -3042,9 +3289,7 @@ class PeerSessionService:
             data.update(timeout_updates)
 
         if str(data.get("status", "")).strip().lower() == "completed":
-            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
-            if flush_updates:
-                data.update(flush_updates)
+            self._schedule_pending_mastery_flush(session_id)
         elif str(data.get("status", "")).strip().lower() == "active":
             self._schedule_next_round_prefetch(session_id)
 
@@ -3105,9 +3350,7 @@ class PeerSessionService:
         if timeout_updates:
             data.update(timeout_updates)
         if str(data.get("status", "")) == "completed":
-            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
-            if flush_updates:
-                data.update(flush_updates)
+            self._schedule_pending_mastery_flush(session_id)
             if bool(data.get("party_defeated", False)):
                 return {"error": "Session has ended. Your party was defeated."}
             return {"error": "Session has already ended."}
@@ -3303,9 +3546,7 @@ class PeerSessionService:
         data.update(updates)
         ref.update(updates)
         if str(data.get("status", "")).strip().lower() == "completed":
-            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
-            if flush_updates:
-                data.update(flush_updates)
+            self._schedule_pending_mastery_flush(session_id)
 
         return {
             "question_id": question_id,
@@ -3381,9 +3622,7 @@ class PeerSessionService:
             data.update(boss_sync_updates)
 
         if str(data.get("status", "")) == "completed":
-            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
-            if flush_updates:
-                data.update(flush_updates)
+            self._schedule_pending_mastery_flush(session_id)
             return {
                 "status": "completed",
                 "current_question_index": int(data.get("current_question_index", 0) or 0),
@@ -3392,9 +3631,7 @@ class PeerSessionService:
                 "party_defeated": bool(data.get("party_defeated", False)),
             }
         if bool(data.get("party_defeated", False)):
-            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
-            if flush_updates:
-                data.update(flush_updates)
+            self._schedule_pending_mastery_flush(session_id)
             return {
                 "status": "completed",
                 "current_question_index": int(data.get("current_question_index", 0) or 0),
@@ -3461,9 +3698,7 @@ class PeerSessionService:
                     "battle_outcome": "victory",
                 }
             )
-            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
-            if flush_updates:
-                data.update(flush_updates)
+            self._schedule_pending_mastery_flush(session_id)
             return {
                 "status": "completed",
                 "current_question_index": current,
@@ -3568,7 +3803,7 @@ class PeerSessionService:
                 "battle_outcome": battle_outcome,
             }
         )
-        self._flush_pending_mastery_updates(session_id, data, ref=ref)
+        self._schedule_pending_mastery_flush(session_id)
         return {"status": "completed"}
 
     def get_all_active_sessions(self) -> List[Dict[str, Any]]:
