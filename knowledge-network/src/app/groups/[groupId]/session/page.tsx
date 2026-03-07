@@ -214,13 +214,32 @@ export default function PeerSessionPage() {
     };
     load();
 
+    const pollMs = session?.status === 'completed' ? 2500 : 1000;
     const interval = setInterval(() => {
-      if (!cancelled) fetchSession();
-    }, 3000);
+      if (!cancelled) void fetchSession();
+    }, pollMs);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
+    };
+  }, [fetchSession, session?.status]);
+
+  useEffect(() => {
+    const syncNow = () => {
+      void fetchSession();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncNow();
+      }
+    };
+
+    window.addEventListener('focus', syncNow);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', syncNow);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [fetchSession]);
 
@@ -420,16 +439,23 @@ export default function PeerSessionPage() {
 
   const bossMax = Math.max(1, session?.boss_health_max ?? 100);
   const bossCurrent = Math.max(0, Math.min(bossMax, session?.boss_health_current ?? bossMax));
-  const bossPct = Math.max(0, Math.min(100, (bossCurrent / bossMax) * 100));
   const levelNumber = Number(session?.level ?? 1);
   const hasPartyHealth = Number.isFinite(levelNumber) && levelNumber >= 2;
   const partyMax = hasPartyHealth ? Math.max(1, session?.party_health_max ?? 100) : 0;
   const partyCurrent = hasPartyHealth ? Math.max(0, Math.min(partyMax, session?.party_health_current ?? partyMax)) : 0;
   const partyPct = hasPartyHealth ? Math.max(0, Math.min(100, (partyCurrent / partyMax) * 100)) : 0;
   const partyDefeated = Boolean(session?.party_defeated) || (hasPartyHealth && partyCurrent <= 0);
-  const battleOutcome =
-    session?.battle_outcome ??
-    (partyDefeated ? 'defeat' : session?.boss_defeated ? 'victory' : 'pending');
+  const bossDefeated =
+    Boolean(session?.boss_defeated) ||
+    bossCurrent <= 0 ||
+    session?.battle_outcome === 'victory';
+  const battleOutcome = partyDefeated
+    ? 'defeat'
+    : bossDefeated
+      ? 'victory'
+      : (session?.battle_outcome ?? 'pending');
+  const bossDisplayCurrent = bossDefeated ? 0 : bossCurrent;
+  const bossPct = Math.max(0, Math.min(100, (bossDisplayCurrent / bossMax) * 100));
   const timeLimitSec = levelNumber >= 3 ? Number(session?.question_time_limit_sec ?? 120) : null;
   const questionRemainingSec =
     timeLimitSec && Number.isFinite(timeLimitSec)
@@ -640,7 +666,7 @@ export default function PeerSessionPage() {
       <div className="absolute inset-0 z-0">
         {showBossScene ? (
           <BossBattleScene3D
-            healthCurrent={bossCurrent}
+            healthCurrent={bossDisplayCurrent}
             healthMax={bossMax}
             lobbyId={session.session_id || sessionId}
             forcedBossId={forcedBossId}
@@ -733,22 +759,22 @@ export default function PeerSessionPage() {
         <div className={`${glass} px-4 py-3`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <Heart className={`w-4 h-4 ${session.boss_defeated ? 'text-emerald-400' : 'text-red-400'}`} />
+              <Heart className={`w-4 h-4 ${bossDefeated ? 'text-emerald-400' : 'text-red-400'}`} />
               <span className="text-sm font-bold text-white">
                 {session.boss_name || 'Knowledge Warden'}
               </span>
-              {session.boss_defeated && (
+              {bossDefeated && (
                 <span className="text-xs bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full">DEFEATED</span>
               )}
             </div>
             <span className="text-xs font-mono text-white/60">
-              {Math.round(bossCurrent)} / {Math.round(bossMax)} HP
+              {Math.round(bossDisplayCurrent)} / {Math.round(bossMax)} HP
             </span>
           </div>
           <div className="h-3 w-full rounded-full bg-white/[0.06] overflow-hidden">
             <div
               className={`h-full transition-all duration-700 ease-out rounded-full ${
-                session.boss_defeated
+                bossDefeated
                   ? 'bg-gradient-to-r from-emerald-500 to-emerald-400'
                   : 'bg-gradient-to-r from-red-600 via-red-500 to-orange-400'
               }`}
@@ -1070,7 +1096,7 @@ export default function PeerSessionPage() {
                     Next Question
                   </Button>
                 )}
-                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && !session.boss_defeated && (
+                {allMembersAnswered && session.current_question_index >= session.questions.length - 1 && !bossDefeated && (
                   <Button
                     onClick={handleAdvance}
                     disabled={advancing}
@@ -1088,7 +1114,7 @@ export default function PeerSessionPage() {
                   <p className="text-xs text-red-400">{advanceError}</p>
                 )}
 
-                {session.boss_defeated && (
+                {bossDefeated && (
                   <div className="rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 p-3 text-center">
                     <p className="text-sm text-emerald-300 font-medium">Boss Defeated!</p>
                     <p className="text-xs text-white/40 mt-1">Continue discussing or end the session.</p>

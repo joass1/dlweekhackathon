@@ -162,15 +162,17 @@ export async function getSession(
   sessionId: string,
   token?: string | null,
 ): Promise<SessionState> {
-  return apiFetch<SessionState>(`/api/peer/session/${encodeURIComponent(sessionId)}`, undefined, token);
+  const ts = Date.now();
+  return apiFetch<SessionState>(`/api/peer/session/${encodeURIComponent(sessionId)}?_ts=${ts}`, undefined, token);
 }
 
 export async function getActiveSession(
   hubId: string,
   token?: string | null,
 ): Promise<SessionState | null> {
+  const ts = Date.now();
   const result = await apiFetch<{ session: SessionState | null }>(
-    `/api/peer/session/active/${encodeURIComponent(hubId)}`,
+    `/api/peer/session/active/${encodeURIComponent(hubId)}?_ts=${ts}`,
     undefined,
     token,
   );
