@@ -2669,7 +2669,7 @@ class PeerSessionService:
         if data.get("question_time_limit_sec", "__missing__") != expected_time_limit:
             updates["question_time_limit_sec"] = expected_time_limit
 
-        if party_defeated and str(data.get("status", "")) != "completed":
+        if (party_defeated or boss_defeated) and str(data.get("status", "")) != "completed":
             updates["status"] = "completed"
             updates["ended_at"] = _utc_now().isoformat()
 
@@ -2952,6 +2952,9 @@ class PeerSessionService:
                 "timestamp": _utc_now().isoformat(),
             },
         }
+        if boss_defeated:
+            updates["status"] = "completed"
+            updates["ended_at"] = _utc_now().isoformat()
         updates.update(party_updates)
         data.update(updates)
         ref.update(updates)
@@ -3096,9 +3099,26 @@ class PeerSessionService:
 
         # End of current queue. If boss still alive, generate another round.
         if boss_defeated:
-            ref.update({"current_question_index": current, "status": data.get("status", "active")})
+            ref.update(
+                {
+                    "current_question_index": current,
+                    "status": "completed",
+                    "battle_outcome": "victory",
+                    "ended_at": _utc_now().isoformat(),
+                }
+            )
+            data.update(
+                {
+                    "current_question_index": current,
+                    "status": "completed",
+                    "battle_outcome": "victory",
+                }
+            )
+            flush_updates = self._flush_pending_mastery_updates(session_id, data, ref=ref)
+            if flush_updates:
+                data.update(flush_updates)
             return {
-                "status": data.get("status", "active"),
+                "status": "completed",
                 "current_question_index": current,
                 "at_last_question": True,
                 "boss_defeated": True,
