@@ -39,6 +39,7 @@ import {
 import { WebRTCVideo } from '@/components/groups/WebRTCVideo';
 import BossBattleScene3D from '@/components/groups/BossBattleScene3D';
 import { Spotlight } from '@/components/ui/spotlight';
+import { TutorMarkdown } from '@/components/ai/TutorMarkdown';
 
 interface KGNodeOption {
   id: string;
@@ -53,6 +54,15 @@ const LEVEL_TO_BOSS: Record<number, BossCharacterId> = {
   3: 'swat',
   4: 'suit',
 };
+
+const UID_LIKE_RE = /^[a-z0-9_-]{20,}$/i;
+
+function looksLikeUid(value: string): boolean {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  if (text.includes(' ')) return false;
+  return UID_LIKE_RE.test(text);
+}
 
 const PLACEHOLDER_CHOICE_RE = /^(?:option|choice)?\s*[\(\[]?\s*(?:[a-z]|[1-9])\s*[\)\].:\-]?\s*$/i;
 
@@ -93,6 +103,20 @@ function sanitizeMcqOptions(options: string[] | null | undefined): string[] {
   return cleaned;
 }
 
+function extractApiDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : 'Could not advance yet.';
+  const trimmed = raw.replace(/^API\s+\d+:\s*/i, '').trim();
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown };
+    if (parsed && typeof parsed === 'object' && typeof parsed.detail === 'string') {
+      return parsed.detail.trim();
+    }
+  } catch {
+    // keep trimmed string if response is not JSON
+  }
+  return trimmed;
+}
+
 function resolveBossCharacterId(session: SessionState | null): BossCharacterId | undefined {
   const explicit = session?.boss_character_id;
   if (explicit === 'punk' || explicit === 'spacesuit' || explicit === 'swat' || explicit === 'suit') {
@@ -116,6 +140,25 @@ function QuestionTypeIcon({ type }: { type: string }) {
     case 'mcq': return <ListChecks className="w-4 h-4" />;
     default: return <HelpCircle className="w-4 h-4" />;
   }
+}
+
+function BossMarkdown({
+  content,
+  className = '',
+}: {
+  content: string;
+  className?: string;
+}) {
+  const text = String(content || '').trim();
+  if (!text) return null;
+  return (
+    <TutorMarkdown
+      content={text}
+      tone="dark"
+      compact
+      className={`[&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 [&_.katex-display]:my-1 ${className}`}
+    />
+  );
 }
 
 // ── Main Session Page ─────────────────────────────────────────────────────
@@ -273,6 +316,35 @@ export default function PeerSessionPage() {
   const waitingMembers = (session?.members ?? []).filter((m) => !answeredMemberIds.has(m.student_id));
   const allMembersAnswered = waitingMembers.length === 0 && (session?.members?.length ?? 0) > 0;
 
+  const resolveDisplayNameFromId = (memberId: string) => {
+    if (memberId === studentId) return displayName;
+    const member = session?.members?.find((m) => m.student_id === memberId);
+    const rawName = String(member?.name || '').trim();
+    if (rawName && rawName !== memberId && !looksLikeUid(rawName)) {
+      return rawName;
+    }
+    return 'Teammate';
+  };
+
+  const toFriendlyAdvanceError = (err: unknown): string => {
+    const detail = extractApiDetail(err);
+    const waitingMatch = detail.match(/^Waiting for answers from:\s*(.+)$/i);
+    if (waitingMatch) {
+      const rawNames = waitingMatch[1]
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const cleaned = rawNames.map((nameOrId) => (
+        looksLikeUid(nameOrId) ? resolveDisplayNameFromId(nameOrId) : nameOrId
+      ));
+      if (cleaned.length > 0) {
+        return `Waiting for answers from: ${cleaned.join(', ')}`;
+      }
+      return 'Waiting for teammates to submit answers.';
+    }
+    return detail || 'Could not advance yet.';
+  };
+
   useEffect(() => {
     const defaultConcept =
       currentQuestion?.concept_id ||
@@ -320,7 +392,7 @@ export default function PeerSessionPage() {
       await fetchSession();
     } catch (err) {
       console.error('Failed to advance question:', err);
-      setAdvanceError(err instanceof Error ? err.message : 'Could not advance yet.');
+      setAdvanceError(toFriendlyAdvanceError(err));
     } finally {
       setAdvancing(false);
     }
@@ -366,15 +438,15 @@ export default function PeerSessionPage() {
 
   // Helper to get member display name
   const getMemberName = (memberId: string) => {
-    const member = session?.members?.find((m) => m.student_id === memberId);
-    if (member) {
-      // If name looks like a UID (long alphanumeric), show a truncated fallback
-      if (member.name && member.name.length < 30 && member.name !== member.student_id) {
-        return member.name;
-      }
+    return resolveDisplayNameFromId(memberId);
+  };
+
+  const getQuestionTargetName = (question: PeerQuestion) => {
+    const raw = String(question.target_member_name || '').trim();
+    if (raw && raw !== question.target_member && !looksLikeUid(raw)) {
+      return raw;
     }
-    if (memberId === studentId) return displayName;
-    return member?.name || memberId.slice(0, 8);
+    return getMemberName(question.target_member);
   };
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -519,7 +591,10 @@ export default function PeerSessionPage() {
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium text-white">Q{idx + 1}. {q.stem}</p>
+                      <div className="text-sm font-medium text-white">
+                        <span>Q{idx + 1}. </span>
+                        <BossMarkdown content={q.stem} className="inline-block align-top text-sm font-medium text-white" />
+                      </div>
                       {ans && (
                         <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${
                           ans.is_correct ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
@@ -529,14 +604,15 @@ export default function PeerSessionPage() {
                       )}
                     </div>
                     <p className="text-xs text-white/40 mt-1">
-                      Targeting: {q.target_member_name}&apos;s gap in {q.weak_concept}
+                      Targeting: {getQuestionTargetName(q)}&apos;s gap in {q.weak_concept}
                     </p>
                     {answers.length > 0 && (
                       <div className="mt-2 text-sm">
                         {answers.map((a, i) => (
-                          <p key={`${a.submitted_by}-${i}`} className="mb-1 text-white/70">
-                            <span className="font-medium text-white/90">{getMemberName(a.submitted_by)}:</span> {a.answer_text} ({Math.round(a.score * 100)}%)
-                          </p>
+                          <div key={`${a.submitted_by}-${i}`} className="mb-1 text-white/70">
+                            <span className="font-medium text-white/90">{getMemberName(a.submitted_by)}:</span>{' '}
+                            <BossMarkdown content={a.answer_text} className="inline-block align-top text-white/70" /> ({Math.round(a.score * 100)}%)
+                          </div>
                         ))}
                       </div>
                     )}
@@ -778,9 +854,9 @@ export default function PeerSessionPage() {
                     <QuestionTypeIcon type={currentQuestion.type} />
                     Q{session.current_question_index + 1} of {session.questions.length}
                   </span>
-                  <span className="text-xs bg-cyan-500/15 text-cyan-300 px-2.5 py-1 rounded-full">
-                    <Zap className="w-3 h-3 inline mr-1" />
-                    {currentQuestion.target_member_name}&apos;s turn
+                    <span className="text-xs bg-cyan-500/15 text-cyan-300 px-2.5 py-1 rounded-full">
+                      <Zap className="w-3 h-3 inline mr-1" />
+                    {getQuestionTargetName(currentQuestion)}&apos;s turn
                   </span>
                 </div>
                 <p className="text-xs text-white/40">
@@ -791,7 +867,10 @@ export default function PeerSessionPage() {
               <div className="p-5 space-y-4">
                 {/* Question stem */}
                 <div className={`${glassLight} p-4`}>
-                  <p className="text-sm text-white/90 whitespace-pre-wrap leading-relaxed">{currentQuestion.stem}</p>
+                  <BossMarkdown
+                    content={currentQuestion.stem}
+                    className="text-sm text-white/90 whitespace-pre-wrap leading-relaxed"
+                  />
                 </div>
 
                 {/* Answer area */}
@@ -832,7 +911,7 @@ export default function PeerSessionPage() {
                             }`}
                           >
                             <span className="font-semibold mr-2 text-cyan-400">{String.fromCharCode(65 + idx)}.</span>
-                            {opt}
+                            <BossMarkdown content={opt} className="inline-block align-top text-sm text-inherit" />
                           </button>
                         ))}
                       </div>
@@ -897,18 +976,19 @@ export default function PeerSessionPage() {
                         {Math.round((feedback?.score ?? existingAnswer?.score ?? 0) * 100)}%
                       </span>
                     </div>
-                    <p className="text-sm text-white/70">
-                      {feedback?.ai_feedback || existingAnswer?.ai_feedback}
-                    </p>
+                    <div className="text-sm text-white/70">
+                      <BossMarkdown content={feedback?.ai_feedback || existingAnswer?.ai_feedback || ''} />
+                    </div>
                     {(feedback?.hint || existingAnswer?.hint) && (
-                      <p className="text-sm text-amber-300/80 mt-2">
-                        Hint: {feedback?.hint || existingAnswer?.hint}
-                      </p>
+                      <div className="text-sm text-amber-300/80 mt-2">
+                        <span>Hint: </span>
+                        <BossMarkdown content={feedback?.hint || existingAnswer?.hint || ''} className="inline-block align-top text-amber-300/80" />
+                      </div>
                     )}
                     {feedback?.explanation && (
-                      <p className="text-sm text-white/50 mt-2">
-                        {feedback.explanation}
-                      </p>
+                      <div className="text-sm text-white/50 mt-2">
+                        <BossMarkdown content={feedback.explanation} className="text-white/50" />
+                      </div>
                     )}
                     {(feedback?.updated_mastery !== undefined || existingAnswer?.updated_mastery !== undefined) && (
                       <p className="text-xs text-white/40 mt-2">

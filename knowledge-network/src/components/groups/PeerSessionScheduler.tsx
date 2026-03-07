@@ -34,6 +34,26 @@ const panelClass =
 const fieldClass =
   'w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-400/25';
 
+const UID_LIKE_RE = /^[a-z0-9_-]{20,}$/i;
+
+function looksLikeUid(value: string): boolean {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  if (text.includes(' ')) return false;
+  return UID_LIKE_RE.test(text);
+}
+
+function formatSessionMemberName(
+  member: { student_id: string; name: string },
+  currentStudentId: string,
+  currentDisplayName: string,
+): string {
+  if (member.student_id === currentStudentId) return currentDisplayName;
+  const raw = String(member.name || '').trim();
+  if (!raw || raw === member.student_id || looksLikeUid(raw)) return 'Teammate';
+  return raw;
+}
+
 function toFriendlyStartError(err: unknown): string {
   const raw = err instanceof Error ? err.message : 'Failed to create session.';
   const trimmed = raw.replace(/^API\s+\d+:\s*/i, '').trim();
@@ -71,8 +91,9 @@ function toFriendlyStartError(err: unknown): string {
 
 export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = [] }: Props) {
   const router = useRouter();
-  const { getIdToken } = useAuth();
+  const { getIdToken, user } = useAuth();
   const studentId = useStudentId();
+  const displayName = user?.displayName || user?.email?.split('@')[0] || 'Player';
 
   const [activeSession, setActiveSession] = useState<SessionState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -169,7 +190,7 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
     setJoining(true);
     try {
       const token = await getIdToken();
-      await joinSession(activeSession.session_id, studentId, studentId, token);
+      await joinSession(activeSession.session_id, studentId, displayName, token);
       router.push(`/groups/${groupId}/session?id=${activeSession.session_id}`);
     } catch (err) {
       console.error('Failed to join session:', err);
@@ -191,7 +212,9 @@ export function PeerSessionScheduler({ groupId, memberProfiles = [], concepts = 
 
   if (activeSession && activeSession.status !== 'completed') {
     const isInSession = activeSession.members.some((m) => m.student_id === studentId);
-    const memberNames = activeSession.members.map((m) => m.name).join(', ');
+    const memberNames = activeSession.members
+      .map((m) => formatSessionMemberName(m, studentId, displayName))
+      .join(', ');
 
     return (
       <Card className={`${panelClass} mb-6 ring-1 ring-[#03b2e6]/35`}>

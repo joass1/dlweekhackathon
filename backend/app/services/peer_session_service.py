@@ -115,6 +115,54 @@ def _normalize_level(value: Any, default: int = 1) -> int:
     return level
 
 
+def _looks_like_student_id(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    if " " in text:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]{20,}", text))
+
+
+def _name_from_email(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text or "@" not in text:
+        return None
+    local = text.split("@", 1)[0].strip()
+    if not local:
+        return None
+    friendly = local.replace(".", " ").replace("_", " ").replace("-", " ").strip()
+    return friendly or local
+
+
+def _contains_latex_markup(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return bool(
+        re.search(
+            r"\$[^$]+\$|\\\(|\\\[|\\frac|\\sqrt|\\sum|\\int|\\theta|\\alpha|\\beta|\\gamma",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _latexify_math_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or _contains_latex_markup(text):
+        return text
+
+    # If the whole value is a compact expression, wrap directly.
+    if len(text) <= 96 and re.search(r"[=+\-*/^]|(?:\b(?:sin|cos|tan|log|ln|sqrt|pi)\b)", text, flags=re.IGNORECASE):
+        return f"${text}$"
+
+    # Otherwise wrap inline expression segments only.
+    expr_re = re.compile(r"(?<!\$)([A-Za-z0-9\)\]]+\s*(?:[=+\-*/^]\s*[A-Za-z0-9\(\[]+){1,})")
+    converted = expr_re.sub(lambda m: f"${m.group(1).strip()}$", text)
+    return converted
+
+
 def _is_placeholder_choice(value: Any) -> bool:
     text = str(value or "").strip()
     if not text:
@@ -179,6 +227,133 @@ class PeerSessionService:
         self.collection = "peer_sessions"
         self.knowledge_chunks_collection = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
         self.adaptive_engine = AdaptiveEngine()
+        self._display_name_cache: Dict[str, str] = {}
+
+    def _resolve_display_name(self, student_id: str) -> Optional[str]:
+        sid = str(student_id or "").strip()
+        if not sid:
+            return None
+        cached = self._display_name_cache.get(sid)
+        if cached:
+            return cached
+        if not self.db:
+            return None
+
+        candidate_fields = ("displayName", "name", "username", "full_name", "fullName", "nickname")
+
+        doc_sources = [
+            ("users", sid),
+            ("students", sid),
+        ]
+        for collection_name, doc_id in doc_sources:
+            try:
+                doc = self.db.collection(collection_name).document(doc_id).get()
+                if not doc.exists:
+                    continue
+                row = doc.to_dict() or {}
+            except Exception:
+                continue
+
+            for field in candidate_fields:
+                val = str(row.get(field) or "").strip()
+                if val and val != sid and not _looks_like_student_id(val):
+                    self._display_name_cache[sid] = val
+                    return val
+
+            email_guess = _name_from_email(row.get("email"))
+            if email_guess and not _looks_like_student_id(email_guess):
+                self._display_name_cache[sid] = email_guess
+                return email_guess
+
+        return None
+
+    def _clean_member_name(self, student_id: str, name: Any, fallback_label: str = "Teammate") -> str:
+        sid = str(student_id or "").strip()
+        raw = str(name or "").strip()
+        if raw and raw != sid and not _looks_like_student_id(raw):
+            return raw
+        resolved = self._resolve_display_name(sid)
+        if resolved and resolved != sid and not _looks_like_student_id(resolved):
+            return resolved
+        email_guess = _name_from_email(raw)
+        if email_guess and not _looks_like_student_id(email_guess):
+            return email_guess
+        return fallback_label
+
+    def _normalize_session_member_names(self, data: Dict[str, Any]) -> tuple[bool, Dict[str, str]]:
+        changed = False
+        name_by_id: Dict[str, str] = {}
+
+        members = data.get("members", []) or []
+        if isinstance(members, list):
+            next_members: List[Dict[str, Any]] = []
+            for idx, raw_member in enumerate(members, start=1):
+                if not isinstance(raw_member, dict):
+                    continue
+                sid = str(raw_member.get("student_id") or "").strip()
+                if not sid:
+                    continue
+                fallback_label = "Host" if sid == str(data.get("created_by") or "").strip() else f"Teammate {idx}"
+                cleaned_name = self._clean_member_name(sid, raw_member.get("name"), fallback_label=fallback_label)
+                next_member = dict(raw_member)
+                if str(next_member.get("name") or "") != cleaned_name:
+                    next_member["name"] = cleaned_name
+                    changed = True
+                name_by_id[sid] = cleaned_name
+                next_members.append(next_member)
+            if next_members != members:
+                data["members"] = next_members
+                changed = True
+
+        member_profiles = data.get("member_profiles", []) or []
+        if isinstance(member_profiles, list):
+            next_profiles: List[Dict[str, Any]] = []
+            for idx, raw_profile in enumerate(member_profiles, start=1):
+                if not isinstance(raw_profile, dict):
+                    continue
+                sid = str(raw_profile.get("student_id") or "").strip()
+                if not sid:
+                    continue
+                fallback_label = name_by_id.get(sid) or f"Teammate {idx}"
+                cleaned_name = name_by_id.get(sid) or self._clean_member_name(sid, raw_profile.get("name"), fallback_label=fallback_label)
+                if sid not in name_by_id:
+                    name_by_id[sid] = cleaned_name
+                next_profile = dict(raw_profile)
+                if str(next_profile.get("name") or "") != cleaned_name:
+                    next_profile["name"] = cleaned_name
+                    changed = True
+                next_profiles.append(next_profile)
+            if next_profiles != member_profiles:
+                data["member_profiles"] = next_profiles
+                changed = True
+
+        questions = data.get("questions", []) or []
+        if isinstance(questions, list):
+            next_questions: List[Dict[str, Any]] = []
+            questions_changed = False
+            for raw_q in questions:
+                if not isinstance(raw_q, dict):
+                    continue
+                q = dict(raw_q)
+                target_member = str(q.get("target_member") or "").strip()
+                if target_member:
+                    fallback_label = "Teammate"
+                    cleaned_name = name_by_id.get(target_member) or self._clean_member_name(
+                        target_member,
+                        q.get("target_member_name"),
+                        fallback_label=fallback_label,
+                    )
+                    if target_member not in name_by_id:
+                        name_by_id[target_member] = cleaned_name
+                    if str(q.get("target_member_name") or "") != cleaned_name:
+                        q["target_member_name"] = cleaned_name
+                        questions_changed = True
+                next_questions.append(q)
+            if questions_changed:
+                data["questions"] = next_questions
+                changed = True
+
+        return changed, name_by_id
 
     def _list_user_courses(self, user_id: str) -> List[Dict[str, str]]:
         if not self.db or not user_id:
@@ -597,6 +772,15 @@ class PeerSessionService:
                 row["correct_answer"] = explanation or f"A complete, context-grounded answer about {concept_id}."
                 changed = True
 
+        if row.get("type") == "math":
+            math_fields = ("stem", "correct_answer", "explanation")
+            for field in math_fields:
+                original = str(row.get(field) or "")
+                converted = _latexify_math_text(original)
+                if converted != original:
+                    row[field] = converted
+                    changed = True
+
         return row, changed
 
     @staticmethod
@@ -733,6 +917,8 @@ class PeerSessionService:
             "- Make each question answerable from provided context when available.\n"
             "- For mcq type, every option must be full answer text; never output placeholder options like A/B/C/D.\n"
             "- For mcq type, correct_answer must be the full answer text (not a letter label).\n"
+            "- For math type, format formulas/equations using LaTeX delimiters: inline `$...$`, display `$$...$$`.\n"
+            "- For math type, keep `correct_answer` and `explanation` in valid LaTeX where equations appear.\n"
             "- No markdown, no prose outside JSON."
         )
 
@@ -808,6 +994,11 @@ class PeerSessionService:
                 correct_answer = explanation or f"A complete, context-grounded answer about {concept_id}."
             if not correct_answer:
                 continue
+
+            if q_type == "math":
+                stem = _latexify_math_text(stem)
+                correct_answer = _latexify_math_text(correct_answer)
+                explanation = _latexify_math_text(explanation)
 
             normalized.append(
                 {
@@ -896,6 +1087,7 @@ class PeerSessionService:
             "\"mistake_type\": \"normal|careless|conceptual\""
             "}\n"
             "Use \"normal\" when correct. If wrong, choose careless only for obvious slip; otherwise conceptual."
+            " If question type is math, render equations in feedback/hint using LaTeX delimiters (`$...$` or `$$...$$`)."
         )
 
         try:
@@ -1369,6 +1561,7 @@ class PeerSessionService:
             if m["student_id"] == created_by:
                 creator_name = m.get("name", created_by)
                 break
+        creator_name = self._clean_member_name(created_by, creator_name, fallback_label="Host")
 
         now = _utc_now()
         total_expected_answers = max(1, max(2, len(normalized_profiles)) * max(1, len(questions)))
@@ -1409,6 +1602,7 @@ class PeerSessionService:
             "round_index": 1,
             "answers": [],
         }
+        self._normalize_session_member_names(session_doc)
 
         self.db.collection(self.collection).document(session_id).set(session_doc)
         return {"session_id": session_id, "status": "waiting"}
@@ -1431,12 +1625,13 @@ class PeerSessionService:
             return {"status": data.get("status", "waiting"), "already_joined": True}
 
         now = _utc_now()
-        members.append({"student_id": student_id, "name": name, "joined_at": now.isoformat()})
+        cleaned_name = self._clean_member_name(student_id, name)
+        members.append({"student_id": student_id, "name": cleaned_name, "joined_at": now.isoformat()})
         updates: Dict[str, Any] = {"members": members}
 
         member_profiles = self._build_member_profiles_from_session(data)
         if not any(p.get("student_id") == student_id for p in member_profiles):
-            member_profiles.append({"student_id": student_id, "name": name, "concept_profile": {}})
+            member_profiles.append({"student_id": student_id, "name": cleaned_name, "concept_profile": {}})
         updates["member_profiles"] = member_profiles
 
         if len(members) >= 2 and data.get("status") == "waiting":
@@ -1471,6 +1666,18 @@ class PeerSessionService:
             profiles = self._build_member_profiles_from_session(data)
             data["member_profiles"] = profiles
             ref.update({"member_profiles": profiles})
+
+        names_changed, _ = self._normalize_session_member_names(data)
+        if names_changed:
+            updates: Dict[str, Any] = {}
+            if "members" in data:
+                updates["members"] = data.get("members", [])
+            if "member_profiles" in data:
+                updates["member_profiles"] = data.get("member_profiles", [])
+            if "questions" in data:
+                updates["questions"] = data.get("questions", [])
+            if updates:
+                ref.update(updates)
 
         if not data.get("questions"):
             member_profiles = self._build_member_profiles_from_session(data)
@@ -1655,7 +1862,19 @@ class PeerSessionService:
                 .stream()
             )
             for doc in docs:
-                return doc.to_dict()
+                data = doc.to_dict() or {}
+                changed, _ = self._normalize_session_member_names(data)
+                if changed:
+                    updates: Dict[str, Any] = {}
+                    if "members" in data:
+                        updates["members"] = data.get("members", [])
+                    if "member_profiles" in data:
+                        updates["member_profiles"] = data.get("member_profiles", [])
+                    if "questions" in data:
+                        updates["questions"] = data.get("questions", [])
+                    if updates:
+                        self.db.collection(self.collection).document(doc.id).update(updates)
+                return data
         return None
 
     def submit_answer(
@@ -1889,6 +2108,18 @@ class PeerSessionService:
             return {"error": "Session not found"}
 
         data = doc.to_dict() or {}
+        names_changed, name_by_id = self._normalize_session_member_names(data)
+        if names_changed:
+            updates: Dict[str, Any] = {}
+            if "members" in data:
+                updates["members"] = data.get("members", [])
+            if "member_profiles" in data:
+                updates["member_profiles"] = data.get("member_profiles", [])
+            if "questions" in data:
+                updates["questions"] = data.get("questions", [])
+            if updates:
+                ref.update(updates)
+
         timeout_updates = self._apply_timeout_penalties(data, ref=ref)
         if timeout_updates:
             data.update(timeout_updates)
@@ -1918,9 +2149,21 @@ class PeerSessionService:
         current = max(0, min(int(data.get("current_question_index", 0)), len(questions) - 1))
         current_qid = str(questions[current].get("question_id"))
         answered_ids = {str(a.get("submitted_by")) for a in answers if a.get("question_id") == current_qid}
-        missing = [str(m.get("student_id")) for m in members if str(m.get("student_id")) not in answered_ids]
-        if missing:
-            return {"error": f"Waiting for answers from: {', '.join(missing)}", "missing_answers": missing}
+        missing_ids = [str(m.get("student_id")) for m in members if str(m.get("student_id")) not in answered_ids]
+        if missing_ids:
+            missing_names: List[str] = []
+            for idx, sid in enumerate(missing_ids, start=1):
+                cleaned = name_by_id.get(sid) or self._clean_member_name(
+                    sid,
+                    sid,
+                    fallback_label=f"Teammate {idx}",
+                )
+                missing_names.append(cleaned)
+            return {
+                "error": f"Waiting for answers from: {', '.join(missing_names)}",
+                "missing_answers": missing_ids,
+                "missing_answer_names": missing_names,
+            }
 
         next_idx = current + 1
         if next_idx < len(questions):

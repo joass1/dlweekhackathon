@@ -20,6 +20,15 @@ interface WebRTCVideoProps {
   members: { student_id: string; name: string }[];
 }
 
+const UID_LIKE_RE = /^[a-z0-9_-]{20,}$/i;
+
+function looksLikeUid(value: string): boolean {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  if (text.includes(' ')) return false;
+  return UID_LIKE_RE.test(text);
+}
+
 export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps) {
   const { getIdToken } = useAuth();
   const [room, setRoom] = useState<Room | null>(null);
@@ -147,7 +156,10 @@ export function WebRTCVideo({ sessionId, studentId, members }: WebRTCVideoProps)
 
   const getName = (sid: string) => {
     const member = members.find((m) => m.student_id === sid);
-    return member?.name || sid;
+    const raw = String(member?.name || '').trim();
+    if (raw && raw !== sid && !looksLikeUid(raw)) return raw;
+    if (sid === studentId) return 'You';
+    return 'Teammate';
   };
 
   if (connectionError) {
