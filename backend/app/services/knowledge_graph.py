@@ -204,7 +204,8 @@ class KnowledgeGraphEngine:
         KEY SPEC RULES:
         - Correct answer   → mastery goes up, reset decay timer
         - Wrong + careless  → badge added, mastery does NOT drop
-        - Wrong + conceptual → mastery drops, triggers recursive prerequisite tracing
+        - Wrong + conceptual → mastery drops (scaled by confidence), triggers recursive prerequisite tracing
+        - Status is always derived from the score — no forced overrides on wrong answers
 
         Returns the updated node, the affected dependent chain,
         and (for conceptual errors) the deepest weak prerequisite found.
@@ -244,7 +245,14 @@ class KnowledgeGraphEngine:
         else:
             # ── Conceptual mistake — mastery drops + recursive prereq trace ───
             prior = float(node.get("mastery_score", 0.0))
-            drop = 0.08 + 0.10 * prior
+            # Low confidence + wrong = bigger drop (you weren't sure and still got it wrong)
+            if confidence_1_to_5 is None:
+                confidence_factor = 1.0
+            else:
+                clamped_conf = max(1, min(5, int(confidence_1_to_5)))
+                # Confidence 1 ("guessing") → 1.5× drop; confidence 5 → 0.75× drop
+                confidence_factor = 1.5 - 0.75 * ((clamped_conf - 1) / 4.0)
+            drop = (0.08 + 0.10 * prior) * confidence_factor
             node["mastery_score"] = max(0.0, prior - drop)
             node["careless_badge"] = False  # clearly not careless
 
@@ -255,14 +263,9 @@ class KnowledgeGraphEngine:
                 root_gap = prerequisite_gaps[-1]  # deepest ancestor = root cause
 
         node["status"] = _compute_status(node["mastery_score"])
-        # Single-question-friendly status rules:
-        # - correct -> at least learning
-        # - wrong   -> weak
-        if is_correct:
-            if node["status"] in {"not_started", "weak"}:
-                node["status"] = "learning"
-        else:
-            node["status"] = "weak"
+        # Correct answer on a not_started concept → at least learning
+        if is_correct and node["status"] in {"not_started", "weak"}:
+            node["status"] = "learning"
 
         node["updated_at"] = now.isoformat()
         node["last_practice_at"] = now.isoformat()
