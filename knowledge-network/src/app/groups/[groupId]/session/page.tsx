@@ -225,6 +225,20 @@ function resolveBossCharacterId(session: SessionState | null): BossCharacterId |
   return LEVEL_TO_BOSS[level];
 }
 
+function humanizeMasteryStatus(status?: string | null): string {
+  if (status === 'mastered') return 'Mastered';
+  if (status === 'learning') return 'In progress';
+  if (status === 'weak') return 'Needs work';
+  if (status === 'not_started') return 'Not started';
+  return 'In progress';
+}
+
+function humanizeConceptId(value?: string | null): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.replace(/[-_]+/g, ' ');
+}
+
 // ── Glass card style ──────────────────────────────────────────────────────
 const glass = 'rounded-2xl border border-white/[0.08] bg-black/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]';
 const glassLight = 'rounded-2xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-xl';
@@ -688,6 +702,20 @@ export default function PeerSessionPage() {
     }
     return getMemberName(question.target_member);
   };
+  const getConceptLabel = (conceptId?: string | null) => {
+    const text = String(conceptId || '').trim();
+    if (!text) return '';
+    const matched = conceptOptions.find((option) => option.id === text);
+    if (matched?.title) {
+      return `${matched.title} (${matched.id})`;
+    }
+    return humanizeConceptId(text);
+  };
+
+  const currentFeedbackMasteryDelta = feedback?.mastery_delta ?? existingAnswer?.mastery_delta;
+  const currentFeedbackUpdatedMastery = feedback?.updated_mastery ?? existingAnswer?.updated_mastery;
+  const currentFeedbackMasteryStatus = feedback?.mastery_status ?? existingAnswer?.mastery_status;
+  const currentFeedbackConceptId = feedback?.concept_id ?? existingAnswer?.concept_id ?? currentQuestion?.concept_id ?? currentQuestion?.weak_concept;
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -739,6 +767,18 @@ export default function PeerSessionPage() {
       ? session.question_timeout_penalties.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
       : [];
     const incorrectAnswers = session.answers.filter((a) => !a.is_correct);
+    const myAnswers = session.answers.filter((a) => a.submitted_by === studentId);
+    const myTimeoutRows = timeoutRows.filter((row) => String(row.student_id || '') === studentId);
+    const myNetMasteryDelta =
+      myAnswers.reduce((sum, answer) => sum + Number(answer.mastery_delta ?? 0), 0) +
+      myTimeoutRows.reduce((sum, row) => sum + Number(row.mastery_delta ?? 0), 0);
+    const myLatestMasteryEvent = [...myAnswers]
+      .filter((answer) => typeof answer.updated_mastery === 'number')
+      .sort((a, b) => {
+        const aTime = new Date((a as { submitted_at?: string }).submitted_at || 0).getTime();
+        const bTime = new Date((b as { submitted_at?: string }).submitted_at || 0).getTime();
+        return bTime - aTime;
+      })[0];
 
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 overflow-auto">
@@ -765,7 +805,7 @@ export default function PeerSessionPage() {
               </div>
             </div>
 
-            <div className={`grid gap-4 ${hasPartyHealth ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
+            <div className={`grid gap-4 ${hasPartyHealth ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-4'}`}>
               {hasPartyHealth && (
                 <div className={`${glassLight} p-4 text-center`}>
                   <p className="text-2xl font-bold text-rose-300">{Math.round(partyCurrent)} / {Math.round(partyMax)}</p>
@@ -784,7 +824,41 @@ export default function PeerSessionPage() {
                 <p className="text-2xl font-bold text-white">{formatTime(elapsed)}</p>
                 <p className="text-xs text-white/50">Duration</p>
               </div>
+              <div className={`${glassLight} p-4 text-center`}>
+                <p className={`text-2xl font-bold ${myNetMasteryDelta >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                  {myNetMasteryDelta >= 0 ? '+' : ''}{(myNetMasteryDelta * 100).toFixed(1)}
+                </p>
+                <p className="text-xs text-white/50">Your Mastery Shift</p>
+              </div>
             </div>
+
+            {(myAnswers.length > 0 || myTimeoutRows.length > 0) && (
+              <div className={`${glassLight} p-4`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Your mastery changes</p>
+                    <p className="text-xs text-white/50">
+                      Peer answers now apply smaller BKT updates, so one session cannot instantly master a topic.
+                    </p>
+                  </div>
+                  {typeof myLatestMasteryEvent?.updated_mastery === 'number' && (
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-cyan-300">
+                        {Math.round(myLatestMasteryEvent.updated_mastery * 100)}%
+                      </p>
+                      <p className="text-xs text-white/50">
+                        {humanizeMasteryStatus(myLatestMasteryEvent.mastery_status)}
+                      </p>
+                      {myLatestMasteryEvent.concept_id && (
+                        <p className="text-xs text-white/50">
+                          Node: {getConceptLabel(myLatestMasteryEvent.concept_id)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {isDefeat && (
               <div className="rounded-xl border border-red-500/25 bg-red-500/[0.08] p-4 space-y-3">
@@ -852,6 +926,13 @@ export default function PeerSessionPage() {
                           <div key={`${a.submitted_by}-${i}`} className="mb-1 text-white/70">
                             <span className="font-medium text-white/90">{getMemberName(a.submitted_by)}:</span>{' '}
                             <BossMarkdown content={a.answer_text} className="inline-block align-top text-white/70" /> ({Math.round(a.score * 100)}%)
+                            {typeof a.mastery_delta === 'number' && typeof a.updated_mastery === 'number' && (
+                              <span className={`ml-2 text-xs ${a.mastery_delta >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                mastery {a.mastery_delta >= 0 ? '+' : ''}{(a.mastery_delta * 100).toFixed(1)} pts
+                                {' '}{"->"} {Math.round(a.updated_mastery * 100)}%
+                                {a.concept_id ? ` on ${getConceptLabel(a.concept_id)}` : ''}
+                              </span>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1229,10 +1310,30 @@ export default function PeerSessionPage() {
                         <BossMarkdown content={feedback.explanation} className="text-white/50" />
                       </div>
                     )}
-                    {(feedback?.updated_mastery !== undefined || existingAnswer?.updated_mastery !== undefined) && (
-                      <p className="text-xs text-white/40 mt-2">
-                        Mastery: {Math.round((feedback?.updated_mastery ?? existingAnswer?.updated_mastery ?? 0) * 100)}% ({feedback?.mastery_status || existingAnswer?.mastery_status || 'learning'})
-                      </p>
+                    {(currentFeedbackMasteryDelta !== undefined || currentFeedbackUpdatedMastery !== undefined) && (
+                      <div
+                        className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+                          Number(currentFeedbackMasteryDelta ?? 0) >= 0
+                            ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+                            : 'border-rose-400/30 bg-rose-500/10 text-rose-100'
+                        }`}
+                      >
+                        {typeof currentFeedbackMasteryDelta === 'number' && (
+                          <p className="font-semibold">
+                            Mastery {currentFeedbackMasteryDelta >= 0 ? '+' : ''}{(currentFeedbackMasteryDelta * 100).toFixed(1)} pts
+                          </p>
+                        )}
+                        {typeof currentFeedbackUpdatedMastery === 'number' && (
+                          <p className="mt-1 text-white/80">
+                            Current mastery: {Math.round(currentFeedbackUpdatedMastery * 100)}% ({humanizeMasteryStatus(currentFeedbackMasteryStatus)})
+                          </p>
+                        )}
+                        {currentFeedbackConceptId && (
+                          <p className="mt-1 text-white/80">
+                            Updated node: {getConceptLabel(currentFeedbackConceptId)}
+                          </p>
+                        )}
+                      </div>
                     )}
                     {(feedback?.damage_dealt !== undefined || existingAnswer?.damage_dealt !== undefined) && (
                       <p className="text-xs text-red-400 mt-1 flex items-center gap-1">

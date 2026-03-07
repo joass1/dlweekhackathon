@@ -104,6 +104,9 @@ class CheckpointSubmitRequest(BaseModel):
 class CheckpointSubmitResponse(BaseModel):
     is_correct: Optional[bool]
     mastery_delta: float
+    updated_mastery: Optional[float] = None
+    mastery_status: Optional[str] = None
+    concept_id: Optional[str] = None
 
 
 class PrerequisiteChain(BaseModel):

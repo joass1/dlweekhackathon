@@ -72,18 +72,19 @@ function preprocessCitations(content: string): string {
 
 function expandCitations(
   text: string,
-  onCitationClick?: (n: number) => void
+  onCitationClick?: (n: number) => void,
+  keyPrefix = 'cite'
 ): React.ReactNode[] {
   if (!text.includes('%%CITE:')) return [text];
   const parts = text.split(/(%%CITE:\d+%%)/);
   return parts.map((part, i) => {
     const match = part.match(/^%%CITE:(\d+)%%$/);
-    if (!match) return <React.Fragment key={i}>{part}</React.Fragment>;
+    if (!match) return <React.Fragment key={`${keyPrefix}-text-${i}`}>{part}</React.Fragment>;
 
     const n = Number(match[1]);
     return (
       <sup
-        key={i}
+        key={`${keyPrefix}-citation-${i}-${n}`}
         className="mx-0.5 inline-flex h-5 w-5 cursor-pointer select-none items-center justify-center rounded-full bg-[#03b2e6] text-[0.65em] font-bold text-white transition-colors hover:bg-[#0291be]"
         onClick={() => onCitationClick?.(n)}
         title={`Jump to source ${n}`}
@@ -96,14 +97,15 @@ function expandCitations(
 
 function injectCitations(
   node: React.ReactNode,
-  onCitationClick?: (n: number) => void
+  onCitationClick?: (n: number) => void,
+  keyPrefix = 'root'
 ): React.ReactNode {
   if (typeof node === 'string') {
-    return expandCitations(node, onCitationClick);
+    return expandCitations(node, onCitationClick, keyPrefix);
   }
 
   if (Array.isArray(node)) {
-    return node.flatMap((child) => injectCitations(child, onCitationClick));
+    return node.flatMap((child, index) => injectCitations(child, onCitationClick, `${keyPrefix}-${index}`));
   }
 
   if (!React.isValidElement(node)) {
@@ -126,7 +128,12 @@ function injectCitations(
     return node;
   }
 
-  return React.cloneElement(node, undefined, injectCitations(props.children, onCitationClick));
+  const elementKey = node.key != null ? String(node.key) : 'node';
+  return React.cloneElement(
+    node,
+    undefined,
+    injectCitations(props.children, onCitationClick, `${keyPrefix}-${elementKey}`)
+  );
 }
 
 function textRenderer(

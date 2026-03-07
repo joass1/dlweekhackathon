@@ -41,6 +41,7 @@ export interface SubmittedAnswer {
   boss_attacked?: boolean | null;
   party_damage_taken?: number | null;
   attack_reason?: 'weak_answer' | 'timeout' | null;
+  mastery_delta?: number | null;
   updated_mastery?: number | null;
   mastery_status?: string | null;
 }
@@ -105,6 +106,7 @@ export interface SubmitAnswerResponse {
   attack_reason?: 'weak_answer' | 'timeout' | null;
   boss_attack_count?: number;
   already_submitted?: boolean;
+  mastery_delta?: number | null;
   updated_mastery?: number | null;
   mastery_status?: string | null;
 }

@@ -9,6 +9,7 @@ import { useStudentId } from '@/hooks/useStudentId';
 
 type ReviewItem = {
   question_id: string;
+  concept?: string | null;
   stem: string;
   selected_answer: string;
   correct_answer: string;
@@ -16,9 +17,21 @@ type ReviewItem = {
   confidence_1_to_5: number;
   mistake_type?: string;
   rationale?: string;
+  mastery_delta?: number | null;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
+  updated_node_label?: string | null;
 };
 
 const glassCardClass = 'rounded-2xl border border-white/20 bg-slate-900/45 backdrop-blur-xl shadow-[0_24px_60px_-24px_rgba(2,6,23,0.85)]';
+
+function humanizeMasteryStatus(status?: string | null): string | null {
+  if (status === 'mastered') return 'Mastered';
+  if (status === 'learning') return 'In progress';
+  if (status === 'weak') return 'Needs work';
+  if (status === 'not_started') return 'Not started';
+  return null;
+}
 
 export default function AssessmentResultsPage() {
   const router = useRouter();
@@ -33,6 +46,7 @@ export default function AssessmentResultsPage() {
     score: number;
     blind_spot_found_count: number;
     blind_spot_resolved_count: number;
+    net_mastery_delta: number;
     review: ReviewItem[];
   } | null>(null);
   const [selfAwareness, setSelfAwareness] = useState<number | null>(null);
@@ -49,6 +63,7 @@ export default function AssessmentResultsPage() {
         if (cancelled) return;
         const review: ReviewItem[] = (run.questions || []).map((q) => ({
           question_id: q.question_id,
+          concept: q.concept || null,
           stem: q.stem || '',
           selected_answer: q.selected_answer || '-',
           correct_answer: q.correct_answer || '-',
@@ -56,11 +71,20 @@ export default function AssessmentResultsPage() {
           confidence_1_to_5: q.confidence_1_to_5 || 3,
           mistake_type: q.mistake_type,
           rationale: q.rationale,
+          mastery_delta: typeof q.mastery_delta === 'number' ? q.mastery_delta : null,
+          updated_mastery: typeof q.updated_mastery === 'number' ? q.updated_mastery : null,
+          mastery_status: typeof q.mastery_status === 'string' ? q.mastery_status : null,
+          updated_node_label: typeof q.updated_node_label === 'string'
+            ? q.updated_node_label
+            : typeof q.concept === 'string'
+              ? q.concept
+              : null,
         }));
         setSummary({
           score: run.score || 0,
           blind_spot_found_count: run.blind_spot_found_count || 0,
           blind_spot_resolved_count: run.blind_spot_resolved_count || 0,
+          net_mastery_delta: review.reduce((sum, item) => sum + (typeof item.mastery_delta === 'number' ? item.mastery_delta : 0), 0),
           review,
         });
         getSelfAwarenessScore(studentId, token)
@@ -91,14 +115,18 @@ export default function AssessmentResultsPage() {
       const confidenceMap = parsed?.confidenceRatings || {};
       const evaluationById = new Map<string, any>((parsed?.evaluation?.per_question || []).map((p: any) => [String(p.question_id), p]));
       const classificationById = new Map<string, any>((parsed?.classification?.classifications || []).map((c: any) => [String(c.question_id), c]));
+      const actionById = new Map<string, any>((parsed?.classification?.integration_actions || []).map((a: any) => [String(a.question_id), a]));
 
       const review: ReviewItem[] = questions.map((q: any) => {
         const selectedIndex = answerMap?.[q.question_id];
         const selected_answer = typeof selectedIndex === 'number' && Array.isArray(q.options) ? q.options[selectedIndex] : '-';
         const evalResult = evaluationById.get(q.question_id);
         const cls = classificationById.get(q.question_id);
+        const action = actionById.get(q.question_id);
+        const kgUpdate = action?.kg_update;
         return {
           question_id: q.question_id,
+          concept: q.concept || action?.concept || kgUpdate?.concept_id || null,
           stem: q.stem || '',
           selected_answer,
           correct_answer: evalResult?.correct_answer || '-',
@@ -106,6 +134,18 @@ export default function AssessmentResultsPage() {
           confidence_1_to_5: Number(confidenceMap?.[q.question_id] || 3),
           mistake_type: cls?.mistake_type,
           rationale: cls?.rationale,
+          mastery_delta: typeof kgUpdate?.delta_mastery === 'number' ? kgUpdate.delta_mastery : null,
+          updated_mastery: typeof kgUpdate?.updated_mastery === 'number' ? kgUpdate.updated_mastery : null,
+          mastery_status: typeof kgUpdate?.node?.status === 'string' ? kgUpdate.node.status : null,
+          updated_node_label: typeof kgUpdate?.node?.title === 'string'
+            ? kgUpdate.node.title
+            : typeof kgUpdate?.concept_id === 'string'
+              ? kgUpdate.concept_id
+              : typeof q.concept === 'string'
+                ? q.concept
+                : typeof action?.concept === 'string'
+                  ? action.concept
+                  : null,
         };
       });
 
@@ -113,6 +153,7 @@ export default function AssessmentResultsPage() {
         score: Number(parsed?.evaluation?.score || 0),
         blind_spot_found_count: Number(parsed?.classification?.blind_spot_found_count || 0),
         blind_spot_resolved_count: Number(parsed?.classification?.blind_spot_resolved_count || 0),
+        net_mastery_delta: review.reduce((sum, item) => sum + (typeof item.mastery_delta === 'number' ? item.mastery_delta : 0), 0),
         review,
       });
 
@@ -148,7 +189,7 @@ export default function AssessmentResultsPage() {
           <p className="text-white/70">{(subjectId || '').replace(/-/g, ' ')}</p>
         </div>
 
-        <div className="grid md:grid-cols-4 gap-4 mb-8">
+        <div className="grid md:grid-cols-5 gap-4 mb-8">
           <div className={`${glassCardClass} p-4`}>
             <p className="text-xs text-white/60">Score</p>
             <p className="text-2xl font-semibold text-white">{Math.round(summary?.score ?? 0)}%</p>
@@ -164,6 +205,13 @@ export default function AssessmentResultsPage() {
           <div className={`${glassCardClass} p-4`}>
             <p className="text-xs text-white/60">Self-Awareness</p>
             <p className="text-2xl font-semibold text-white">{selfAwareness !== null ? `${Math.round(selfAwareness * 100)}%` : '-'}</p>
+          </div>
+          <div className={`${glassCardClass} p-4`}>
+            <p className="text-xs text-white/60">Net Mastery Shift</p>
+            <p className={`text-2xl font-semibold ${(summary?.net_mastery_delta ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {(summary?.net_mastery_delta ?? 0) >= 0 ? '+' : ''}
+              {((summary?.net_mastery_delta ?? 0) * 100).toFixed(1)} pts
+            </p>
           </div>
         </div>
 
@@ -206,6 +254,28 @@ export default function AssessmentResultsPage() {
                       </span>
                     </p>
                   </div>
+                  {typeof item.mastery_delta === 'number' && typeof item.updated_mastery === 'number' ? (
+                    <div
+                      className={`mt-3 rounded-xl border px-3 py-2 text-sm ${
+                        item.mastery_delta >= 0
+                          ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+                          : 'border-rose-400/30 bg-rose-500/10 text-rose-100'
+                      }`}
+                    >
+                      <p className="font-medium">
+                        Mastery {item.mastery_delta >= 0 ? '+' : ''}{(item.mastery_delta * 100).toFixed(1)} pts
+                      </p>
+                      <p className="mt-1 text-xs text-white/75">
+                        Current mastery: {(item.updated_mastery * 100).toFixed(1)}%
+                        {humanizeMasteryStatus(item.mastery_status) ? ` (${humanizeMasteryStatus(item.mastery_status)})` : ''}
+                      </p>
+                      {item.updated_node_label ? (
+                        <p className="mt-1 text-xs text-white/75">
+                          Updated node: {item.updated_node_label}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {!item.is_correct && item.rationale ? <p className="mt-2 text-sm text-white/60">{item.rationale}</p> : null}
                 </div>
               ))}

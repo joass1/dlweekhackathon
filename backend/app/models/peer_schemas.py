@@ -47,6 +47,7 @@ class SubmittedAnswer(BaseModel):
     boss_attacked: bool = False
     party_damage_taken: float = 0.0
     attack_reason: Optional[Literal["weak_answer", "timeout"]] = None
+    mastery_delta: Optional[float] = None
     updated_mastery: Optional[float] = None
     mastery_status: Optional[str] = None
 
@@ -138,6 +139,7 @@ class SubmitAnswerResponse(BaseModel):
     attack_reason: Optional[Literal["weak_answer", "timeout"]] = None
     boss_attack_count: int = 0
     already_submitted: bool = False
+    mastery_delta: Optional[float] = None
     updated_mastery: Optional[float] = None
     mastery_status: Optional[str] = None
 

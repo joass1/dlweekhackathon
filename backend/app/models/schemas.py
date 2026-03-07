@@ -112,3 +112,7 @@ class MicroCheckpointSubmitResponse(BaseModel):
     question_id: str
     is_correct: bool
     next_action: Literal["resolved", "needs_intervention"]
+    mastery_delta: Optional[float] = None
+    updated_mastery: Optional[float] = None
+    mastery_status: Optional[str] = None
+    concept_id: Optional[str] = None

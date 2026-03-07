@@ -109,9 +109,9 @@ def _parse_dt(value: Any, default: Optional[datetime] = None) -> datetime:
 
 
 def _status_from_mastery(mastery: float) -> str:
-    if mastery >= 0.8:
+    if mastery >= 0.85:
         return "mastered"
-    if mastery >= 0.5:
+    if mastery >= 0.6:
         return "learning"
     if mastery > 0:
         return "weak"
@@ -1737,6 +1737,7 @@ class PeerSessionService:
                     "concept_id": str(mastery_results[sid].get("concept_id") or concept_to_update),
                     "mistake_type": "conceptual",
                     "reason": "timeout",
+                    "mastery_delta": mastery_results[sid].get("mastery_delta"),
                     "updated_mastery": mastery_results[sid].get("updated_mastery"),
                     "mastery_status": mastery_results[sid].get("mastery_status"),
                     "applied_at": now_iso,
@@ -1943,10 +1944,36 @@ class PeerSessionService:
                 "correct_count": state.correct,
                 "careless_count": state.careless_count,
                 "careless_badge": (mistake_type == "careless" and not is_correct),
+                "decay_rate": state.decay_rate,
+                "last_practice_at": _utc_now().isoformat(),
                 "updated_at": _utc_now().isoformat(),
             },
             merge=True,
         )
+
+    def _calibrate_mastery_update(
+        self,
+        *,
+        prior_after_decay: float,
+        raw_updated: float,
+        is_correct: bool,
+        mistake_type: str,
+    ) -> float:
+        normalized_mistake = str(mistake_type or "normal").strip().lower()
+        base_weight = 0.24
+        max_gain = 0.035
+        max_drop = 0.045
+
+        if normalized_mistake == "careless" and not is_correct:
+            base_weight = 0.18
+            max_drop = 0.02
+        elif not is_correct:
+            base_weight = 0.26
+
+        target_mastery = prior_after_decay + (raw_updated - prior_after_decay) * base_weight
+        delta = target_mastery - prior_after_decay
+        delta = max(-max_drop, min(max_gain, delta))
+        return _clamp(prior_after_decay + delta)
 
     def _update_student_mastery(
         self,
@@ -1965,12 +1992,24 @@ class PeerSessionService:
             careless_penalty=0.02,
         )
         updated_state: ConceptState = bkt_result["state"]  # type: ignore[assignment]
-        self._save_student_concept_state(student_id, updated_state)
-        self._sync_user_kg_node(student_id, concept_id, updated_state, mistake_type, is_correct)
+        prior_after_decay = float(bkt_result.get("mastery_after_decay", state.mastery) or state.mastery)
+        raw_updated = float(bkt_result.get("updated_mastery", updated_state.mastery) or updated_state.mastery)
+        calibrated_mastery = self._calibrate_mastery_update(
+            prior_after_decay=prior_after_decay,
+            raw_updated=raw_updated,
+            is_correct=is_correct,
+            mistake_type=mistake_type,
+        )
+        calibrated_state = ConceptState(**updated_state.__dict__).normalized()
+        calibrated_state.mastery = calibrated_mastery
+        self._save_student_concept_state(student_id, calibrated_state)
+        self._sync_user_kg_node(student_id, concept_id, calibrated_state, mistake_type, is_correct)
         return {
             "concept_id": concept_id,
-            "updated_mastery": round(updated_state.mastery, 6),
-            "mastery_status": bkt_result.get("status", "learning"),
+            "prior_mastery": round(prior_after_decay, 6),
+            "updated_mastery": round(calibrated_state.mastery, 6),
+            "mastery_delta": round(calibrated_state.mastery - prior_after_decay, 6),
+            "mastery_status": _status_from_mastery(calibrated_state.mastery),
             "mistake_type": mistake_type,
         }
 
@@ -2530,6 +2569,7 @@ class PeerSessionService:
                 "attack_reason": existing_answer.get("attack_reason"),
                 "boss_attack_count": int(data.get("boss_attack_count", 0) or 0),
                 "already_submitted": True,
+                "mastery_delta": existing_answer.get("mastery_delta"),
                 "updated_mastery": existing_answer.get("updated_mastery"),
                 "mastery_status": existing_answer.get("mastery_status"),
             }
@@ -2626,6 +2666,7 @@ class PeerSessionService:
             "boss_attacked": boss_attacked,
             "party_damage_taken": party_damage_taken,
             "attack_reason": attack_reason,
+            "mastery_delta": mastery_update.get("mastery_delta"),
             "updated_mastery": mastery_update.get("updated_mastery"),
             "mastery_status": mastery_update.get("mastery_status"),
             "submitted_at": _utc_now().isoformat(),
@@ -2681,6 +2722,7 @@ class PeerSessionService:
             "attack_reason": attack_reason,
             "boss_attack_count": int(data.get("boss_attack_count", 0) or 0),
             "already_submitted": False,
+            "mastery_delta": mastery_update.get("mastery_delta"),
             "updated_mastery": mastery_update.get("updated_mastery"),
             "mastery_status": mastery_update.get("mastery_status"),
         }

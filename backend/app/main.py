@@ -158,6 +158,7 @@ _comprehensive_quiz_unlocks: Dict[str, datetime] = {}
 _comprehensive_quiz_tickets: Dict[str, str] = {}
 _comprehensive_quiz_ticket_concepts: Dict[str, List[str]] = {}
 _comprehensive_quiz_ticket_context: Dict[str, Dict[str, Optional[str]]] = {}
+_local_concept_states: Dict[str, Dict[str, ConceptState]] = {}
 COMPREHENSIVE_QUIZ_UNLOCK_MINUTES = 15
 
 
@@ -480,6 +481,201 @@ def _resolve_user_concept_id(raw_concept: str, nodes: List[dict]) -> Optional[st
             return node_id
     return None
 
+
+def _get_existing_checkpoint_concepts(
+    student_id: str,
+    topic_id: str,
+    limit: int = 12,
+) -> List[Dict[str, str]]:
+    try:
+        user_kg_engine = _get_user_kg_engine(student_id)
+        nodes = user_kg_engine.get_graph_data().get("nodes", [])
+    except Exception:
+        return []
+
+    topic_lookup = _normalize_lookup(topic_id or "")
+    exact_resolved = _resolve_user_concept_id(topic_id, nodes)
+    matches: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_node(node: dict) -> None:
+        node_id = str(node.get("id") or "").strip()
+        title = str(node.get("title") or node_id).strip() or node_id
+        if not node_id or node_id in seen:
+            return
+        seen.add(node_id)
+        matches.append({"id": node_id, "title": title})
+
+    if exact_resolved:
+        exact_node = next((node for node in nodes if str(node.get("id") or "").strip() == exact_resolved), None)
+        if exact_node:
+            add_node(exact_node)
+
+    for node in nodes:
+        node_id = str(node.get("id") or "").strip()
+        title = str(node.get("title") or "").strip()
+        topic_ids = node.get("topicIds") or node.get("topic_ids") or []
+        normalized_topic_ids = {_normalize_lookup(str(value)) for value in topic_ids if str(value).strip()}
+        belongs_to_topic = False
+        if topic_lookup:
+            belongs_to_topic = (
+                _normalize_lookup(node_id) == topic_lookup
+                or _normalize_lookup(title) == topic_lookup
+                or topic_lookup in normalized_topic_ids
+            )
+        if belongs_to_topic:
+            add_node(node)
+        if len(matches) >= limit:
+            break
+
+    return matches[:limit]
+
+
+def _clamp_float(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def _parse_state_datetime(value: Any, default: Optional[datetime] = None) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+    return default or datetime.now(timezone.utc)
+
+
+def _seed_bkt_state_from_kg(student_id: str, concept_id: str) -> ConceptState:
+    seeded = ConceptState(concept_id=concept_id).normalized()
+    try:
+        user_kg_engine = _get_user_kg_engine(student_id)
+        node = next(
+            (
+                item
+                for item in user_kg_engine.get_graph_data().get("nodes", [])
+                if str(item.get("id", "")).strip() == concept_id
+            ),
+            None,
+        )
+        if not node:
+            return seeded
+        seeded.mastery = _clamp_float(float(node.get("mastery", 0.0) or 0.0) / 100.0)
+        seeded.attempts = int(node.get("attemptCount", 0) or 0)
+        seeded.correct = int(node.get("correctCount", 0) or 0)
+        seeded.careless_count = int(node.get("carelessCount", 0) or 0)
+        seeded.last_updated = _parse_state_datetime(
+            node.get("lastPracticeAt") or node.get("updatedAt"),
+            seeded.last_updated,
+        )
+        return seeded.normalized()
+    except Exception:
+        return seeded
+
+
+def _load_student_concept_state(student_id: str, concept_id: str) -> ConceptState:
+    seeded = _seed_bkt_state_from_kg(student_id, concept_id)
+    if concept_state_store is not None:
+        data = concept_state_store.get_state(student_id, concept_id)
+        if data:
+            return ConceptState(
+                concept_id=concept_id,
+                mastery=float(data.get("mastery", seeded.mastery)),
+                p_learn=float(data.get("p_learn", seeded.p_learn)),
+                p_guess=float(data.get("p_guess", seeded.p_guess)),
+                p_slip=float(data.get("p_slip", seeded.p_slip)),
+                decay_rate=float(data.get("decay_rate", seeded.decay_rate)),
+                last_updated=_parse_state_datetime(data.get("last_updated"), seeded.last_updated),
+                attempts=int(data.get("attempts", seeded.attempts) or 0),
+                correct=int(data.get("correct", seeded.correct) or 0),
+                careless_count=int(data.get("careless_count", seeded.careless_count) or 0),
+            ).normalized()
+        return seeded
+
+    cached = _local_concept_states.setdefault(student_id, {}).get(concept_id)
+    if cached is not None:
+        return ConceptState(**cached.__dict__).normalized()
+    _local_concept_states.setdefault(student_id, {})[concept_id] = ConceptState(**seeded.__dict__).normalized()
+    return seeded
+
+
+def _save_student_concept_state(student_id: str, state: ConceptState) -> None:
+    normalized = ConceptState(**state.__dict__).normalized()
+    if concept_state_store is not None:
+        concept_state_store.save_state(
+            student_id,
+            normalized.concept_id,
+            {
+                "concept_id": normalized.concept_id,
+                "mastery": normalized.mastery,
+                "p_learn": normalized.p_learn,
+                "p_guess": normalized.p_guess,
+                "p_slip": normalized.p_slip,
+                "decay_rate": normalized.decay_rate,
+                "last_updated": normalized.last_updated,
+                "attempts": normalized.attempts,
+                "correct": normalized.correct,
+                "careless_count": normalized.careless_count,
+            },
+        )
+        return
+    _local_concept_states.setdefault(student_id, {})[normalized.concept_id] = normalized
+
+
+def _calibrate_bkt_state(
+    *,
+    bkt_result: Dict[str, Any],
+    updated_state: ConceptState,
+    is_correct: bool,
+    mistake_type: Optional[str],
+    confidence_1_to_5: Optional[int],
+    update_origin: str,
+) -> ConceptState:
+    prior_after_decay = float(bkt_result.get("mastery_after_decay", updated_state.mastery) or updated_state.mastery)
+    raw_updated = float(bkt_result.get("updated_mastery", updated_state.mastery) or updated_state.mastery)
+    origin = (update_origin or "assessment").strip().lower()
+
+    base_weight = {
+        "assessment": 0.42,
+        "assessment_checkpoint": 0.3,
+        "tutor_checkpoint": 0.22,
+    }.get(origin, 0.5)
+    max_gain = {
+        "assessment": 0.08,
+        "assessment_checkpoint": 0.05,
+        "tutor_checkpoint": 0.03,
+    }.get(origin, 0.12)
+    max_drop = {
+        "assessment": 0.09,
+        "assessment_checkpoint": 0.06,
+        "tutor_checkpoint": 0.04,
+    }.get(origin, 0.1)
+
+    if confidence_1_to_5 is None:
+        confidence_weight = 1.0
+    else:
+        clamped_conf = max(1, min(5, int(confidence_1_to_5)))
+        confidence_norm = (clamped_conf - 1) / 4.0
+        if is_correct:
+            confidence_weight = 0.75 + 0.25 * confidence_norm
+        elif (mistake_type or "").strip().lower() == "careless":
+            confidence_weight = 0.7 + 0.15 * confidence_norm
+        else:
+            confidence_weight = 0.8 + 0.2 * confidence_norm
+
+    target_mastery = prior_after_decay + (raw_updated - prior_after_decay) * base_weight * confidence_weight
+    delta = target_mastery - prior_after_decay
+    delta = max(-max_drop, min(max_gain, delta))
+
+    calibrated = ConceptState(**updated_state.__dict__).normalized()
+    calibrated.mastery = _clamp_float(prior_after_decay + delta)
+    return calibrated.normalized()
+
 def _apply_user_kg_update(
     student_id: str,
     concept: str,
@@ -490,6 +686,7 @@ def _apply_user_kg_update(
     classification_rationale: Optional[str] = None,
     classification_source: Optional[str] = None,
     classification_model: Optional[str] = None,
+    update_origin: str = "assessment",
 ) -> Optional[dict]:
     try:
         user_kg_engine = _get_user_kg_engine(student_id)
@@ -497,16 +694,37 @@ def _apply_user_kg_update(
         concept_id = _resolve_user_concept_id(concept, nodes)
         if not concept_id:
             return None
-        result = user_kg_engine.update_mastery(
-            concept_id=concept_id,
+        current_state = _load_student_concept_state(student_id, concept_id)
+        interaction_time = datetime.now(timezone.utc)
+        bkt_result = adaptive_engine.update_bkt(
+            state=current_state,
             is_correct=is_correct,
-            is_careless=(mistake_type == "careless"),
+            interaction_time=interaction_time,
+            mistake_type="careless" if (mistake_type or "").strip().lower() == "careless" else "normal",
+            careless_penalty=0.02,
+        )
+        updated_state: ConceptState = bkt_result["state"]  # type: ignore[assignment]
+        calibrated_state = _calibrate_bkt_state(
+            bkt_result=bkt_result,
+            updated_state=updated_state,
+            is_correct=is_correct,
+            mistake_type=mistake_type,
             confidence_1_to_5=confidence_1_to_5,
+            update_origin=update_origin,
+        )
+        _save_student_concept_state(student_id, calibrated_state)
+        result = user_kg_engine.sync_bkt_state(
+            concept_id=concept_id,
+            state=calibrated_state,
+            is_correct=is_correct,
+            mistake_type=mistake_type,
+            missing_concept=missing_concept,
             classification_source=classification_source,
             classification_model=classification_model,
-            missing_concept=missing_concept,
             classification_rationale=classification_rationale,
+            classified_at=interaction_time.isoformat(),
         )
+        prior_after_decay = float(bkt_result.get("mastery_after_decay", current_state.mastery) or current_state.mastery)
         return {
             "concept_id": concept_id,
             "is_correct": is_correct,
@@ -515,8 +733,14 @@ def _apply_user_kg_update(
             "missing_concept": missing_concept,
             "classification_source": classification_source,
             "classification_model": classification_model,
+            "mastery_algorithm": "bkt",
+            "prior_mastery": round(prior_after_decay, 6),
+            "updated_mastery": round(calibrated_state.mastery, 6),
+            "delta_mastery": round(calibrated_state.mastery - prior_after_decay, 6),
             "status": "updated",
             "node": result.get("node"),
+            "prerequisite_gaps": result.get("prerequisite_gaps"),
+            "root_gap": result.get("root_gap"),
         }
     except Exception as e:
         return {
@@ -527,6 +751,7 @@ def _apply_user_kg_update(
             "missing_concept": missing_concept,
             "classification_source": classification_source,
             "classification_model": classification_model,
+            "mastery_algorithm": "bkt",
             "status": "failed",
             "error": str(e),
         }
@@ -1675,6 +1900,7 @@ async def classify_mistake(request: QuizSubmitRequest, student_id: str = Depends
                     classification_rationale=cls.rationale if cls is not None else None,
                     classification_source=cls.classification_source if cls is not None else None,
                     classification_model=cls.classification_model if cls is not None else None,
+                    update_origin="assessment",
                 )
                 if not attempt_update:
                     continue
@@ -1727,14 +1953,25 @@ async def submit_micro_checkpoint(request: MicroCheckpointSubmitRequest, student
             request.selected_answer,
             request.confidence_1_to_5,
         )
-        _apply_user_kg_update(
+        kg_update = _apply_user_kg_update(
             student_id=student_id,
             concept=request.question_id.split("checkpoint-", 1)[-1].rsplit("-", 1)[0] if "checkpoint-" in request.question_id else request.question_id,
             is_correct=response.is_correct,
             mistake_type=None if response.is_correct else "conceptual",
             confidence_1_to_5=request.confidence_1_to_5,
+            update_origin="assessment_checkpoint",
         )
-        return response
+        if not kg_update or str(kg_update.get("status")) != "updated":
+            return response
+        return MicroCheckpointSubmitResponse(
+            question_id=response.question_id,
+            is_correct=response.is_correct,
+            next_action=response.next_action,
+            mastery_delta=float(kg_update.get("delta_mastery", 0.0)),
+            updated_mastery=float(kg_update.get("updated_mastery", 0.0)),
+            mastery_status=str((kg_update.get("node") or {}).get("status") or ""),
+            concept_id=str(kg_update.get("concept_id") or ""),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2152,8 +2389,15 @@ async def recommend_next_action_endpoint(
 @app.post("/api/tutor/checkpoint")
 async def checkpoint_generate_endpoint(request: CheckpointRequest, student_id: str = Depends(get_student_id)):
     try:
+        allowed_concepts = _get_existing_checkpoint_concepts(student_id, request.topic_id)
+        if not allowed_concepts:
+            raise HTTPException(status_code=404, detail="No existing knowledge graph nodes available for this topic")
         return tutor_service.generate_checkpoint(
-            request.topic_id, request.session_messages, request.already_tested, student_id
+            request.topic_id,
+            request.session_messages,
+            request.already_tested,
+            student_id,
+            allowed_concepts,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2162,11 +2406,71 @@ async def checkpoint_generate_endpoint(request: CheckpointRequest, student_id: s
 @app.post("/api/tutor/checkpoint/submit", response_model=CheckpointSubmitResponse)
 async def checkpoint_submit_endpoint(request: CheckpointSubmitRequest, student_id: str = Depends(get_student_id)):
     try:
+        kg_update = None
+        if not request.was_skipped:
+            allowed_concepts = _get_existing_checkpoint_concepts(student_id, request.topic_id)
+            allowed_ids = [str(row.get("id") or "").strip() for row in allowed_concepts if str(row.get("id") or "").strip()]
+            title_lookup = {
+                _normalize_lookup(str(row.get("title") or "")): str(row.get("id") or "").strip()
+                for row in allowed_concepts
+                if str(row.get("title") or "").strip() and str(row.get("id") or "").strip()
+            }
+            raw_concept_tested = str(request.concept_tested or "").strip()
+            resolved_concept_tested = raw_concept_tested if raw_concept_tested in allowed_ids else title_lookup.get(
+                _normalize_lookup(raw_concept_tested),
+                "",
+            )
+            candidate_concepts = [resolved_concept_tested]
+            ordered_candidates = []
+            for candidate in candidate_concepts:
+                if candidate and candidate not in ordered_candidates:
+                    ordered_candidates.append(candidate)
+
+            is_correct = tutor_service.checkpoint_answer_is_correct(
+                request.options,
+                request.student_answer,
+                request.correct_answer,
+            )
+            for candidate in ordered_candidates:
+                attempt_update = _apply_user_kg_update(
+                    student_id=student_id,
+                    concept=candidate,
+                    is_correct=is_correct,
+                    mistake_type=None if is_correct else "conceptual",
+                    confidence_1_to_5=request.confidence_rating,
+                    update_origin="tutor_checkpoint",
+                )
+                if not attempt_update:
+                    continue
+                kg_update = attempt_update
+                if str(attempt_update.get("status")) == "updated":
+                    break
+
         return tutor_service.submit_checkpoint(
             request.session_id, request.topic_id, request.concept_tested,
             request.question, request.options, request.student_answer,
             request.correct_answer, request.confidence_rating, request.was_skipped,
             student_id, request.topic_doc_id,
+            mastery_delta_override=(
+                float(kg_update.get("delta_mastery", 0.0))
+                if kg_update and str(kg_update.get("status")) == "updated"
+                else None
+            ),
+            updated_mastery_override=(
+                float(kg_update.get("updated_mastery", 0.0))
+                if kg_update and str(kg_update.get("status")) == "updated"
+                else None
+            ),
+            mastery_status_override=(
+                str((kg_update.get("node") or {}).get("status") or "")
+                if kg_update and str(kg_update.get("status")) == "updated"
+                else None
+            ),
+            concept_id_override=(
+                str(kg_update.get("concept_id") or "")
+                if kg_update and str(kg_update.get("status")) == "updated"
+                else None
+            ),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

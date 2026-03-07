@@ -397,7 +397,13 @@ export default function AIAssistantPage() {
       });
       if (!res.ok) throw new Error(`Checkpoint submit failed with status ${res.status}`);
       const data = await res.json();
-      return { is_correct: data?.is_correct ?? null };
+      return {
+        is_correct: data?.is_correct ?? null,
+        mastery_delta: typeof data?.mastery_delta === 'number' ? data.mastery_delta : null,
+        updated_mastery: typeof data?.updated_mastery === 'number' ? data.updated_mastery : null,
+        mastery_status: typeof data?.mastery_status === 'string' ? data.mastery_status : null,
+        concept_id: typeof data?.concept_id === 'string' ? data.concept_id : null,
+      };
     } catch (err) {
       console.error('Checkpoint submit error:', err);
       return;

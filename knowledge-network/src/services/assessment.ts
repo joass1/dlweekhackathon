@@ -36,6 +36,20 @@ export interface MistakeClassificationClient {
   classification_model?: string | null;
 }
 
+export interface AssessmentKgUpdate {
+  concept_id?: string;
+  mastery_algorithm?: string;
+  prior_mastery?: number;
+  updated_mastery?: number;
+  delta_mastery?: number;
+  status?: string;
+  node?: {
+    title?: string;
+    mastery?: number;
+    status?: string;
+  } | null;
+}
+
 export interface ClassifyResult {
   classifications: MistakeClassificationClient[];
   blind_spot_found_count: number;
@@ -48,11 +62,12 @@ export interface ClassifyResult {
   }[];
   integration_actions?: {
     question_id: string;
-    mistake_type: 'careless' | 'conceptual';
+    mistake_type: 'careless' | 'conceptual' | 'none';
     classification_source?: 'openai' | 'fallback' | null;
     classification_model?: string | null;
     rpkt_probe?: { concept?: string; missing_concept?: string | null };
     intervention?: { mistake_type?: 'careless' | 'conceptual'; concept?: string; missing_concept?: string | null };
+    kg_update?: AssessmentKgUpdate | null;
   }[];
 }
 
@@ -77,6 +92,10 @@ export interface AssessmentHistoryQuestion {
   mistake_type: string;
   missing_concept?: string | null;
   rationale: string;
+  mastery_delta?: number | null;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
+  updated_node_label?: string | null;
 }
 
 export interface AssessmentHistoryRun {
@@ -188,7 +207,15 @@ export async function submitMicroCheckpoint(
   selectedAnswer: string,
   confidence = 3,
   token?: string | null
-): Promise<{ question_id: string; is_correct: boolean; next_action: 'resolved' | 'needs_intervention' }> {
+): Promise<{
+  question_id: string;
+  is_correct: boolean;
+  next_action: 'resolved' | 'needs_intervention';
+  mastery_delta?: number | null;
+  updated_mastery?: number | null;
+  mastery_status?: string | null;
+  concept_id?: string | null;
+}> {
   return jsonFetch('/api/assessment/micro-checkpoint/submit', {
     method: 'POST',
     body: JSON.stringify({

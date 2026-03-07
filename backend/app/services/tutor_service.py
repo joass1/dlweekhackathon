@@ -2,7 +2,12 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from typing import Optional
 from uuid import uuid4
+try:
+    from google.cloud.firestore_v1.base_query import FieldFilter
+except ImportError:  # pragma: no cover - older Firestore clients
+    FieldFilter = None
 
 try:
     from langchain.text_splitter import CharacterTextSplitter
@@ -20,6 +25,40 @@ class TutorService:
         self.db = db
         self.openai = openai_client
         self.collection = os.getenv("FIREBASE_KNOWLEDGE_CHUNKS_COLLECTION", "knowledge_chunks")
+
+    @staticmethod
+    def _checkpoint_option_key(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        match = re.match(r"^([A-D])(?:[.)\s]|$)", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+        return text.lower()
+
+    @classmethod
+    def _normalize_checkpoint_correct_answer(cls, options: list, correct_answer: str) -> str:
+        normalized_options = [str(option or "").strip() for option in (options or []) if str(option or "").strip()]
+        answer_text = str(correct_answer or "").strip()
+        if not normalized_options:
+            return answer_text
+        if answer_text in normalized_options:
+            return answer_text
+
+        answer_key = cls._checkpoint_option_key(answer_text)
+        if not answer_key:
+            return answer_text
+
+        for option in normalized_options:
+            if cls._checkpoint_option_key(option) == answer_key:
+                return option
+        return answer_text
+
+    @classmethod
+    def checkpoint_answer_is_correct(cls, options: list, student_answer: str, correct_answer: str) -> bool:
+        normalized_student = cls._normalize_checkpoint_correct_answer(options, student_answer)
+        normalized_correct = cls._normalize_checkpoint_correct_answer(options, correct_answer)
+        return cls._checkpoint_option_key(normalized_student) == cls._checkpoint_option_key(normalized_correct)
 
     # ── Deliverable 1 ─────────────────────────────────────────────────────────
     def embed_content(self, content: str, concept_id: str, source: str = None, user_id: str = None) -> int:
@@ -102,9 +141,14 @@ class TutorService:
         # Try concept_id-scoped retrieval first (matches per-topic concept_ids)
         if clean_ids and user_id:
             try:
-                q = self.db.collection(self.collection) \
-                    .where("concept_id", "in", clean_ids[:10]) \
-                    .where("userId", "==", user_id)
+                if FieldFilter is not None:
+                    q = self.db.collection(self.collection) \
+                        .where(filter=FieldFilter("concept_id", "in", clean_ids[:10])) \
+                        .where(filter=FieldFilter("userId", "==", user_id))
+                else:
+                    q = self.db.collection(self.collection) \
+                        .where("concept_id", "in", clean_ids[:10]) \
+                        .where("userId", "==", user_id)
                 docs = q.limit(300).stream()
                 scored = self._stream_and_score(docs, query_tokens)
             except Exception as e:
@@ -116,12 +160,20 @@ class TutorService:
             # concept_id (e.g. "gen-ai"). Match by source filename instead.
             if not scored:
                 try:
-                    docs = (
-                        self.db.collection(self.collection)
-                        .where("userId", "==", user_id)
-                        .limit(500)
-                        .stream()
-                    )
+                    if FieldFilter is not None:
+                        docs = (
+                            self.db.collection(self.collection)
+                            .where(filter=FieldFilter("userId", "==", user_id))
+                            .limit(500)
+                            .stream()
+                        )
+                    else:
+                        docs = (
+                            self.db.collection(self.collection)
+                            .where("userId", "==", user_id)
+                            .limit(500)
+                            .stream()
+                        )
                     # Build set of source patterns from concept_ids for matching
                     id_patterns = set()
                     for cid in clean_ids:
@@ -169,12 +221,20 @@ class TutorService:
                     scored = []
         elif user_id:
             try:
-                docs = (
-                    self.db.collection(self.collection)
-                    .where("userId", "==", user_id)
-                    .limit(300)
-                    .stream()
-                )
+                if FieldFilter is not None:
+                    docs = (
+                        self.db.collection(self.collection)
+                        .where(filter=FieldFilter("userId", "==", user_id))
+                        .limit(300)
+                        .stream()
+                    )
+                else:
+                    docs = (
+                        self.db.collection(self.collection)
+                        .where("userId", "==", user_id)
+                        .limit(300)
+                        .stream()
+                    )
                 scored = self._stream_and_score(docs, query_tokens)
             except Exception as e:
                 print(f"[TutorService] user query failed: {e}")
@@ -552,6 +612,7 @@ class TutorService:
         session_messages: list,
         already_tested: list = None,
         user_id: str = None,
+        allowed_concepts: list = None,
     ) -> dict:
         """Generate a multiple-choice micro-checkpoint question from conversation context."""
         context_chunks = self.retrieve_context(
@@ -562,6 +623,17 @@ class TutorService:
         recent_msgs = session_messages[-8:]
         conv_text = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in recent_msgs)
         already_str = ", ".join(already_tested) if already_tested else "none"
+        clean_allowed_concepts = []
+        for row in allowed_concepts or []:
+            concept_id = str((row or {}).get("id") or "").strip()
+            title = str((row or {}).get("title") or concept_id).strip() or concept_id
+            if concept_id:
+                clean_allowed_concepts.append({"id": concept_id, "title": title})
+        allowed_concepts_text = (
+            json.dumps(clean_allowed_concepts, ensure_ascii=False)
+            if clean_allowed_concepts
+            else "[]"
+        )
 
         prompt = (
             f"Based on this tutoring conversation about '{topic_id}', generate ONE quick "
@@ -569,17 +641,43 @@ class TutorService:
             f"Conversation:\n{conv_text}\n\n"
             f"Source material:\n{context_text}\n\n"
             f"Already tested this session: {already_str}\n\n"
+            f"Allowed existing KG concepts for this checkpoint: {allowed_concepts_text}\n\n"
             "Requirements:\n"
             "- Test conceptual understanding, not memorization\n"
             "- 4 options, formatted as 'A. ...', 'B. ...', 'C. ...', 'D. ...'\n"
             "- Concise — this is a quick check, not an exam\n"
-            "- Avoid concepts already tested this session\n\n"
+            "- Avoid concepts already tested this session\n"
+            "- concept_tested must be exactly one id from the allowed existing KG concepts list\n\n"
             'Return ONLY valid JSON (no markdown):\n'
             '{"concept_tested": "...", "question": "...", "type": "multiple_choice", '
             '"options": ["A. ...", "B. ...", "C. ...", "D. ..."], '
-            '"correct_answer": "A", "explanation": "one sentence why A is correct", '
-            '"difficulty": "easy"}'
+            '"correct_answer": "full text of the correct option including its label", '
+            '"explanation": "one sentence why that option is correct", "difficulty": "easy"}'
         )
+
+        def _normalize_checkpoint_payload(parsed: dict) -> dict:
+            normalized = dict(parsed or {})
+            normalized["correct_answer"] = self._normalize_checkpoint_correct_answer(
+                normalized.get("options") or [],
+                normalized.get("correct_answer", ""),
+            )
+            if clean_allowed_concepts:
+                allowed_by_id = {row["id"]: row for row in clean_allowed_concepts}
+                allowed_title_lookup = {
+                    re.sub(r"[^a-z0-9]+", "", row["title"].lower()): row["id"]
+                    for row in clean_allowed_concepts
+                    if row.get("title")
+                }
+                raw_concept_tested = str(normalized.get("concept_tested", "")).strip()
+                if raw_concept_tested not in allowed_by_id:
+                    lookup = re.sub(r"[^a-z0-9]+", "", raw_concept_tested.lower())
+                    normalized["concept_tested"] = allowed_title_lookup.get(
+                        lookup,
+                        clean_allowed_concepts[0]["id"],
+                    )
+            elif not str(normalized.get("concept_tested", "")).strip():
+                normalized["concept_tested"] = topic_id
+            return normalized
 
         response = self.openai.chat.completions.create(
             model=OPENAI_TUTOR_MODEL,
@@ -594,14 +692,16 @@ class TutorService:
         if raw.endswith("```"):
             raw = raw[:-3].strip()
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
+            return _normalize_checkpoint_payload(parsed)
         except json.JSONDecodeError:
+            fallback_concept_id = clean_allowed_concepts[0]["id"] if clean_allowed_concepts else topic_id
             return {
-                "concept_tested": topic_id,
+                "concept_tested": fallback_concept_id,
                 "question": f"Which best describes a core idea of '{topic_id}'?",
                 "type": "multiple_choice",
                 "options": ["A. Option A", "B. Option B", "C. Option C", "D. Option D"],
-                "correct_answer": "A",
+                "correct_answer": "A. Option A",
                 "explanation": "This is based on the core concept discussed.",
                 "difficulty": "medium",
             }
@@ -619,11 +719,23 @@ class TutorService:
         was_skipped: bool,
         user_id: str = None,
         topic_doc_id: str = None,
+        mastery_delta_override: Optional[float] = None,
+        updated_mastery_override: Optional[float] = None,
+        mastery_status_override: Optional[str] = None,
+        concept_id_override: Optional[str] = None,
     ) -> dict:
         """Record checkpoint result in Firestore and return mastery delta."""
-        is_correct = (student_answer == correct_answer) if not was_skipped else None
+        normalized_correct_answer = self._normalize_checkpoint_correct_answer(options, correct_answer)
+        normalized_student_answer = self._normalize_checkpoint_correct_answer(options, student_answer)
+        is_correct = (
+            self.checkpoint_answer_is_correct(options, normalized_student_answer, normalized_correct_answer)
+            if not was_skipped
+            else None
+        )
 
-        if was_skipped:
+        if mastery_delta_override is not None:
+            mastery_delta = float(mastery_delta_override)
+        elif was_skipped:
             mastery_delta = 0.0
         elif is_correct and confidence_rating >= 4:
             mastery_delta = 0.10    # correct + high confidence
@@ -644,16 +756,25 @@ class TutorService:
                 "concept_tested": concept_tested,
                 "question": question,
                 "options": options,
-                "student_answer": student_answer,
-                "correct_answer": correct_answer,
+                "student_answer": normalized_student_answer,
+                "correct_answer": normalized_correct_answer,
                 "is_correct": is_correct,
                 "confidence_rating": confidence_rating,
                 "was_skipped": was_skipped,
                 "mastery_delta": mastery_delta,
+                "updated_mastery": updated_mastery_override,
+                "mastery_status": mastery_status_override,
+                "concept_id": concept_id_override,
                 "timestamp": datetime.now(timezone.utc),
             })
 
-        return {"is_correct": is_correct, "mastery_delta": mastery_delta}
+        return {
+            "is_correct": is_correct,
+            "mastery_delta": mastery_delta,
+            "updated_mastery": updated_mastery_override,
+            "mastery_status": mastery_status_override,
+            "concept_id": concept_id_override,
+        }
 
     # ── Deliverable 4 ─────────────────────────────────────────────────────────
     def run_intervention(self, request) -> dict:

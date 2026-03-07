@@ -295,6 +295,66 @@ class KnowledgeGraphEngine:
 
         return result
 
+    def sync_bkt_state(
+        self,
+        concept_id: str,
+        state: ConceptState,
+        *,
+        is_correct: bool,
+        mistake_type: Optional[str] = None,
+        missing_concept: Optional[str] = None,
+        classification_source: Optional[str] = None,
+        classification_model: Optional[str] = None,
+        classification_rationale: Optional[str] = None,
+        classified_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Project an externally-updated BKT state into the KG node used by the UI."""
+        if concept_id not in self._graph:
+            raise KeyError(f"Concept '{concept_id}' not found in graph")
+
+        node = self._graph.nodes[concept_id]
+        synced_at = _parse_dt(classified_at) or _utc_now()
+        normalized_state = ConceptState(**state.__dict__).normalized()
+
+        node["mastery_score"] = _clamp(float(normalized_state.mastery))
+        node["attempt_count"] = max(0, int(normalized_state.attempts))
+        node["correct_count"] = max(0, int(normalized_state.correct))
+        node["careless_count"] = max(0, int(normalized_state.careless_count))
+        node["decay_rate"] = max(0.0, float(normalized_state.decay_rate))
+        node["careless_badge"] = bool(not is_correct and (mistake_type or "").strip().lower() == "careless")
+        node["status"] = _compute_status(node["mastery_score"])
+        node["updated_at"] = synced_at.isoformat()
+        node["last_practice_at"] = synced_at.isoformat()
+        self._sync_review_schedule(node, synced_at)
+
+        prerequisite_gaps: List[Dict[str, Any]] = []
+        root_gap: Optional[Dict[str, Any]] = None
+
+        if not is_correct:
+            normalized_mistake = (mistake_type or "conceptual").strip().lower()
+            node["last_mistake_type"] = normalized_mistake
+            node["last_missing_concept"] = missing_concept
+            node["last_classification_source"] = classification_source
+            node["last_classification_model"] = classification_model
+            node["last_classification_rationale"] = classification_rationale
+            node["last_classified_at"] = classified_at or synced_at.isoformat()
+            if normalized_mistake != "careless":
+                prerequisite_gaps = self._trace_prerequisite_gaps(concept_id)
+                if prerequisite_gaps:
+                    root_gap = prerequisite_gaps[-1]
+
+        self._persist_concept(concept_id)
+
+        result: Dict[str, Any] = {
+            "node": self._node_dict(concept_id),
+            "affected_chain": list(nx.descendants(self._graph, concept_id)),
+        }
+        if prerequisite_gaps:
+            result["prerequisite_gaps"] = prerequisite_gaps
+        if root_gap:
+            result["root_gap"] = root_gap
+        return result
+
     def set_mastery(self, concept_id: str, mastery_score: float) -> Dict[str, Any]:
         """Set a concept mastery score directly (0.0 to 1.0)."""
         if concept_id not in self._graph:
