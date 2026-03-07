@@ -9,6 +9,8 @@ import Split from 'react-split';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { AlertTriangle, ShieldCheck } from 'lucide-react';
+import { apiFetch } from '@/services/api';
+import { normalizeTopicRow, TopicOption, UserTopicApiRow } from '@/types/topics';
 
 interface Message {
   id: string;
@@ -82,12 +84,14 @@ export default function AIAssistantPage() {
   const initialSocraticPrompt =
     'Hello there! Drag a topic from the side into the chatbox and start chatting with me!';
   const router = useRouter();
-  const { getIdToken } = useAuth();
+  const { getIdToken, user } = useAuth();
   const searchParams = useSearchParams();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeNotes, setActiveNotes] = useState<ContextItem[]>([]);
   const [scopedTopics, setScopedTopics] = useState<ScopedTopic[]>([]);
+  const [availableTopics, setAvailableTopics] = useState<TopicOption[]>([]);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
   const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
   const [missionTimerRemaining, setMissionTimerRemaining] = useState<number | null>(null);
   const [missionTimerCourse, setMissionTimerCourse] = useState<string>('all');
@@ -152,17 +156,92 @@ export default function AIAssistantPage() {
   );
 
   useEffect(() => {
+    if (!user) {
+      setAvailableTopics([]);
+      setSelectedTopicIds([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadFilters = async () => {
+      try {
+        const token = await getIdToken();
+        const topicData = await apiFetch<{ topics?: UserTopicApiRow[] }>('/api/user-topics', undefined, token);
+        if (cancelled) return;
+
+        const dedupedTopics = Object.values(
+          (Array.isArray(topicData.topics) ? topicData.topics : [])
+            .map(normalizeTopicRow)
+            .filter((topic) => topic.id)
+            .reduce<Record<string, TopicOption>>((acc, topic) => {
+              acc[`${topic.courseId}::${topic.id}`] = topic;
+              return acc;
+            }, {})
+        );
+        setAvailableTopics(dedupedTopics);
+      } catch {
+        if (cancelled) return;
+        setAvailableTopics([]);
+      }
+    };
+
+    void loadFilters();
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken, user]);
+
+  useEffect(() => {
+    if (availableTopics.length === 0) return;
+    setSelectedTopicIds((prev) => prev.filter((topicId) => availableTopics.some((topic) => topic.id === topicId)));
+  }, [availableTopics]);
+
+  useEffect(() => {
+    if (selectedTopicIds.length === 0) {
+      setScopedTopics([]);
+      return;
+    }
+    setScopedTopics((prev) => {
+      const previousByConcept = new Map(prev.map((topic) => [topic.conceptId, topic]));
+      const normalized: ScopedTopic[] = [];
+      for (const conceptId of selectedTopicIds) {
+        const mappedTopic = availableTopics.find((topic) => topic.id === conceptId);
+        if (mappedTopic) {
+          normalized.push({
+            id: mappedTopic.docId || `topic-${mappedTopic.courseId}-${mappedTopic.id}`,
+            title: mappedTopic.name,
+            subjectName: mappedTopic.courseName,
+            conceptId: mappedTopic.id,
+          });
+          continue;
+        }
+        const existing = previousByConcept.get(conceptId);
+        if (existing) {
+          normalized.push(existing);
+          continue;
+        }
+        normalized.push({
+          id: `manual-${conceptId}`,
+          title: conceptId,
+          subjectName: 'Selected Topic',
+          conceptId,
+        });
+      }
+      return normalized;
+    });
+  }, [availableTopics, selectedTopicIds]);
+
+  useEffect(() => {
     const topic = (searchParams.get('topic') || '').trim();
     if (!topic) return;
     const conceptId = (searchParams.get('conceptId') || '').trim() || topic.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const subjectName = (searchParams.get('subject') || '').trim() || 'Knowledge Map';
-    const id = `kg-${conceptId}`;
-
-    setScopedTopics(prev =>
-      prev.some(t => t.id === id)
+    setScopedTopics((prev) =>
+      prev.some((item) => item.conceptId === conceptId)
         ? prev
-        : [...prev, { id, title: topic, subjectName, conceptId }]
+        : [...prev, { id: `kg-${conceptId}`, title: topic, subjectName, conceptId }]
     );
+    setSelectedTopicIds((prev) => (prev.includes(conceptId) ? prev : [...prev, conceptId]));
   }, [searchParams]);
 
   useEffect(() => {
@@ -221,10 +300,17 @@ export default function AIAssistantPage() {
   };
 
   const handleTopicDrop = (topic: ScopedTopic) =>
-    setScopedTopics(prev => prev.find(t => t.id === topic.id) ? prev : [...prev, topic]);
+    setSelectedTopicIds((prev) => (prev.includes(topic.conceptId) ? prev : [...prev, topic.conceptId]));
 
-  const handleTopicRemove = (id: string) =>
-    setScopedTopics(prev => prev.filter(t => t.id !== id));
+  const handleTopicRemove = (id: string) => {
+    setScopedTopics((prev) => {
+      const target = prev.find((topic) => topic.id === id);
+      if (target) {
+        setSelectedTopicIds((ids) => ids.filter((conceptId) => conceptId !== target.conceptId));
+      }
+      return prev.filter((topic) => topic.id !== id);
+    });
+  };
 
   const normalizeSourceKey = (item: ContextItem) => {
     const concept = (item.concept_id || 'unknown').trim().toLowerCase();

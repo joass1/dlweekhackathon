@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardCheck, Home, LogOut, MessageSquare, Rocket, Upload, Users } from 'lucide-react';
+import { ClipboardCheck, Home, LogOut, MessageSquare, Rocket, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { motion } from 'framer-motion';
@@ -17,7 +17,6 @@ interface MainLayoutProps {
 
 const navigationItems = [
   { name: 'Dashboard', url: '/', icon: Home },
-  { name: 'Upload Materials', url: '/upload', icon: Upload },
   { name: 'Assessment', url: '/assessment', icon: ClipboardCheck },
   { name: 'Study Missions', url: '/study-mission', icon: Rocket },
   { name: 'Socratic Tutor', url: '/ai-assistant', icon: MessageSquare },

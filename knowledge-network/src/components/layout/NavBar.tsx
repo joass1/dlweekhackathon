@@ -45,7 +45,7 @@ export const NavBar = React.forwardRef<HTMLDivElement, NavBarProps>(function Nav
         className
       )}
     >
-      <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/85 px-1 py-0.5 shadow-[0_24px_70px_rgba(2,6,23,0.45)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/85 px-1 py-1 shadow-[0_24px_70px_rgba(2,6,23,0.45)] backdrop-blur-xl">
         {items.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.name;
@@ -56,7 +56,7 @@ export const NavBar = React.forwardRef<HTMLDivElement, NavBarProps>(function Nav
               href={item.url}
               onClick={() => setActiveTab(item.name)}
               className={cn(
-                'relative flex items-center justify-center rounded-full px-4 py-1.5 text-center text-sm font-semibold transition-colors lg:min-w-[132px] lg:px-6',
+                'relative flex items-center justify-center rounded-full px-4 py-2 text-center text-sm font-semibold transition-colors lg:min-w-[132px] lg:px-6',
                 'text-slate-300 hover:text-cyan-300',
                 isActive && 'bg-slate-800/90 text-cyan-200'
               )}

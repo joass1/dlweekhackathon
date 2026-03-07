@@ -10,6 +10,7 @@ import { CourseOption } from '@/lib/courses';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { GlowingEffect } from '@/components/ui/glowing-effect';
+import { normalizeTopicRow, TopicOption, UserTopicApiRow } from '@/types/topics';
 
 interface StudyPlanItem {
   concept_id: string;
@@ -39,6 +40,7 @@ interface KGNode {
   mastery: number;
   status: string;
   courseId?: string;
+  topicIds?: string[];
   category?: string;
   decayTimestamp?: string | null;
   attempts?: number;
@@ -94,6 +96,7 @@ interface PersistedStudyMissionSession {
   timeRemaining: number;
   timerEndsAt: number | null;
   selectedCourse: string;
+  selectedTopicIds: string[];
   planMode: PlanMode;
   confidenceTrapEnabled: boolean;
   studyPlan: StudyPlanResponse | null;
@@ -131,7 +134,9 @@ export default function StudyMissionPage() {
   const [trapReflection, setTrapReflection] = useState('');
   const [trapError, setTrapError] = useState<string | null>(null);
   const [courses, setCourses] = useState<CourseOption[]>([{ id: 'all', name: 'All Courses' }]);
+  const [topics, setTopics] = useState<TopicOption[]>([]);
   const [selectedCourse, setSelectedCourse] = useState('all');
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
   const [isFlashcardFlipped, setIsFlashcardFlipped] = useState(false);
   const [hasTimedOutRedirected, setHasTimedOutRedirected] = useState(false);
@@ -175,6 +180,13 @@ export default function StudyMissionPage() {
       }
       if (typeof parsed.selectedCourse === 'string' && parsed.selectedCourse.trim()) {
         setSelectedCourse(parsed.selectedCourse);
+      }
+      if (Array.isArray(parsed.selectedTopicIds)) {
+        setSelectedTopics(
+          parsed.selectedTopicIds
+            .map((topicId) => String(topicId).trim())
+            .filter((topicId) => topicId.length > 0)
+        );
       }
       if (parsed.planMode === 'grade_boost' || parsed.planMode === 'foundation_repair') {
         setPlanMode(parsed.planMode);
@@ -300,6 +312,7 @@ export default function StudyMissionPage() {
       timeRemaining,
       timerEndsAt,
       selectedCourse,
+      selectedTopicIds: selectedTopics,
       planMode,
       confidenceTrapEnabled,
       studyPlan,
@@ -326,6 +339,7 @@ export default function StudyMissionPage() {
     planMode,
     planSource,
     selectedCourse,
+    selectedTopics,
     flashcardCount,
     studyMinutes,
     studyPlan,
@@ -366,17 +380,33 @@ export default function StudyMissionPage() {
     if (authLoading) return;
     if (!user) {
       setCourses([{ id: 'all', name: 'All Courses' }]);
+      setTopics([]);
       setSelectedCourse('all');
+      setSelectedTopics([]);
       return;
     }
     let cancelled = false;
-    const fetchCourses = async () => {
+    const fetchMetadata = async () => {
       try {
-        const courseData = await apiFetchWithAuth<{ courses?: CourseOption[] }>('/api/courses');
+        const [courseData, topicData] = await Promise.all([
+          apiFetchWithAuth<{ courses?: CourseOption[] }>('/api/courses'),
+          apiFetchWithAuth<{ topics?: UserTopicApiRow[] }>('/api/user-topics'),
+        ]);
         if (cancelled) return;
         const incoming = Array.isArray(courseData?.courses) ? courseData.courses : [];
         const options = [{ id: 'all', name: 'All Courses' }, ...incoming];
         setCourses(options);
+        setTopics(
+          Object.values(
+            (Array.isArray(topicData?.topics) ? topicData.topics : [])
+              .map(normalizeTopicRow)
+              .filter((topic) => topic.id)
+              .reduce<Record<string, TopicOption>>((acc, topic) => {
+                acc[`${topic.courseId}::${topic.id}`] = topic;
+                return acc;
+              }, {})
+          )
+        );
         setSelectedCourse((prev) => {
           if (options.some((course) => course.id === prev)) return prev;
           return options[1]?.id ?? 'all';
@@ -385,10 +415,12 @@ export default function StudyMissionPage() {
         if (cancelled) return;
         const fallback = [{ id: 'all', name: 'All Courses' }];
         setCourses(fallback);
+        setTopics([]);
         setSelectedCourse('all');
+        setSelectedTopics([]);
       }
     };
-    void fetchCourses();
+    void fetchMetadata();
     return () => {
       cancelled = true;
     };
@@ -415,6 +447,16 @@ export default function StudyMissionPage() {
       courseNameNorm.includes(categoryNorm)
     );
   };
+
+  const visibleTopics = useMemo(
+    () => (selectedCourse === 'all' ? topics : topics.filter((topic) => topic.courseId === selectedCourse)),
+    [selectedCourse, topics]
+  );
+
+  useEffect(() => {
+    if (visibleTopics.length === 0) return;
+    setSelectedTopics((prev) => prev.filter((topicId) => visibleTopics.some((topic) => topic.id === topicId)));
+  }, [visibleTopics]);
 
   const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
   const normalizedMastery = (concept: StudyPlanItem) => {
@@ -731,6 +773,7 @@ export default function StudyMissionPage() {
           method: 'POST',
           body: JSON.stringify({
             course_id: selectedCourse,
+            topic_ids: selectedTopics,
             concept_ids: flashcardConceptIds,
             num_cards: requestedCards,
             chunk_limit: Math.min(400, requestedCards * 6),
@@ -837,6 +880,7 @@ export default function StudyMissionPage() {
     flashcardTagsByConcept,
     missionStarted,
     selectedCourse,
+    selectedTopics,
   ]);
 
   const flashcards = generatedFlashcards;
@@ -967,26 +1011,36 @@ export default function StudyMissionPage() {
         selectedCourseMeta && selectedCourseMeta.id !== 'all'
           ? nodes.filter((node) => belongsToCourse(node, selectedCourseMeta))
           : nodes;
+      const topicScopedNodes =
+        selectedTopics.length > 0
+          ? scopedNodes.filter((node) => {
+              const nodeTopics = Array.isArray(node.topicIds) ? node.topicIds : [];
+              if (nodeTopics.some((topicId) => selectedTopics.includes(topicId))) return true;
+              return selectedTopics.includes(String(node.id));
+            })
+          : scopedNodes;
 
-      if (scopedNodes.length === 0) {
+      if (topicScopedNodes.length === 0) {
         setError(
-          selectedCourseMeta && selectedCourseMeta.id !== 'all'
-            ? `No concepts found for ${selectedCourseMeta.name}. Upload materials for this course first.`
+          selectedTopics.length > 0
+            ? 'No concepts found for the selected topics. Upload materials for those topics first.'
+            : selectedCourseMeta && selectedCourseMeta.id !== 'all'
+              ? `No concepts found for ${selectedCourseMeta.name}. Upload materials for this course first.`
             : 'No concepts found. Upload course materials first to build your knowledge graph.'
         );
         setLoading(false);
         return;
       }
-      const scopedNodeIds = new Set(scopedNodes.map((node) => String(node.id)));
+      const scopedNodeIds = new Set(topicScopedNodes.map((node) => String(node.id)));
 
       // Filter to concepts that need work (not mastered)
-      const studyCandidates = scopedNodes.filter(
+      const studyCandidates = topicScopedNodes.filter(
         n => n.status !== 'mastered' && n.status !== 'not_started'
       );
 
       if (studyCandidates.length === 0) {
         // If no concepts in progress, include all non-mastered
-        studyCandidates.push(...scopedNodes.filter(n => n.status !== 'mastered'));
+        studyCandidates.push(...topicScopedNodes.filter(n => n.status !== 'mastered'));
       }
 
       if (planMode === 'grade_boost') {
@@ -1189,6 +1243,37 @@ export default function StudyMissionPage() {
             <p className="text-xs text-white/70 mt-2">
               Study Mission and flashcards will be generated for this course.
             </p>
+          </div>
+
+          <h2 className="font-semibold mb-3 text-white">Filter Topics (optional)</h2>
+          <div className="mb-6">
+            <select
+              multiple
+              value={selectedTopics}
+              onChange={(event) => {
+                const next = Array.from(event.target.selectedOptions).map((option) => option.value);
+                setSelectedTopics(next);
+              }}
+              className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm focus:border-[#03b2e6] focus:outline-none h-[120px]"
+            >
+              {visibleTopics.map((topic) => (
+                <option key={`${topic.courseId}-${topic.id}`} value={topic.id} className="text-slate-900">
+                  {topic.name}
+                </option>
+              ))}
+            </select>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedTopics([])}
+                className="rounded-full border border-white/25 px-3 py-1 text-xs text-white/85 hover:border-[#03b2e6]"
+              >
+                All Topics
+              </button>
+              <p className="text-xs text-white/70">
+                {selectedTopics.length === 0 ? 'No topic filter selected.' : `${selectedTopics.length} topic(s) selected.`}
+              </p>
+            </div>
           </div>
 
           <h2 className="font-semibold mb-4 text-white">How much time do you have?</h2>

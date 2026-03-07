@@ -114,7 +114,10 @@ const KnowledgeGraph = ({ nodes = [], links = [], showLabels = false }: Knowledg
     };
 
     const visualStatus = (d: Node): Node['status'] => {
-      if (d.status === 'not_started') return 'not_started';
+      // Respect backend status so color and tooltip status stay consistent.
+      if (d.status === 'mastered' || d.status === 'learning' || d.status === 'weak' || d.status === 'not_started') {
+        return d.status;
+      }
       if (d.mastery >= 80) return 'mastered';
       if (d.mastery >= 50) return 'learning';
       return 'weak';

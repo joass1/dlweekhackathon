@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -20,6 +20,7 @@ import {
   getMultiFactorResolver,
   type MultiFactorResolver,
   type MultiFactorError,
+  type UserCredential,
 } from "firebase/auth";
 import { auth, getRecaptchaVerifier, clearRecaptchaVerifier } from "@/lib/firebase-auth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,6 +34,7 @@ type MfaStep = "none" | "verify-email" | "enroll-phone" | "enroll-code" | "chall
 
 export default function SignInPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, loading: authLoading, skipRedirect, setSkipRedirect } = useAuth();
 
   const [tab, setTab] = useState<Tab>("signin");
@@ -97,10 +99,16 @@ export default function SignInPage() {
 
   // If already authenticated and not in an MFA flow, redirect to dashboard
   useEffect(() => {
-    if (!authLoading && user && mfaStep === "none" && !skipRedirect) {
+    if (!authLoading && user?.emailVerified && mfaStep === "none" && !skipRedirect) {
       router.replace("/");
     }
   }, [user, authLoading, mfaStep, skipRedirect, router]);
+
+  useEffect(() => {
+    if (searchParams.get("verifyEmail") === "1") {
+      setError("Please verify your email address before signing in.");
+    }
+  }, [searchParams]);
 
   // Handle magic link completion on page load
   useEffect(() => {
@@ -112,9 +120,10 @@ export default function SignInPage() {
       if (storedEmail) {
         setLoading(true);
         signInWithEmailLink(auth, storedEmail, window.location.href)
-          .then(() => {
+          .then(async (credential) => {
             localStorage.removeItem("emailForSignIn");
-            router.replace("/");
+            await completeSignInIfEmailVerified(credential);
+            setLoading(false);
           })
           .catch((err) => {
             setError(err.message);
@@ -135,15 +144,40 @@ export default function SignInPage() {
     );
   }
 
+  const completeSignInIfEmailVerified = async (
+    credential: UserCredential,
+    options?: { fromGoogle?: boolean }
+  ): Promise<boolean> => {
+    await credential.user.reload();
+    if (credential.user.emailVerified) {
+      router.replace("/");
+      return true;
+    }
+
+    try {
+      await sendEmailVerification(credential.user);
+    } catch {
+      // Best effort only.
+    }
+    setError(
+      options?.fromGoogle
+        ? "Your Google account email is not verified. Verify it with Google first, then sign in again."
+        : "Email not verified. We sent a fresh verification email. Please verify it, then sign in."
+    );
+    router.replace("/auth/signin?verifyEmail=1");
+    return false;
+  };
+
   // ── Auth handlers ────────────────────────────────────────
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setMessage("");
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      router.replace("/");
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      await completeSignInIfEmailVerified(credential);
     } catch (err: unknown) {
       if (isMultiFactorError(err)) {
         // MFA required — start challenge flow
@@ -191,9 +225,9 @@ export default function SignInPage() {
 
       const cred = PhoneAuthProvider.credential(verificationId, verificationCode);
       const assertion = PhoneMultiFactorGenerator.assertion(cred);
-      await resolver.resolveSignIn(assertion);
+      const signInResult = await resolver.resolveSignIn(assertion);
+      await completeSignInIfEmailVerified(signInResult);
       setMfaStep("none");
-      router.replace("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -294,18 +328,28 @@ export default function SignInPage() {
     }
   };
 
+  const getCurrentUserForVerification = async () => {
+    if (auth.currentUser) return auth.currentUser;
+    if (email && password) {
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      return credential.user;
+    }
+    throw new Error("Session expired. Sign in again, then continue verification.");
+  };
+
   const handleCheckEmailVerified = async () => {
     setError("");
     setLoading(true);
     try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) throw new Error("No authenticated user");
+      const currentUser = await getCurrentUserForVerification();
 
       // Reload user to get latest emailVerified status
       await currentUser.reload();
       if (currentUser.emailVerified) {
-        setMfaStep("enroll-phone");
-        setMessage("Email verified! Now add your phone number for extra security.");
+        setMfaStep("none");
+        setMessage("");
+        setSkipRedirect(false);
+        router.replace("/");
       } else {
         setError("Email not yet verified. Please check your inbox and click the verification link, then try again.");
       }
@@ -320,8 +364,7 @@ export default function SignInPage() {
     setError("");
     setLoading(true);
     try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) throw new Error("No authenticated user");
+      const currentUser = await getCurrentUserForVerification();
       await sendEmailVerification(currentUser);
       setMessage("Verification email resent! Check your inbox.");
     } catch (err: unknown) {
@@ -349,6 +392,33 @@ export default function SignInPage() {
     }
   };
 
+  const handleCheckEmailVerifiedAndEnrollPhone = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const currentUser = await getCurrentUserForVerification();
+
+      await currentUser.reload();
+      if (currentUser.emailVerified) {
+        setMfaStep("enroll-phone");
+        setMessage("Email verified! You can set up phone verification now, or skip for now.");
+      } else {
+        setError("Email not yet verified. Please verify your email first.");
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to check verification status");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSkipPhoneEnrollment = () => {
+    setMfaStep("none");
+    setMessage("");
+    setSkipRedirect(false);
+    router.replace("/");
+  };
+
   const handleMagicLink = async () => {
     setError("");
     if (!email) {
@@ -372,11 +442,12 @@ export default function SignInPage() {
 
   const handleGoogleSignIn = async () => {
     setError("");
+    setMessage("");
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      router.replace("/");
+      const credential = await signInWithPopup(auth, provider);
+      await completeSignInIfEmailVerified(credential, { fromGoogle: true });
     } catch (err: unknown) {
       if (isMultiFactorError(err)) {
         const resolver = getMultiFactorResolver(auth, err);
@@ -469,6 +540,14 @@ export default function SignInPage() {
                 </Button>
                 <Button
                   variant="outline"
+                  onClick={handleCheckEmailVerifiedAndEnrollPhone}
+                  disabled={loading}
+                  className="w-full"
+                >
+                  Continue And Set Up Phone Verification
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={handleResendVerification}
                   disabled={loading}
                   className="w-full"
@@ -545,6 +624,14 @@ export default function SignInPage() {
                     {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                     Send Verification Code
                   </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleSkipPhoneEnrollment}
+                    disabled={loading}
+                    className="w-full"
+                  >
+                    Skip For Now
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -570,6 +657,14 @@ export default function SignInPage() {
                   >
                     {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                     Verify & Enable MFA
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleSkipPhoneEnrollment}
+                    disabled={loading}
+                    className="w-full"
+                  >
+                    Skip For Now
                   </Button>
                 </div>
               )}

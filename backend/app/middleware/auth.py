@@ -55,11 +55,15 @@ async def get_current_user(request: Request) -> dict:
     token = auth_header[len("Bearer "):]
     try:
         decoded = firebase_auth.verify_id_token(token)
+        if decoded.get("email") and decoded.get("email_verified") is False:
+            raise HTTPException(status_code=403, detail="Email not verified")
         return decoded
     except firebase_auth.ExpiredIdTokenError:
         raise HTTPException(status_code=401, detail="Token expired")
     except firebase_auth.InvalidIdTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=401, detail="Token verification failed")
 
