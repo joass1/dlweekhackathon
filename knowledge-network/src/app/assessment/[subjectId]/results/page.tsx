@@ -207,7 +207,7 @@ export default function AssessmentResultsPage() {
           </div>
         )}
 
-        <div className="text-center space-x-4">
+        <div className="flex flex-wrap justify-center gap-4">
           <button
             onClick={() => router.push(`/assessment/${subjectId}/take?retry=${Date.now()}`)}
             className="bg-[#03b2e6] text-white px-8 py-3 rounded-full hover:bg-[#029ad0]"
@@ -216,9 +216,15 @@ export default function AssessmentResultsPage() {
           </button>
           <button
             onClick={() => router.push('/assessment')}
-            className="border border-black/20 text-slate-900 px-8 py-3 rounded-full hover:bg-white/400"
+            className="bg-slate-700 text-white px-8 py-3 rounded-full hover:bg-slate-600"
           >
             Back to Assessments
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="bg-slate-700 text-white px-8 py-3 rounded-full hover:bg-slate-600"
+          >
+            Go to Dashboard
           </button>
         </div>
       </div>

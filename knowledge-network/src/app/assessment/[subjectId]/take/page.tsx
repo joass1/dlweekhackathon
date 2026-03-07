@@ -310,13 +310,16 @@ export default function AssessmentTakePage() {
           ))}
         </div>
 
-        <div className="mt-8 flex justify-end">
+        <div className="mt-8 flex flex-col items-end gap-3">
+          {isSubmitting && (
+            <p className="text-sm font-semibold text-slate-800 animate-pulse bg-white/80 backdrop-blur-sm px-3 py-1 rounded-md">{SUBMITTING_QUIZ_PHRASES[submitPhraseIdx]}</p>
+          )}
           <button
             onClick={handleSubmit}
             disabled={isSubmitting || questions.length === 0}
-            className="bg-[#03b2e6] text-white px-6 py-2 rounded-full hover:bg-[#029ad0] disabled:opacity-50"
+            className="bg-[#03b2e6] text-white px-6 py-2 rounded-full hover:bg-[#029ad0] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isSubmitting ? SUBMITTING_QUIZ_PHRASES[submitPhraseIdx] : 'Submit Assessment'}
+            Submit Assessment
           </button>
         </div>
       </div>
