@@ -1509,6 +1509,7 @@ class PeerSessionService:
                 reverse=True,
             )
             normalized_correct = ranked[0] if ranked else deduped[0]
+        deduped, normalized_correct = self._pin_correct_answer_to_b(deduped, normalized_correct)
         if stem and "select the best answer" not in stem.lower():
             stem = f"{stem}\n\nSelect the best answer."
 
@@ -1702,6 +1703,20 @@ class PeerSessionService:
         return options[0]
 
     @staticmethod
+    def _pin_correct_answer_to_b(options: List[str], correct_answer: str) -> Tuple[List[str], str]:
+        if not options:
+            return options, correct_answer
+        normalized_correct = PeerSessionService._normalize_mcq_correct_answer(correct_answer, options)
+        if len(options) < 2:
+            return options, normalized_correct
+
+        before = [opt for opt in options if opt.casefold() != normalized_correct.casefold()]
+        pinned = [*before]
+        pinned.insert(1, normalized_correct)
+        pinned = pinned[: len(options)]
+        return pinned, normalized_correct
+
+    @staticmethod
     def _sanitize_existing_question(question: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         row = dict(question or {})
         changed = False
@@ -1741,6 +1756,16 @@ class PeerSessionService:
                 if normalized_answer != answer:
                     row["correct_answer"] = normalized_answer
                     changed = True
+                pinned_options, pinned_answer = PeerSessionService._pin_correct_answer_to_b(
+                    list(row.get("options") or options),
+                    str(row.get("correct_answer") or normalized_answer),
+                )
+                if pinned_options != list(row.get("options") or []):
+                    row["options"] = pinned_options
+                    changed = True
+                if pinned_answer != str(row.get("correct_answer") or ""):
+                    row["correct_answer"] = pinned_answer
+                    changed = True
                 options_for_math = options
         else:
             if row.get("options") is not None:
@@ -1775,6 +1800,16 @@ class PeerSessionService:
                 )
                 if normalized_answer != str(row.get("correct_answer") or ""):
                     row["correct_answer"] = normalized_answer
+                    changed = True
+                pinned_options, pinned_answer = PeerSessionService._pin_correct_answer_to_b(
+                    list(row.get("options") or converted_options),
+                    str(row.get("correct_answer") or normalized_answer),
+                )
+                if pinned_options != list(row.get("options") or []):
+                    row["options"] = pinned_options
+                    changed = True
+                if pinned_answer != str(row.get("correct_answer") or ""):
+                    row["correct_answer"] = pinned_answer
                     changed = True
 
         return row, changed
